@@ -1,0 +1,11 @@
+{
+  "maxToolRounds": 8,
+  "providers": [
+    { "id": "preview", "name": "Local preview", "protocol": "preview", "baseUrl": null, "models": [{ "id": "workspace-explorer", "providerId": "preview", "name": "Workspace explorer", "supportsTools": true, "contextWindow": null }] },
+    { "id": "openai", "name": "OpenAI", "protocol": "open_ai_responses", "baseUrl": "https://api.openai.com/v1", "models": [{ "id": "gpt-5.4-mini", "providerId": "openai", "name": "GPT-5.4 mini", "supportsTools": true, "contextWindow": null }] },
+    { "id": "anthropic", "name": "Anthropic", "protocol": "anthropic", "baseUrl": "https://api.anthropic.com/v1", "models": [{ "id": "claude-sonnet-4-6", "providerId": "anthropic", "name": "Claude Sonnet 4.6", "supportsTools": true, "contextWindow": null }] },
+    { "id": "gemini", "name": "Google Gemini", "protocol": "gemini", "baseUrl": "https://generativelanguage.googleapis.com/v1beta", "models": [{ "id": "gemini-2.5-flash", "providerId": "gemini", "name": "Gemini 2.5 Flash", "supportsTools": true, "contextWindow": null }] },
+    { "id": "opencode-zen", "name": "OpenCode Zen", "protocol": "open_ai_chat", "baseUrl": "https://opencode.ai/zen/v1", "models": [{ "id": "deepseek-v4-flash", "providerId": "opencode-zen", "name": "DeepSeek V4 Flash", "supportsTools": true, "contextWindow": null }] },
+    { "id": "opencode-go", "name": "OpenCode Go", "protocol": "open_ai_chat", "baseUrl": "https://opencode.ai/zen/go/v1", "models": [{ "id": "deepseek-v4-flash", "providerId": "opencode-go", "name": "DeepSeek V4 Flash", "supportsTools": true, "contextWindow": null }] }
+  ]
+}

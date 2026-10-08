@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.impeccable/
