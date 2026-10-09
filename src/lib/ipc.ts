@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, ToolOutputChunk, UsageRecord } from '../types/domain';
-import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export const desktopAvailable = isTauri();
@@ -20,7 +20,12 @@ interface Commands {
   reveal_project: { args: { projectId: string }; result: null };
   run_project_terminal: { args: { projectId: string; commandText: string }; result: import('../types/domain').TerminalResult };
   project_branch: { args: { projectId: string }; result: string | null };
-  create_session: { args: { input: { projectId: string; providerId: string; modelId: string; permissionPolicy: PermissionPolicy } }; result: AgentSession };
+  project_task_worktrees: { args: { projectId: string }; result: TaskWorktree[] };
+  task_worktree_diff: { args: { sessionId: string }; result: string };
+  commit_task_worktree: { args: { sessionId: string }; result: TaskWorktreeAction };
+  apply_task_worktree: { args: { sessionId: string }; result: TaskWorktreeAction };
+  remove_task_worktree: { args: { sessionId: string }; result: AgentSession };
+  create_session: { args: { input: { projectId: string; providerId: string; modelId: string; permissionPolicy: PermissionPolicy; workspaceMode?: WorkspaceMode; baseBranch?: string | null; taskRequest?: string } }; result: AgentSession };
   update_session_model: { args: { input: { sessionId: string; providerId: string; modelId: string } }; result: AgentSession };
   set_default_model: { args: { selection: ModelReference | null }; result: ModelPreferences };
   toggle_model_favorite: { args: { selection: ModelReference }; result: ModelPreferences };
@@ -53,7 +58,7 @@ const responses = {
   bootstrap: bootstrapSchema, open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
-  reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), create_session: sessionSchema, send_message: sessionSchema,
+  reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), project_task_worktrees: z.array(taskWorktreeSchema), task_worktree_diff: z.string(), commit_task_worktree: taskWorktreeActionSchema, apply_task_worktree: taskWorktreeActionSchema, remove_task_worktree: sessionSchema, create_session: sessionSchema, send_message: sessionSchema,
   rename_session: sessionSchema, archive_session: sessionSchema, resume_session: sessionSchema, delete_session: z.null(), duplicate_session: sessionSchema, fork_session: sessionSchema,
   resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), cancel_session: z.null(), session_changes: sessionChangesSchema, session_file_diff: sessionFileDiffSchema, review_file_action: sessionChangesSchema, review_all_action: sessionChangesSchema, connect_provider: providerAccountSchema,
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,

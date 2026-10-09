@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::{path::Path, process::Output, time::Duration};
 use tokio::process::Command;
 
+pub mod worktree;
+
 async fn output(root: &Path, args: &[String], timeout: Duration) -> AppResult<Output> {
     let mut command = Command::new("git");
     command

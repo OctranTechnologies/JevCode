@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::AsyncReadExt;
 
 struct TauriEvents(AppHandle);
@@ -461,6 +461,148 @@ pub async fn project_branch(
     git::branch(Path::new(&project.path)).await
 }
 
+fn task_repository_root(project: &Project) -> AppResult<PathBuf> {
+    project
+        .repository_root
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            AppError::new(
+                "not_git_repository",
+                "This project is not connected to a Git repository.",
+            )
+        })
+}
+
+async fn task_project_path(project: &Project, session: &AgentSession) -> AppResult<PathBuf> {
+    if session.workspace_mode != WorkspaceMode::Isolated {
+        return std::fs::canonicalize(&project.path).map_err(|_| {
+            AppError::new(
+                "project_unavailable",
+                "The task project folder is unavailable.",
+            )
+        });
+    }
+    let worktree = session.worktree_path.as_deref().ok_or_else(|| {
+        AppError::new(
+            "worktree_unavailable",
+            "This isolated task's workspace was removed. Start a new task to continue.",
+        )
+    })?;
+    git::worktree::project_path(
+        &task_repository_root(project)?,
+        Path::new(&project.path),
+        Path::new(worktree),
+    )
+    .await
+}
+
+fn ensure_task_idle(state: &SharedState, session_id: &str) -> AppResult<()> {
+    if state
+        .runs
+        .lock()
+        .map_err(AppError::internal)?
+        .contains_key(session_id)
+    {
+        return Err(AppError::new(
+            "session_busy",
+            "Wait for the task to finish before managing its workspace.",
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn project_task_worktrees(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<TaskWorktree>> {
+    let project = state.database.project(&project_id)?;
+    let Some(repository_root) = project.repository_root.as_deref() else {
+        return Ok(vec![]);
+    };
+    let mut worktrees = Vec::new();
+    for session in state.database.sessions()?.into_iter().filter(|session| {
+        session.project_id == project_id
+            && session.workspace_mode == WorkspaceMode::Isolated
+            && session.worktree_path.is_some()
+    }) {
+        worktrees.push(git::worktree::inspect(Path::new(repository_root), &session).await?);
+    }
+    Ok(worktrees)
+}
+
+#[tauri::command]
+pub async fn task_worktree_diff(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<String> {
+    let session = state.database.session(&session_id)?;
+    let project = state.database.project(&session.project_id)?;
+    git::worktree::diff(&task_repository_root(&project)?, &session).await
+}
+
+#[tauri::command]
+pub async fn commit_task_worktree(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<TaskWorktreeAction> {
+    ensure_task_idle(&state, &session_id)?;
+    let session = state.database.session(&session_id)?;
+    let project = state.database.project(&session.project_id)?;
+    let repository_root = task_repository_root(&project)?;
+    git::worktree::commit(&repository_root, &session).await?;
+    Ok(TaskWorktreeAction {
+        worktree: Some(git::worktree::inspect(&repository_root, &session).await?),
+        conflicts: vec![],
+        message: "Task changes committed on the task branch. The project branch has not changed."
+            .into(),
+    })
+}
+
+#[tauri::command]
+pub async fn apply_task_worktree(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<TaskWorktreeAction> {
+    ensure_task_idle(&state, &session_id)?;
+    let session = state.database.session(&session_id)?;
+    let project = state.database.project(&session.project_id)?;
+    let repository_root = task_repository_root(&project)?;
+    let conflicts = git::worktree::apply(&repository_root, &session).await?;
+    Ok(TaskWorktreeAction {
+        worktree: Some(git::worktree::inspect(&repository_root, &session).await?),
+        message: if conflicts.is_empty() {
+            "Task changes merged into the project's current branch.".into()
+        } else {
+            "Git found conflicts. The project checkout was restored without applying the task."
+                .into()
+        },
+        conflicts,
+    })
+}
+
+#[tauri::command]
+pub async fn remove_task_worktree(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    ensure_task_idle(&state, &session_id)?;
+    let mut session = state.database.session(&session_id)?;
+    if session.workspace_mode != WorkspaceMode::Isolated || session.worktree_path.is_none() {
+        return Err(AppError::new(
+            "not_isolated",
+            "This task has no active isolated workspace.",
+        ));
+    }
+    let project = state.database.project(&session.project_id)?;
+    git::worktree::remove(&task_repository_root(&project)?, &session).await?;
+    session.worktree_path = None;
+    session.updated_at = now();
+    state.database.save_session(&session)?;
+    Ok(session)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateSession {
@@ -468,11 +610,18 @@ pub struct CreateSession {
     provider_id: String,
     model_id: String,
     permission_policy: PermissionPolicy,
+    #[serde(default)]
+    workspace_mode: WorkspaceMode,
+    #[serde(default)]
+    base_branch: Option<String>,
+    #[serde(default)]
+    task_request: Option<String>,
 }
 
 #[tauri::command]
 pub async fn create_session(
     input: CreateSession,
+    app: AppHandle,
     state: State<'_, SharedState>,
 ) -> AppResult<AgentSession> {
     let project = state.database.project(&input.project_id)?;
@@ -522,15 +671,48 @@ pub async fn create_session(
         .max_tool_rounds
         .min(project_policy.max_tool_rounds)
         .min(state.config.max_tool_rounds);
-    let branch = git::branch(Path::new(&project.path)).await.unwrap_or(None);
-    let worktree_path = project.repository_root.as_ref().and_then(|_| {
-        Path::new(&project.path)
-            .join(".git")
-            .is_file()
-            .then(|| project.path.clone())
-    });
+    let session_id = id();
+    let (branch, base_branch, worktree_path) = match input.workspace_mode {
+        WorkspaceMode::Direct => (
+            git::branch(Path::new(&project.path)).await.unwrap_or(None),
+            None,
+            None,
+        ),
+        WorkspaceMode::Isolated => {
+            let repository_root = project.repository_root.as_deref().ok_or_else(|| {
+                AppError::new("not_git_repository", "Isolated workspaces need a Git repository. Choose Work directly in project or open a repository.")
+            })?;
+            let repository_root = std::fs::canonicalize(repository_root).map_err(|_| {
+                AppError::new(
+                    "project_unavailable",
+                    "The project's Git repository is unavailable.",
+                )
+            })?;
+            let current_branch = git::branch(&repository_root).await?;
+            let base_branch = input.base_branch.or(current_branch).ok_or_else(|| {
+                AppError::new(
+                    "no_base_branch",
+                    "Choose an existing local branch before creating an isolated workspace.",
+                )
+            })?;
+            let branch = task_branch(input.task_request.as_deref().unwrap_or("task"), &session_id);
+            let app_data = app.path().app_data_dir().map_err(|_| {
+                AppError::new(
+                    "app_data_unavailable",
+                    "Could not locate JevCode's private workspace storage.",
+                )
+            })?;
+            let worktree_path = app_data.join("task-workspaces").join(&session_id);
+            git::worktree::create(&repository_root, &worktree_path, &base_branch, &branch).await?;
+            (
+                Some(branch),
+                Some(base_branch),
+                Some(worktree_path.to_string_lossy().into_owned()),
+            )
+        }
+    };
     let session = AgentSession {
-        id: id(),
+        id: session_id,
         project_id: input.project_id,
         provider_id: input.provider_id,
         model_id: input.model_id,
@@ -553,16 +735,53 @@ pub async fn create_session(
         tool_rounds: 0,
         archived_at: None,
         git_branch: branch,
+        workspace_mode: input.workspace_mode,
+        base_branch,
         worktree_path,
         working_context: WorkingContext::default(),
         project_instruction_files: instruction_files,
     };
-    state.database.save_session(&session)?;
+    if let Err(error) = state.database.save_session(&session) {
+        if let (Some(repository_root), Some(worktree_path)) = (
+            project.repository_root.as_deref(),
+            session.worktree_path.as_deref(),
+        ) {
+            let _ =
+                git::worktree::remove_path(Path::new(repository_root), Path::new(worktree_path))
+                    .await;
+        }
+        return Err(error);
+    }
     state.database.record_model_used(&ModelReference {
         provider_id: session.provider_id.clone(),
         model_id: session.model_id.clone(),
     })?;
     Ok(session)
+}
+
+fn task_branch(request: &str, session_id: &str) -> String {
+    let mut slug = String::new();
+    let mut separator = false;
+    for character in request.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+            separator = false;
+        } else if !slug.is_empty() && !separator {
+            slug.push('-');
+            separator = true;
+        }
+        if slug.len() >= 44 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    let slug = if slug.is_empty() { "task" } else { slug };
+    let suffix: String = session_id
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .take(8)
+        .collect();
+    format!("jevcode/{slug}-{suffix}")
 }
 
 fn task_title(request: &str) -> String {
@@ -871,6 +1090,13 @@ pub fn delete_session(session_id: String, state: State<'_, SharedState>) -> AppR
             "Stop the running task before deleting it.",
         ));
     }
+    let session = state.database.session(&session_id)?;
+    if session.workspace_mode == WorkspaceMode::Isolated && session.worktree_path.is_some() {
+        return Err(AppError::new(
+            "worktree_still_attached",
+            "Remove this task's isolated workspace from the project overview before deleting the task.",
+        ));
+    }
     let result = state.database.delete_session(&session_id);
     drop(runs);
     result
@@ -959,8 +1185,10 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
         error: None,
         tool_rounds: 0,
         archived_at: None,
-        git_branch: source.git_branch,
-        worktree_path: source.worktree_path,
+        git_branch: None,
+        workspace_mode: WorkspaceMode::Direct,
+        base_branch: None,
+        worktree_path: None,
         working_context: if fork {
             source.working_context
         } else {
@@ -1174,14 +1402,8 @@ pub async fn review_file_action(
     }
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
-    review::apply_file_action(
-        &state.database,
-        &session,
-        Path::new(&project.path),
-        &path,
-        action,
-    )
-    .await?;
+    let task_root = task_project_path(&project, &session).await?;
+    review::apply_file_action(&state.database, &session, &task_root, &path, action).await?;
     review::list_changes(&state.database, &session).await
 }
 
@@ -1204,7 +1426,8 @@ pub async fn review_all_action(
     }
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
-    review::apply_all_action(&state.database, &session, Path::new(&project.path), action).await?;
+    let task_root = task_project_path(&project, &session).await?;
+    review::apply_all_action(&state.database, &session, &task_root, action).await?;
     review::list_changes(&state.database, &session).await
 }
 
@@ -1413,6 +1636,25 @@ mod task_lifecycle_tests {
         );
         assert_eq!(task_title("# Explain the project"), "Explain the project");
         assert_eq!(task_title(&"x".repeat(80)).chars().count(), 59);
+    }
+
+    #[test]
+    fn generated_task_branches_are_safe_refs_and_unique() {
+        let first = task_branch(
+            "../../../ rm -rf .; --token\n🚀",
+            "123e4567-e89b-12d3-a456-426614174000",
+        );
+        let second = task_branch(
+            "../../../ rm -rf .; --token\n🚀",
+            "223e4567-e89b-12d3-a456-426614174000",
+        );
+        assert_eq!(first, "jevcode/rm-rf-token-123e4567");
+        assert_ne!(first, second);
+        let checked = std::process::Command::new("git")
+            .args(["check-ref-format", "--branch", &first])
+            .output()
+            .unwrap();
+        assert!(checked.status.success());
     }
 
     #[test]

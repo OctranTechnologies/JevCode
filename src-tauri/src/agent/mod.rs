@@ -1035,7 +1035,29 @@ async fn drive(
     runtime: &AgentRuntime,
     mut cancel: watch::Receiver<bool>,
 ) -> AppResult<()> {
-    let project = state.database.project(&session.project_id)?;
+    let mut project = state.database.project(&session.project_id)?;
+    if session.workspace_mode == WorkspaceMode::Isolated {
+        let worktree = session.worktree_path.as_deref().ok_or_else(|| {
+            AppError::new(
+                "worktree_unavailable",
+                "This isolated task's workspace was removed. Start a new task to continue.",
+            )
+        })?;
+        let repository_root = project.repository_root.as_deref().ok_or_else(|| {
+            AppError::new(
+                "not_git_repository",
+                "This task is missing its Git repository.",
+            )
+        })?;
+        project.path = crate::git::worktree::project_path(
+            Path::new(repository_root),
+            Path::new(&project.path),
+            Path::new(worktree),
+        )
+        .await?
+        .to_string_lossy()
+        .into_owned();
+    }
     review::ensure_baseline(&state.database, session, Path::new(&project.path)).await?;
     let provider_config = state.config.provider(&session.provider_id)?;
     let models = state
@@ -1223,6 +1245,8 @@ mod tests {
             tool_rounds: 0,
             archived_at: None,
             git_branch: None,
+            workspace_mode: WorkspaceMode::Direct,
+            base_branch: None,
             worktree_path: None,
             working_context: WorkingContext::default(),
             project_instruction_files: vec![],
@@ -1580,6 +1604,8 @@ mod tests {
             tool_rounds: 0,
             archived_at: None,
             git_branch: None,
+            workspace_mode: WorkspaceMode::Direct,
+            base_branch: None,
             worktree_path: None,
             working_context: Default::default(),
             project_instruction_files: vec![],

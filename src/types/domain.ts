@@ -6,6 +6,7 @@ export type PermissionResolution = 'allow_once' | 'allow_session' | 'always_allo
 export type ToolCategory = 'read_files' | 'git' | 'write_files' | 'shell' | 'user_interaction';
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type SessionStatus = 'queued' | 'planning' | 'working' | 'waiting_for_permission' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled';
+export type WorkspaceMode = 'direct' | 'isolated';
 export interface Provider {
   id: string;
   name: string;
@@ -84,6 +85,8 @@ export interface AgentSession {
   toolRounds: number;
   archivedAt: string | null;
   gitBranch: string | null;
+  workspaceMode: WorkspaceMode;
+  baseBranch: string | null;
   worktreePath: string | null;
   workingContext: WorkingContext;
   projectInstructionFiles: string[];
@@ -175,6 +178,25 @@ export interface ProjectOverview {
   repositorySizeBytes: number;
   scanLimited: boolean;
   languages: LanguageCount[];
+}
+export interface TaskWorktree {
+  sessionId: string;
+  title: string;
+  branch: string;
+  baseBranch: string;
+  taskStatus: SessionStatus;
+  available: boolean;
+  dirty: boolean;
+  hasCommittedChanges: boolean;
+  changedFiles: ChangedFile[];
+  conflicts: string[];
+  additions: number;
+  deletions: number;
+}
+export interface TaskWorktreeAction {
+  worktree: TaskWorktree | null;
+  conflicts: string[];
+  message: string;
 }
 export interface TerminalResult { output: string; exitCode: number | null; timedOut: boolean }
 export interface UsageRecord {

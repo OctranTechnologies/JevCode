@@ -19,6 +19,8 @@
   "toolRounds": 1,
   "archivedAt": null,
   "gitBranch": null,
+  "workspaceMode": "direct",
+  "baseBranch": null,
   "worktreePath": null,
   "workingContext": {
     "objective": "",

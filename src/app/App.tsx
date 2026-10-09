@@ -22,7 +22,7 @@ import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
 import { Brand } from '../components/Brand';
-import type { AgentSession, Model, ModelReference, PermissionResolution, Project, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff } from '../types/domain';
+import type { AgentSession, Model, ModelReference, PermissionResolution, Project, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, WorkspaceMode } from '../types/domain';
 import type { View } from '../features/workspaces/Sidebar';
 
 const demoBranch = 'feat/path-safety';
@@ -60,6 +60,9 @@ export default function App() {
   const [inspectorWidth, setInspectorWidth] = useState(318);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [branch, setBranch] = useState<string | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('direct');
+  const [baseBranch, setBaseBranch] = useState('');
+  const [projectBranches, setProjectBranches] = useState<string[]>([]);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('jevcode-theme');
@@ -137,11 +140,30 @@ export default function App() {
   useEffect(() => {
     let active = true;
     if (!desktopAvailable) { setBranch(session?.id === demoSession.id ? demoBranch : null); return; }
+    if (session?.workspaceMode === 'isolated') { setBranch(session.gitBranch); return () => { active = false; }; }
     if (!projectId) { setBranch(null); return; }
     setBranch(null);
     void command('project_branch', { projectId }).then(value => { if (active) setBranch(value); }).catch(() => { if (active) setBranch(null); });
     return () => { active = false; };
-  }, [projectId, session?.id]);
+  }, [projectId, session?.id, session?.gitBranch, session?.workspaceMode]);
+
+  useEffect(() => {
+    let active = true;
+    setProjectBranches([]);
+    if (!desktopAvailable || !project?.repositoryRoot) {
+      setBaseBranch('');
+      return () => { active = false; };
+    }
+    void Promise.all([
+      command('project_branches', { projectId: project.id }),
+      command('project_branch', { projectId: project.id }),
+    ]).then(([names, current]) => {
+      if (!active) return;
+      setProjectBranches(names);
+      setBaseBranch(previous => names.includes(previous) ? previous : current ?? names[0] ?? '');
+    }).catch(() => { if (active) { setProjectBranches([]); setBaseBranch(''); } });
+    return () => { active = false; };
+  }, [project?.id, project?.repositoryRoot]);
 
   useEffect(() => {
     let active = true;
@@ -176,6 +198,8 @@ export default function App() {
     const preferred = preferredFor(project);
     if (preferred) { setProviderChoice(preferred.providerId); setModelChoice(preferred.modelId); }
     setSessionId(null);
+    setWorkspaceMode('direct');
+    setBaseBranch(project?.activeBranch ?? '');
     setReviewChanges(null);
     setSelectedReviewPath(null);
     setReviewDiff(null);
@@ -198,6 +222,8 @@ export default function App() {
     const preferred = preferredFor(selected);
     if (preferred) { setProviderChoice(preferred.providerId); setModelChoice(preferred.modelId); }
     setSessionId(null);
+    setWorkspaceMode('direct');
+    setBaseBranch(selected?.activeBranch ?? '');
     setReviewChanges(null);
     setSelectedReviewPath(null);
     setReviewDiff(null);
@@ -214,6 +240,8 @@ export default function App() {
       setProviderChoice(selected.providerId);
       setModelChoice(selected.modelId);
       setSessionId(selected.id);
+      setWorkspaceMode(selected.workspaceMode);
+      setBaseBranch(selected.baseBranch ?? '');
       setReviewChanges(null);
       setSelectedReviewPath(null);
       setReviewDiff(null);
@@ -375,6 +403,9 @@ export default function App() {
       if (!active) {
         active = await command('create_session', { input: {
           projectId, providerId, modelId,
+          workspaceMode,
+          baseBranch: workspaceMode === 'isolated' ? baseBranch || null : null,
+          taskRequest: content.trim(),
           permissionPolicy: {
             ...data.permissionPolicy,
             readFiles: !includeProject ? 'deny' : askReads ? 'ask' : 'allow',
@@ -529,10 +560,10 @@ export default function App() {
       {view === 'agent' ? <>
         <div className="workspace-content">
           <Conversation session={session} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} onSuggestion={setDraft} onPermission={resolution => void resolvePermission(resolution)} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} permissionBusy={permissionBusy} />
-          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} />
+          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
-      </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
+      </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
     </main>
 
     {isAgentView && <>

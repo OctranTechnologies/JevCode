@@ -1158,6 +1158,8 @@ mod tests {
             tool_rounds: 0,
             archived_at: None,
             git_branch: None,
+            workspace_mode: crate::domain::WorkspaceMode::Direct,
+            base_branch: None,
             worktree_path: None,
             working_context: Default::default(),
             project_instruction_files: vec![],

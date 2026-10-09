@@ -110,6 +110,14 @@ pub enum SessionStatus {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceMode {
+    #[default]
+    Direct,
+    Isolated,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
@@ -148,6 +156,10 @@ pub struct AgentSession {
     pub archived_at: Option<String>,
     #[serde(default)]
     pub git_branch: Option<String>,
+    #[serde(default)]
+    pub workspace_mode: WorkspaceMode,
+    #[serde(default)]
+    pub base_branch: Option<String>,
     #[serde(default)]
     pub worktree_path: Option<String>,
     #[serde(default)]
@@ -485,6 +497,31 @@ pub struct ProjectOverview {
     pub repository_size_bytes: u64,
     pub scan_limited: bool,
     pub languages: Vec<LanguageCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWorktree {
+    pub session_id: String,
+    pub title: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub task_status: SessionStatus,
+    pub available: bool,
+    pub dirty: bool,
+    pub has_committed_changes: bool,
+    pub changed_files: Vec<ChangedFile>,
+    pub conflicts: Vec<String>,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWorktreeAction {
+    pub worktree: Option<TaskWorktree>,
+    pub conflicts: Vec<String>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

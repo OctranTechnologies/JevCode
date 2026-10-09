@@ -785,6 +785,9 @@ mod tests {
             serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
         session.archived_at = Some(now());
         session.git_branch = Some("feature/task-history".into());
+        session.workspace_mode = crate::domain::WorkspaceMode::Isolated;
+        session.base_branch = Some("main".into());
+        session.worktree_path = Some(root.path().join("task-worktree").display().to_string());
         session.project_instruction_files = vec!["AGENTS.md".into()];
         session.working_context = WorkingContext {
             objective: "Preserve this task objective.".into(),
@@ -839,6 +842,12 @@ mod tests {
         assert_eq!(reopened.working_context.compacted_turns, 3);
         assert_eq!(reopened.archived_at, session.archived_at);
         assert_eq!(reopened.git_branch.as_deref(), Some("feature/task-history"));
+        assert_eq!(
+            reopened.workspace_mode,
+            crate::domain::WorkspaceMode::Isolated
+        );
+        assert_eq!(reopened.base_branch.as_deref(), Some("main"));
+        assert_eq!(reopened.worktree_path, session.worktree_path);
         assert_eq!(reopened.project_instruction_files, vec!["AGENTS.md"]);
         database.delete_session(&session.id).unwrap();
         assert!(database.sessions().unwrap().is_empty());

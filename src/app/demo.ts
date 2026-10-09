@@ -70,7 +70,7 @@ export const demoSession: AgentSession = {
   pendingToolCall: null, pendingPermission: null, sessionPermissionGrants: [], oneTimePermissionGrants: [], pendingUserInput: null, queuedToolCalls: [],
   iterations: 0, toolCalls: 0, activityEvents: [],
   createdAt: earlier, updatedAt: '2026-10-09T09:16:32.000Z', error: null, toolRounds: 2,
-  archivedAt: null, gitBranch: 'feat/path-safety', worktreePath: null,
+  archivedAt: null, gitBranch: 'feat/path-safety', workspaceMode: 'direct', baseBranch: null, worktreePath: null,
   workingContext: { objective: 'Centralize project path validation and cover the edge cases. Keep the current behavior for valid paths.', decisions: [], repositoryFacts: [], implementationState: '', outstandingTasks: [], protectedInstructions: [], compactedThrough: null, compactedTurns: 0 },
   projectInstructionFiles: [],
 };

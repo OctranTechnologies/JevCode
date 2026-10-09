@@ -8,6 +8,7 @@ import {
 import { command } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import { displayPath } from '../../lib/paths';
+import { TaskWorktreesPanel } from './TaskWorktreesPanel';
 import type {
   AgentSession, ChangedFile, PermissionDecision, PermissionPolicy, Project,
   ProjectFileEntry, ProjectOverview as ProjectOverviewData, Provider, TerminalResult,
@@ -21,6 +22,7 @@ type Props = {
   onStartTask: () => void;
   onSelectSession: (session: AgentSession) => void;
   onProjectUpdated: (project: Project) => void;
+  onSessionUpdated: (session: AgentSession) => void;
   onError: (message: string | null) => void;
 };
 
@@ -42,6 +44,7 @@ const previewOverview = (project: Project): ProjectOverviewData => ({
 export function ProjectOverview({
   project, sessions, providers, desktopAllowed, onStartTask,
   onSelectSession, onProjectUpdated, onError,
+  onSessionUpdated,
 }: Props) {
   const [overview, setOverview] = useState<ProjectOverviewData | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -177,6 +180,8 @@ export function ProjectOverview({
             <div className="project-section-heading"><div><h2>Changed files</h2><span>{overview?.changedFiles.length ?? 0} in working tree</span></div><span className={`project-change-count${overview?.changedFiles.length ? ' has-changes' : ''}`}>{overview?.changedFiles.length ?? '—'}</span></div>
             {loading ? <SectionSkeleton rows={2} /> : overview?.changedFiles.length ? <ul className="project-change-list">{overview.changedFiles.slice(0, 7).map(file => <ChangedFileRow key={`${file.status}-${file.path}`} file={file} />)}</ul> : <p className="project-section-empty">No uncommitted changes.</p>}
           </section>
+
+          <TaskWorktreesPanel projectId={project.id} desktopAllowed={desktopAllowed} onSessionUpdated={onSessionUpdated} onProjectGitUpdated={refreshOverview} onError={onError} />
 
           <section className="project-section project-tasks-section">
             <div className="project-section-heading"><div><h2>Recent tasks</h2><span>Latest activity in this project</span></div></div>

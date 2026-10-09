@@ -1,9 +1,10 @@
-import { ArrowUp, AtSign, ChevronDown, FilePlus2, Paperclip, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
-import type { ModelPreferences, ModelReference, Provider } from '../../types/domain';
+import { ArrowUp, AtSign, ChevronDown, FilePlus2, GitBranch, Paperclip, ShieldCheck, Sparkles, Square, X } from 'lucide-react';
+import type { ModelPreferences, ModelReference, Provider, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
+  workspaceMode, onWorkspaceMode, baseBranch, onBaseBranch, branches, canIsolate,
   onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
   sessionLocked, desktopAllowed, providerConnected, contextOpen, setContextOpen, includeProject, setIncludeProject,
 }: {
@@ -19,6 +20,12 @@ export function WorkspaceComposer({
   modelLocked: boolean;
   mode: 'agent' | 'plan';
   onMode: (mode: 'agent' | 'plan') => void;
+  workspaceMode: WorkspaceMode;
+  onWorkspaceMode: (mode: WorkspaceMode) => void;
+  baseBranch: string;
+  onBaseBranch: (branch: string) => void;
+  branches: string[];
+  canIsolate: boolean;
   onSubmit: () => void;
   onStop: () => void;
   onAttach: () => void;
@@ -36,7 +43,8 @@ export function WorkspaceComposer({
   setIncludeProject: (include: boolean) => void;
 }) {
   const provider = providers.find(item => item.id === providerId);
-  const unavailable = !desktopAllowed || !hasProject || !providerConnected;
+  const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
+  const unavailable = !desktopAllowed || !hasProject || !providerConnected || workspaceUnavailable;
   return <section className="composer-dock" aria-label="Task composer">
     {contextOpen && <button className="popover-dismiss-area" aria-label="Close context controls" onClick={() => setContextOpen(false)} />}
     <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); }}>
@@ -45,6 +53,22 @@ export function WorkspaceComposer({
       <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={hasProject ? 'Ask JevCode to explore, explain, or change something…' : 'Open a project to start a task…'} rows={3} disabled={busy || sending} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); } }} />
       <div className="composer-toolbar">
         <div className="composer-tool-actions">
+          <label className="composer-select-wrap workspace-mode-select" title="Choose where this task works">
+            <GitBranch size={13} />
+            <span className="sr-only">Task workspace</span>
+            <select value={workspaceMode} onChange={event => onWorkspaceMode(event.target.value as WorkspaceMode)} disabled={sessionLocked || sending || busy} aria-label="Task workspace">
+              <option value="direct">Work directly in project</option>
+              <option value="isolated" disabled={!canIsolate}>Create isolated workspace</option>
+            </select>
+            <ChevronDown size={12} />
+          </label>
+          {workspaceMode === 'isolated' && <label className="composer-select-wrap workspace-base-select" title="Choose the branch this task starts from">
+            <span className="sr-only">Starting branch</span>
+            <select value={baseBranch} onChange={event => onBaseBranch(event.target.value)} disabled={sessionLocked || sending || busy || !branches.length} aria-label="Starting branch">
+              {branches.length ? branches.map(branch => <option key={branch} value={branch}>{branch}</option>) : <option value="">No local branches</option>}
+            </select>
+            <ChevronDown size={12} />
+          </label>}
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
           <div className="context-control-wrap">
             <button type="button" className={`composer-tool-button${contextOpen ? ' is-active' : ''}`} aria-expanded={contextOpen} onClick={() => setContextOpen(!contextOpen)}><AtSign size={14} /><span>Context</span><ChevronDown size={12} /></button>
@@ -64,7 +88,7 @@ export function WorkspaceComposer({
         </div>
       </div>
     </form>
-    <div className="composer-footnote"><span className="privacy-dot" />{!desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}</div>
+    <div className="composer-footnote"><span className="privacy-dot" />{workspaceMode === 'isolated' && workspaceUnavailable ? 'Choose a Git repository and a local starting branch for this isolated task' : !desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}</div>
   </section>;
 }
 
