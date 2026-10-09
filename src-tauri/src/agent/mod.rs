@@ -49,6 +49,7 @@ pub struct AgentRuntime {
 struct RuntimeServices<'a> {
     state: &'a SharedState,
     sink: &'a dyn EventSink,
+    cancel: &'a mut watch::Receiver<bool>,
     project: &'a Project,
     model: &'a Model,
     protocol: &'a ProviderProtocol,
@@ -82,6 +83,7 @@ impl AgentRuntime {
         let RuntimeServices {
             state,
             sink,
+            cancel,
             project,
             model,
             protocol,
@@ -153,9 +155,10 @@ impl AgentRuntime {
             );
             checkpoint(state, sink, session)?;
 
-            let start = Instant::now();
             let response = self
                 .request_with_retries(
+                    &state.database,
+                    cancel,
                     session,
                     ModelTurn {
                         model,
@@ -167,14 +170,6 @@ impl AgentRuntime {
                     sink,
                 )
                 .await?;
-            let record = usage::record(
-                &state.database,
-                session,
-                response.input_tokens,
-                response.output_tokens,
-                start.elapsed().as_millis() as u64,
-            )?;
-            sink.usage_updated(&record);
 
             let has_calls = !response.tool_calls.is_empty();
             let mut message = AgentMessage::text(MessageRole::Assistant, response.content);
@@ -203,6 +198,8 @@ impl AgentRuntime {
 
     async fn request_with_retries(
         &self,
+        database: &crate::persistence::Database,
+        cancel: &mut watch::Receiver<bool>,
         session: &AgentSession,
         turn: ModelTurn<'_>,
         sink: &dyn EventSink,
@@ -216,6 +213,10 @@ impl AgentRuntime {
         } = turn;
         let mut attempt = 0;
         loop {
+            if *cancel.borrow() {
+                return Err(AppError::new("cancelled", "Run stopped by you."));
+            }
+            let attempt_started = Instant::now();
             sink.stream_chunk(&session.id, "", true);
             let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
             let request = ProviderRequest {
@@ -234,7 +235,8 @@ impl AgentRuntime {
                         delta = receiver.recv(), if stream_open => match delta {
                             Some(delta) => sink.stream_chunk(&session.id, &delta, false),
                             None => stream_open = false,
-                        }
+                        },
+                        _ = cancel.changed() => break Err(AppError::new("cancelled", "Run stopped by you.")),
                     }
                 }
             })
@@ -250,7 +252,23 @@ impl AgentRuntime {
             }
 
             match response {
-                Ok(response) => return Ok(response),
+                Ok(response) => {
+                    let record = usage::record(
+                        database,
+                        session,
+                        model,
+                        usage::RequestMetrics {
+                            input_tokens: response.input_tokens,
+                            usage_available: response.usage_available,
+                            cached_input_tokens: response.cached_input_tokens,
+                            output_tokens: response.output_tokens,
+                            duration_ms: attempt_started.elapsed().as_millis() as u64,
+                            failure_code: None,
+                        },
+                    )?;
+                    sink.usage_updated(&record);
+                    return Ok(response);
+                }
                 Err(error)
                     if attempt < self.config.max_retries
                         && matches!(
@@ -258,11 +276,41 @@ impl AgentRuntime {
                             "network_error" | "provider_outage" | "request_timeout"
                         ) =>
                 {
+                    let record = usage::record(
+                        database,
+                        session,
+                        model,
+                        usage::RequestMetrics {
+                            input_tokens: 0,
+                            usage_available: false,
+                            cached_input_tokens: None,
+                            output_tokens: 0,
+                            duration_ms: attempt_started.elapsed().as_millis() as u64,
+                            failure_code: Some(error.code.clone()),
+                        },
+                    )?;
+                    sink.usage_updated(&record);
                     attempt += 1;
                     tracing::warn!(session_id = %session.id, attempt, code = %error.code, "Retrying provider request");
                     tokio::time::sleep(Duration::from_millis(200 * (1 << (attempt - 1)))).await;
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    let record = usage::record(
+                        database,
+                        session,
+                        model,
+                        usage::RequestMetrics {
+                            input_tokens: 0,
+                            usage_available: false,
+                            cached_input_tokens: None,
+                            output_tokens: 0,
+                            duration_ms: attempt_started.elapsed().as_millis() as u64,
+                            failure_code: Some(error.code.clone()),
+                        },
+                    )?;
+                    sink.usage_updated(&record);
+                    return Err(error);
+                }
             }
         }
     }
@@ -950,8 +998,8 @@ async fn run_inner(
     let session_id = session.id.clone();
     let result = tokio::select! {
         biased;
+        result = drive(&state, sink.as_ref(), &mut session, provider_override, &runtime, cancel.clone()) => result,
         _ = cancel.changed() => Err(AppError::new("cancelled", "Run stopped by you.")),
-        result = drive(&state, sink.as_ref(), &mut session, provider_override, &runtime) => result,
     };
     if let Err(error) = result {
         tracing::warn!(session_id = %session.id, code = %error.code, "Agent run ended");
@@ -985,6 +1033,7 @@ async fn drive(
     session: &mut AgentSession,
     provider_override: Option<Box<dyn LlmProvider>>,
     runtime: &AgentRuntime,
+    mut cancel: watch::Receiver<bool>,
 ) -> AppResult<()> {
     let project = state.database.project(&session.project_id)?;
     review::ensure_baseline(&state.database, session, Path::new(&project.path)).await?;
@@ -1018,6 +1067,7 @@ async fn drive(
             RuntimeServices {
                 state,
                 sink,
+                cancel: &mut cancel,
                 project: &project,
                 protocol: model
                     .api_protocol
@@ -1130,6 +1180,8 @@ mod tests {
             tool_calls,
             provider_data: None,
             input_tokens: 12,
+            usage_available: true,
+            cached_input_tokens: None,
             output_tokens: 7,
         }
     }
@@ -1458,7 +1510,15 @@ mod tests {
             .messages
             .iter()
             .any(|message| message.content == "Recovered after retry."));
-        assert_eq!(state.database.usage().unwrap().len(), 1);
+        let usage = state.database.usage().unwrap();
+        assert_eq!(usage.len(), 2);
+        assert!(usage.iter().any(
+            |record| !record.success && record.failure_code.as_deref() == Some("network_error")
+        ));
+        assert!(usage.iter().any(|record| record.success));
+        assert!(usage
+            .iter()
+            .all(|record| record.project_id == session.project_id));
     }
 
     #[tokio::test]
@@ -1487,6 +1547,10 @@ mod tests {
             state.database.session(&session.id).unwrap().status,
             SessionStatus::Cancelled
         );
+        let usage = state.database.usage().unwrap();
+        assert_eq!(usage.len(), 1);
+        assert!(!usage[0].success);
+        assert_eq!(usage[0].failure_code.as_deref(), Some("cancelled"));
     }
 
     #[test]

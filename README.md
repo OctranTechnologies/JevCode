@@ -457,7 +457,35 @@ tool runs, provider normalization and the shared TypeScript fixture. Frontend te
 cover IPC schemas, stale-event protection and error redaction. The approved design
 reference is in `docs/desktop-mockup.png`; it is not shipped as interface pixels.
 
-This foundation intentionally leaves OAuth, context compaction, pricing
-sync and signed/updatable release packaging for later features. Remote adapters
-are covered by offline protocol fixtures; live API calls require user credentials
-and have not been certified against every provider account or model.
+OAuth, context compaction, automatic pricing synchronization and signed/updatable
+release packaging remain future work. Remote adapters are covered by offline
+protocol fixtures; live API calls require user credentials and have not been
+certified against every provider account or model.
+
+## Local usage dashboard
+
+The Usage screen is labeled **Local Agent Usage** and records each model request
+attempt made by this application, including failed attempts and retries. Records
+are stored in the local SQLite usage table and include timestamp, provider,
+model, project, task, input/cached-input/output token counts, latency, result and
+an optional estimated cost. Older records remain readable; missing legacy fields
+are normalized when loading them.
+
+Estimated costs are calculated in one backend registry at
+`src-tauri/src/usage/pricing.rs`. Registry rates use USD per million tokens and
+are updated independently of dashboard aggregation. The bundled OpenAI,
+Anthropic and Gemini model rates come from their published API pricing; other
+models use normalized prices from the provider model catalog when available.
+Requests without a known rate keep a null estimate instead of showing a made-up
+amount. Cached-input rates are applied when the provider reports cached tokens.
+
+The dashboard does not import provider-account totals. Its note and exports
+explicitly distinguish application telemetry from provider billing, which may
+include activity outside JevCode, subscription allowances, discounts, or other
+pricing conditions. CSV and JSON exports include all locally stored request
+records, including their success state and any known pricing estimate.
+
+The maintained default-model pricing references are [OpenAI GPT-5.4 mini API
+pricing](https://developers.openai.com/api/docs/models/gpt-5.4-mini),
+[Anthropic Claude Sonnet 4.6 pricing](https://www.anthropic.com/news/claude-sonnet-4-6),
+and [Google Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing).

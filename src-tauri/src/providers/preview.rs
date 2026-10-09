@@ -42,6 +42,8 @@ impl LlmProvider for PreviewProvider {
             tool_calls,
             provider_data: None,
             input_tokens: 0,
+            usage_available: false,
+            cached_input_tokens: None,
             output_tokens: 0,
         })
     }

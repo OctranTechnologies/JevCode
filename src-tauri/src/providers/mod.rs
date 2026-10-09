@@ -19,6 +19,9 @@ pub struct ProviderResponse {
     pub tool_calls: Vec<ToolCall>,
     pub provider_data: Option<Value>,
     pub input_tokens: u64,
+    pub usage_available: bool,
+    /// Cached input tokens are a subset of input_tokens when the API reports them.
+    pub cached_input_tokens: Option<u64>,
     pub output_tokens: u64,
 }
 

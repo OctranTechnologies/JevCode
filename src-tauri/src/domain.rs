@@ -553,12 +553,30 @@ pub struct PermissionRule {
 pub struct UsageRecord {
     pub id: String,
     pub session_id: String,
+    #[serde(default)]
+    pub project_id: String,
     pub provider_id: String,
     pub model_id: String,
+    #[serde(default)]
     pub input_tokens: u64,
+    /// False when the provider response omitted token usage metadata.
+    #[serde(default = "default_true")]
+    pub usage_available: bool,
+    #[serde(default)]
+    pub cached_input_tokens: Option<u64>,
+    #[serde(default)]
     pub output_tokens: u64,
+    /// Local estimate in USD; this is never a provider-reported account bill.
+    #[serde(default, alias = "estimatedCostUsd")]
     pub cost_usd: Option<f64>,
+    #[serde(default)]
     pub duration_ms: u64,
+    /// Old records were written only for successful requests.
+    #[serde(default = "default_true")]
+    pub success: bool,
+    #[serde(default)]
+    pub failure_code: Option<String>,
+    #[serde(default)]
     pub created_at: String,
 }
 

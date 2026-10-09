@@ -815,12 +815,17 @@ mod tests {
                 .save_usage(&UsageRecord {
                     id: "usage-test".into(),
                     session_id: session.id.clone(),
+                    project_id: session.project_id.clone(),
                     provider_id: session.provider_id.clone(),
                     model_id: session.model_id.clone(),
                     input_tokens: 3,
+                    usage_available: true,
+                    cached_input_tokens: None,
                     output_tokens: 2,
                     cost_usd: None,
                     duration_ms: 10,
+                    success: true,
+                    failure_code: None,
                     created_at: now(),
                 })
                 .unwrap();

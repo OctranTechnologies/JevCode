@@ -180,12 +180,17 @@ export interface TerminalResult { output: string; exitCode: number | null; timed
 export interface UsageRecord {
   id: string;
   sessionId: string;
+  projectId: string;
   providerId: string;
   modelId: string;
   inputTokens: number;
+  usageAvailable: boolean;
+  cachedInputTokens: number | null;
   outputTokens: number;
   costUsd: number | null;
   durationMs: number;
+  success: boolean;
+  failureCode: string | null;
   createdAt: string;
 }
 export interface PermissionPolicy {

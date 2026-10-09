@@ -111,6 +111,8 @@ pub struct StreamAccumulator {
     gemini_parts: Vec<Value>,
     final_response: Option<Value>,
     input_tokens: u64,
+    usage_available: bool,
+    cached_input_tokens: Option<u64>,
     output_tokens: u64,
 }
 
@@ -125,6 +127,8 @@ impl StreamAccumulator {
             gemini_parts: Vec::new(),
             final_response: None,
             input_tokens: 0,
+            usage_available: false,
+            cached_input_tokens: None,
             output_tokens: 0,
         }
     }
@@ -139,12 +143,17 @@ impl StreamAccumulator {
         }
         match self.protocol {
             ProviderProtocol::OpenAiChat => {
+                self.usage_available |= value["usage"]["prompt_tokens"].as_u64().is_some()
+                    || value["usage"]["completion_tokens"].as_u64().is_some();
                 self.input_tokens = value["usage"]["prompt_tokens"]
                     .as_u64()
                     .unwrap_or(self.input_tokens);
                 self.output_tokens = value["usage"]["completion_tokens"]
                     .as_u64()
                     .unwrap_or(self.output_tokens);
+                self.cached_input_tokens = value["usage"]["prompt_tokens_details"]["cached_tokens"]
+                    .as_u64()
+                    .or(self.cached_input_tokens);
                 if let Some(calls) = value["choices"][0]["delta"]["tool_calls"].as_array() {
                     for call in calls {
                         let index = call["index"].as_u64().unwrap_or(0);
@@ -166,9 +175,12 @@ impl StreamAccumulator {
             }
             ProviderProtocol::Anthropic => match value["type"].as_str().unwrap_or_default() {
                 "message_start" => {
-                    self.input_tokens = value["message"]["usage"]["input_tokens"]
-                        .as_u64()
-                        .unwrap_or(0);
+                    let usage = &value["message"]["usage"];
+                    self.usage_available |= usage["input_tokens"].as_u64().is_some();
+                    let cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                    let cache_write = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                    self.input_tokens = usage["input_tokens"].as_u64().unwrap_or(0) + cache_write;
+                    self.cached_input_tokens = (cache_read > 0).then_some(cache_read);
                 }
                 "content_block_start" => {
                     if let Some(index) = value["index"].as_u64() {
@@ -194,6 +206,7 @@ impl StreamAccumulator {
                     }
                 }
                 "message_delta" => {
+                    self.usage_available |= value["usage"]["output_tokens"].as_u64().is_some();
                     self.output_tokens = value["usage"]["output_tokens"]
                         .as_u64()
                         .unwrap_or(self.output_tokens);
@@ -214,6 +227,12 @@ impl StreamAccumulator {
                         }
                     }
                 }
+                self.usage_available |= value["usageMetadata"]["promptTokenCount"]
+                    .as_u64()
+                    .is_some()
+                    || value["usageMetadata"]["candidatesTokenCount"]
+                        .as_u64()
+                        .is_some();
                 self.input_tokens = value["usageMetadata"]["promptTokenCount"]
                     .as_u64()
                     .unwrap_or(self.input_tokens);
@@ -249,7 +268,7 @@ impl StreamAccumulator {
                     .collect();
                 decode(
                     &self.protocol,
-                    json!({"choices":[{"message":{"role":"assistant","content":if self.visible_text.is_empty() { Value::Null } else { json!(self.visible_text) },"tool_calls":calls}}],"usage":{"prompt_tokens":self.input_tokens,"completion_tokens":self.output_tokens}}),
+                    json!({"choices":[{"message":{"role":"assistant","content":if self.visible_text.is_empty() { Value::Null } else { json!(self.visible_text) },"tool_calls":calls}}],"usage":{"prompt_tokens":self.usage_available.then_some(self.input_tokens),"prompt_tokens_details":{"cached_tokens":self.cached_input_tokens},"completion_tokens":self.usage_available.then_some(self.output_tokens)}}),
                 )
             }
             ProviderProtocol::Anthropic => {
@@ -261,7 +280,7 @@ impl StreamAccumulator {
                 let content: Vec<_> = self.anthropic_blocks.into_values().collect();
                 decode(
                     &self.protocol,
-                    json!({"content":content,"usage":{"input_tokens":self.input_tokens,"output_tokens":self.output_tokens}}),
+                    json!({"content":content,"usage":{"input_tokens":self.usage_available.then_some(self.input_tokens),"cache_read_input_tokens":self.cached_input_tokens,"output_tokens":self.usage_available.then_some(self.output_tokens)}}),
                 )
             }
             ProviderProtocol::Gemini => {
@@ -272,7 +291,7 @@ impl StreamAccumulator {
                 parts.append(&mut self.gemini_parts);
                 decode(
                     &self.protocol,
-                    json!({"candidates":[{"content":{"role":"model","parts":parts}}],"usageMetadata":{"promptTokenCount":self.input_tokens,"candidatesTokenCount":self.output_tokens}}),
+                    json!({"candidates":[{"content":{"role":"model","parts":parts}}],"usageMetadata":{"promptTokenCount":self.usage_available.then_some(self.input_tokens),"cachedContentTokenCount":self.cached_input_tokens,"candidatesTokenCount":self.usage_available.then_some(self.output_tokens)}}),
                 )
             }
             ProviderProtocol::Preview => Err(AppError::new(
@@ -472,6 +491,8 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
         tool_calls: vec![],
         provider_data: None,
         input_tokens: 0,
+        usage_available: false,
+        cached_input_tokens: None,
         output_tokens: 0,
     };
     match protocol {
@@ -507,6 +528,10 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
             }
             response.provider_data = Some(safe_message);
             response.input_tokens = value["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
+            response.usage_available = value["usage"]["prompt_tokens"].as_u64().is_some()
+                || value["usage"]["completion_tokens"].as_u64().is_some();
+            response.cached_input_tokens =
+                value["usage"]["prompt_tokens_details"]["cached_tokens"].as_u64();
             response.output_tokens = value["usage"]["completion_tokens"].as_u64().unwrap_or(0);
         }
         ProviderProtocol::OpenAiResponses => {
@@ -541,6 +566,10 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
                     .collect(),
             ));
             response.input_tokens = value["usage"]["input_tokens"].as_u64().unwrap_or(0);
+            response.usage_available = value["usage"]["input_tokens"].as_u64().is_some()
+                || value["usage"]["output_tokens"].as_u64().is_some();
+            response.cached_input_tokens =
+                value["usage"]["input_tokens_details"]["cached_tokens"].as_u64();
             response.output_tokens = value["usage"]["output_tokens"].as_u64().unwrap_or(0);
         }
         ProviderProtocol::Anthropic => {
@@ -570,7 +599,14 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
                     .cloned()
                     .collect(),
             ));
-            response.input_tokens = value["usage"]["input_tokens"].as_u64().unwrap_or(0);
+            let usage = &value["usage"];
+            let input = usage["input_tokens"].as_u64().unwrap_or(0);
+            let cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+            let cache_write = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+            response.input_tokens = input + cache_read + cache_write;
+            response.usage_available = usage["input_tokens"].as_u64().is_some()
+                || usage["output_tokens"].as_u64().is_some();
+            response.cached_input_tokens = (cache_read > 0).then_some(cache_read);
             response.output_tokens = value["usage"]["output_tokens"].as_u64().unwrap_or(0);
         }
         ProviderProtocol::Gemini => {
@@ -607,6 +643,14 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
             response.input_tokens = value["usageMetadata"]["promptTokenCount"]
                 .as_u64()
                 .unwrap_or(0);
+            response.usage_available = value["usageMetadata"]["promptTokenCount"]
+                .as_u64()
+                .is_some()
+                || value["usageMetadata"]["candidatesTokenCount"]
+                    .as_u64()
+                    .is_some();
+            response.cached_input_tokens =
+                value["usageMetadata"]["cachedContentTokenCount"].as_u64();
             response.output_tokens = value["usageMetadata"]["candidatesTokenCount"]
                 .as_u64()
                 .unwrap_or(0)
@@ -728,6 +772,44 @@ mod tests {
             let retained = serde_json::to_string(&response.provider_data).unwrap();
             assert!(!retained.contains("private thought"));
         }
+    }
+
+    #[test]
+    fn normalizes_cached_input_counts_across_provider_protocols() {
+        let open_ai = decode(
+            &ProviderProtocol::OpenAiChat,
+            json!({"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":40},"completion_tokens":10}}),
+        ).unwrap();
+        assert_eq!(open_ai.input_tokens, 100);
+        assert_eq!(open_ai.cached_input_tokens, Some(40));
+
+        let responses = decode(
+            &ProviderProtocol::OpenAiResponses,
+            json!({"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":50},"output_tokens":10}}),
+        ).unwrap();
+        assert_eq!(responses.input_tokens, 100);
+        assert_eq!(responses.cached_input_tokens, Some(50));
+
+        let anthropic = decode(
+            &ProviderProtocol::Anthropic,
+            json!({"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":35,"cache_read_input_tokens":55,"cache_creation_input_tokens":10,"output_tokens":10}}),
+        ).unwrap();
+        assert_eq!(anthropic.input_tokens, 100);
+        assert_eq!(anthropic.cached_input_tokens, Some(55));
+
+        let gemini = decode(
+            &ProviderProtocol::Gemini,
+            json!({"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":60,"candidatesTokenCount":10}}),
+        ).unwrap();
+        assert_eq!(gemini.input_tokens, 100);
+        assert_eq!(gemini.cached_input_tokens, Some(60));
+
+        let no_usage = decode(
+            &ProviderProtocol::OpenAiChat,
+            json!({"choices":[{"message":{"role":"assistant","content":"ok"}}]}),
+        )
+        .unwrap();
+        assert!(!no_usage.usage_available);
     }
 
     #[test]
