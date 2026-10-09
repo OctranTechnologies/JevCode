@@ -10,11 +10,12 @@
     "tauri": "tauri",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b --pretty false",
+    "format:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
     "test": "vitest run",
     "rust:check": "cargo check --manifest-path src-tauri/Cargo.toml --all-targets",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "rust:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
-    "check": "npm run lint && npm run typecheck && npm test && npm run rust:check && npm run rust:test"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run rust:check && npm run rust:test && npm run rust:lint"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",

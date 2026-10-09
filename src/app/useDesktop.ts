@@ -35,6 +35,7 @@ export function useDesktop() {
             const bounded = next.length > 32_000 ? `[earlier output truncated]\n${next.slice(-31_970)}` : next;
             return { ...current, [chunk.toolCallId]: { ...previous, [key]: bounded } };
           }),
+          account => dispatch({ type: 'account', account }),
         );
         if (disposed) { cleanup(); return; }
         unlisten = cleanup;

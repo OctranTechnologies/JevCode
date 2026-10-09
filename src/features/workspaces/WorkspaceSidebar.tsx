@@ -6,6 +6,7 @@ import { useState, type ReactNode } from 'react';
 import { Brand } from '../../components/Brand';
 import { displayPath } from '../../lib/paths';
 import type { AgentSession, Project, Provider } from '../../types/domain';
+import { primaryShortcutModifier } from '../../lib/shortcuts';
 import type { View } from './Sidebar';
 
 export function WorkspaceSidebar({
@@ -40,6 +41,7 @@ export function WorkspaceSidebar({
   onSearch: () => void;
 }) {
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
+  const modifier = primaryShortcutModifier;
   const [taskMenu, setTaskMenu] = useState<string | null>(null);
   const recentProjects = projects.filter(project => project.isRecent).slice(0, 5);
   const visibleTasks = sessions.filter(session => showArchived ? !!session.archivedAt : !session.archivedAt);
@@ -67,12 +69,12 @@ export function WorkspaceSidebar({
       </button>
     </div>
 
-    <button className="new-task-button" onClick={onNew} title="New task · Ctrl N">
-      <Plus size={16} strokeWidth={2.2} /><span>New task</span><kbd>Ctrl N</kbd>
+    <button className="new-task-button" onClick={onNew} title={`New task · ${modifier} N`}>
+      <Plus size={16} strokeWidth={2.2} /><span>New task</span><kbd>{modifier} N</kbd>
     </button>
 
-    <button className="sidebar-search" onClick={onSearch} title="Search projects and tasks · Ctrl K">
-      <Search size={15} /><span>Search</span><kbd>Ctrl K</kbd>
+    <button className="sidebar-search" onClick={onSearch} title={`Search projects and tasks · ${modifier} K`}>
+      <Search size={15} /><span>Search</span><kbd>{modifier} K</kbd>
     </button>
 
     <div className="sidebar-scroll">

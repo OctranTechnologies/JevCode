@@ -11,6 +11,7 @@ type Props = {
   modelId: string;
   locked?: boolean;
   compact?: boolean;
+  openRequest?: number;
   onSelect: (reference: ModelReference) => void;
   onToggleFavorite: (reference: ModelReference) => void;
   onSetDefault: (reference: ModelReference) => void;
@@ -26,7 +27,7 @@ function sameReference(left: ModelReference | null | undefined, right: ModelRefe
 
 function entryKey(providerId: string, modelId: string): string { return `${providerId}\u0000${modelId}`; }
 
-export function ModelPicker({ providers, preferences, providerId, modelId, locked = false, compact = false, onSelect, onToggleFavorite, onSetDefault }: Props) {
+export function ModelPicker({ providers, preferences, providerId, modelId, locked = false, compact = false, openRequest = 0, onSelect, onToggleFavorite, onSetDefault }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -81,6 +82,13 @@ export function ModelPicker({ providers, preferences, providerId, modelId, locke
   }, [open]);
 
   useEffect(() => { setActiveIndex(0); }, [query]);
+
+  useEffect(() => {
+    if (openRequest > 0 && !locked) {
+      updatePosition();
+      setOpen(true);
+    }
+  }, [locked, openRequest]);
 
   function choose(entry: Entry) {
     if (entry.model.status === 'unavailable') return;

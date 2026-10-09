@@ -32,6 +32,36 @@ pub trait ProviderAuthAdapter: Send + Sync {
     ) -> AppResult<ProviderAccount>;
 }
 
+/// Persist connection-health categories produced by real model requests so the
+/// Accounts screen reflects expired keys and outages without exposing response bodies.
+pub fn account_after_request_error(
+    provider: &Provider,
+    stored: Option<ProviderAccount>,
+    code: &str,
+) -> AppResult<Option<ProviderAccount>> {
+    if !matches!(
+        code,
+        "expired_authentication"
+            | "invalid_credential"
+            | "quota_exhausted"
+            | "subscription_unavailable"
+            | "network_error"
+            | "provider_outage"
+    ) {
+        return Ok(None);
+    }
+    let Some(mut account) = stored else {
+        return Ok(None);
+    };
+    if account.state == ProviderAuthState::NotConnected {
+        return Ok(None);
+    }
+    account.provider_name.clone_from(&provider.name);
+    account.state = ProviderAuthState::NeedsAttention;
+    account.last_error_code = Some(code.to_owned());
+    Ok(Some(account))
+}
+
 pub struct ApiKeyAuthAdapter {
     provider: Provider,
     client: Client,
@@ -608,6 +638,48 @@ mod tests {
             assert_eq!(error.code, expected);
             assert!(!error.to_string().contains("sk-test-secret-value"));
         }
+    }
+
+    #[test]
+    fn model_request_failures_refresh_account_health_without_persisting_remote_text() {
+        let provider = local_provider(
+            "openai",
+            ProviderProtocol::OpenAiResponses,
+            "https://api.example.test/v1".into(),
+        );
+        let mut account = ProviderAccount {
+            provider_id: "openai".into(),
+            provider_name: "Old name".into(),
+            state: ProviderAuthState::Connected,
+            auth_method: Some(ProviderAuthMethod::ApiKey),
+            account_label: Some("API key".into()),
+            connected_at: Some("2026-10-01T00:00:00Z".into()),
+            last_validated_at: None,
+            last_error_code: None,
+            available_methods: vec![],
+        };
+        let updated =
+            account_after_request_error(&provider, Some(account.clone()), "expired_authentication")
+                .unwrap()
+                .unwrap();
+        assert_eq!(updated.state, ProviderAuthState::NeedsAttention);
+        assert_eq!(
+            updated.last_error_code.as_deref(),
+            Some("expired_authentication")
+        );
+        assert_eq!(updated.provider_name, "openai");
+
+        account.state = ProviderAuthState::NotConnected;
+        assert!(
+            account_after_request_error(&provider, Some(account), "network_error")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            account_after_request_error(&provider, None, "invalid_argument")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -245,3 +245,10 @@ export interface Bootstrap {
   permissionPolicy: PermissionPolicy;
   modelPreferences: ModelPreferences;
 }
+export interface AppDiagnostics {
+  appVersion: string; operatingSystem: string; architecture: string; dataDirectory: string; logsDirectory: string;
+  projectCount: number; taskCount: number; connectedProviderCount: number; providerAttentionCount: number;
+}
+export interface UpdateInfo {
+  currentVersion: string; latestVersion: string; available: boolean; releaseUrl: string; notes: string; publishedAt: string | null;
+}

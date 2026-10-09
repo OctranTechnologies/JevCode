@@ -17,7 +17,7 @@ mod tools;
 mod usage;
 mod workspaces;
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc, time::SystemTime};
 use tauri::Manager;
 
 pub fn run() {
@@ -30,6 +30,7 @@ pub fn run() {
             for directory in [&data_dir, &config_dir, &log_dir] {
                 std::fs::create_dir_all(directory)?;
             }
+            prune_old_logs(&log_dir);
             let file_appender = tracing_appender::rolling::daily(log_dir, "jevcode.jsonl");
             let (writer, guard) = tracing_appender::non_blocking(file_appender);
             tracing_subscriber::fmt()
@@ -80,6 +81,10 @@ pub fn run() {
             commands::project_branches,
             commands::switch_project_branch,
             commands::reveal_project,
+            commands::reveal_application_logs,
+            commands::get_app_diagnostics,
+            commands::check_for_updates,
+            commands::open_latest_release,
             commands::run_project_terminal,
             commands::project_branch,
             commands::project_task_worktrees,
@@ -124,4 +129,32 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("JevCode could not start; check configuration and application logs");
+}
+
+fn prune_old_logs(directory: &Path) {
+    const RETENTION: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("jevcode.jsonl.") {
+            continue;
+        }
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if !kind.is_file() {
+            continue;
+        }
+        let expired = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age > RETENTION);
+        if expired {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }

@@ -9,7 +9,7 @@ import type { ModelPreferences, ModelReference } from '../../types/domain';
 export function WorkspaceHeader({
   projects, projectId, project, branch, providers, modelPreferences, providerId, modelId, onProject,
   onModel, onToggleFavorite, onSetDefault, session, modelLocked, sidebarCollapsed, onToggleSidebar, inspectorOpen, onToggleInspector,
-  darkMode, onToggleTheme, onSearch, onAskReads, askReads,
+  darkMode, onToggleTheme, onSearch, onAskReads, askReads, modelPickerOpenRequest,
 }: {
   projects: Project[];
   projectId: string;
@@ -33,6 +33,7 @@ export function WorkspaceHeader({
   onToggleTheme: () => void;
   onSearch: () => void;
   askReads: boolean;
+  modelPickerOpenRequest: number;
   onAskReads: (value: boolean) => void;
 }) {
   return <header className="workspace-toolbar">
@@ -46,7 +47,7 @@ export function WorkspaceHeader({
     </div>
     <div className="toolbar-actions">
       <details className="permission-menu"><summary title="Review tool permissions"><ShieldCheck size={14} /><span>Tool access</span><ChevronDown size={12} /></summary><div className="permission-popover"><strong>Session permissions</strong><p>Reads, edits, Git, commands, and outside-project access follow the project policy.</p><label><input type="checkbox" checked={session ? session.permissionPolicy.readFiles === 'ask' : askReads} disabled={!!session} onChange={event => onAskReads(event.target.checked)} />Ask before reading files</label><small>Change edit, command, and outside-project access in the project overview.</small>{session && <small>Start a new task to change this session's permissions.</small>}</div></details>
-      <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked} compact onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />
+      <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked} compact openRequest={modelPickerOpenRequest} onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />
       <button className="quiet-icon-button toolbar-search" onClick={onSearch} title="Search · Ctrl K" aria-label="Search"><Search size={15} /><kbd>Ctrl K</kbd></button>
       <button className="quiet-icon-button theme-toggle" onClick={onToggleTheme} title={darkMode ? 'Switch to light appearance' : 'Switch to dark appearance'} aria-label={darkMode ? 'Switch to light appearance' : 'Switch to dark appearance'}>{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button>
       <button className={`quiet-icon-button inspector-toggle${inspectorOpen ? ' is-active' : ''}`} onClick={onToggleInspector} title={inspectorOpen ? 'Hide task details' : 'Show task details'} aria-label={inspectorOpen ? 'Hide task details' : 'Show task details'} aria-pressed={inspectorOpen}><PanelRight size={16} /></button>

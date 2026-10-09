@@ -17,6 +17,7 @@ use tokio::{sync::watch, task::JoinSet};
 pub trait EventSink: Send + Sync {
     fn session_updated(&self, session: &AgentSession);
     fn usage_updated(&self, record: &UsageRecord);
+    fn provider_account_updated(&self, _account: &crate::domain::ProviderAccount) {}
     fn stream_chunk(&self, _session_id: &str, _delta: &str, _reset: bool) {}
     fn tool_output(&self, _session_id: &str, _tool_call_id: &str, _stream: &str, _chunk: &str) {}
 }
@@ -1051,6 +1052,20 @@ async fn run_inner(
     };
     if let Err(error) = result {
         tracing::warn!(session_id = %session.id, code = %error.code, "Agent run ended");
+        if let Ok(provider) = state.config.provider(&session.provider_id) {
+            let stored = state
+                .database
+                .provider_account(&session.provider_id)
+                .ok()
+                .flatten();
+            if let Ok(Some(account)) =
+                crate::auth::account_after_request_error(provider, stored, &error.code)
+            {
+                if state.database.save_provider_account(&account).is_ok() {
+                    sink.provider_account_updated(&account);
+                }
+            }
+        }
         session.status = if error.code == "cancelled" {
             SessionStatus::Cancelled
         } else {

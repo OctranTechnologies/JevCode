@@ -1,0 +1,28 @@
+name: Checks
+
+on:
+  pull_request:
+    branches: [polybit]
+  push:
+    branches: [polybit]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libwebkit2gtk-4.1-dev
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build

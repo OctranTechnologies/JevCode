@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
-  AlertCircle, ArrowUpRight, BriefcaseBusiness, CircleDot, Command, ShieldCheck,
+  Activity, AlertCircle, ArrowUpRight, BriefcaseBusiness, CircleDot, Command, ShieldCheck,
   FileCode2, FolderOpen, FolderPlus, ListChecks, Moon, PanelLeftClose, PanelLeftOpen, Plus,
-  Settings2, Sun, Terminal,
+  Settings2, Sun, Terminal, WifiOff,
 } from 'lucide-react';
 import { useDesktop } from './useDesktop';
 import { demoProject, demoSession } from './demo';
@@ -19,12 +19,15 @@ import { ProviderSettings } from '../features/providers/ProviderSettings';
 import { UsageView } from '../features/usage/UsageView';
 import { PermissionsSettings } from '../features/settings/PermissionsSettings';
 import { McpSettings } from '../features/settings/McpSettings';
+import { DiagnosticsSettings } from '../features/settings/DiagnosticsSettings';
 import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
 import { Brand } from '../components/Brand';
 import type { AgentSession, Model, ModelReference, PermissionResolution, Project, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, WorkspaceMode } from '../types/domain';
 import type { View } from '../features/workspaces/Sidebar';
+import { latestRestorableSession } from './restore';
+import { primaryShortcutModifier as shortcutMod } from '../lib/shortcuts';
 
 const demoBranch = 'feat/path-safety';
 
@@ -60,6 +63,9 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(252);
   const [inspectorWidth, setInspectorWidth] = useState(318);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0);
+  const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
+  const restorationAttempted = useRef(false);
   const [branch, setBranch] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('direct');
   const [baseBranch, setBaseBranch] = useState('');
@@ -89,6 +95,28 @@ export default function App() {
   const modelId = (session?.modelId ?? modelChoice) || provider?.models[0]?.id || '';
   const busy = !!session && ['queued', 'planning', 'working', 'waiting_for_permission'].includes(session.status);
   const tokens = desktop.usage.reduce((sum, record) => sum + record.inputTokens + record.outputTokens, 0);
+
+  useEffect(() => {
+    function online() { setNetworkOnline(true); }
+    function offline() { setNetworkOnline(false); }
+    window.addEventListener('online', online);
+    window.addEventListener('offline', offline);
+    return () => { window.removeEventListener('online', online); window.removeEventListener('offline', offline); };
+  }, []);
+
+  useEffect(() => {
+    if (desktop.loading || !data || restorationAttempted.current) return;
+    restorationAttempted.current = true;
+    const latest = latestRestorableSession(desktop.sessions, actualProjects);
+    if (!latest) return;
+    setSessionId(latest.id);
+    setProjectChoice(latest.projectId);
+    setProviderChoice(latest.providerId);
+    setModelChoice(latest.modelId);
+    setWorkspaceMode(latest.workspaceMode);
+    setBaseBranch(latest.baseBranch ?? '');
+    setView('agent');
+  }, [actualProjects, data, desktop.loading, desktop.sessions]);
 
   const findAvailableModel = useCallback((reference: ModelReference | null | undefined): ModelReference | undefined => {
     if (!reference) return undefined;
@@ -443,11 +471,17 @@ export default function App() {
     finally { setPermissionBusy(false); }
   }
 
-  async function stopTask() {
+  const stopTask = useCallback(async () => {
     if (!session) return;
     try { await command('cancel_session', { sessionId: session.id }); }
-    catch (error) { desktop.setError(normalizeError(error).message); }
-  }
+    catch (error) { setError(normalizeError(error).message); }
+  }, [session, setError]);
+
+  const toggleTerminal = useCallback(() => {
+    setView('agent');
+    if (inspectorOpen && inspectorTab === 'terminal') setInspectorOpen(false);
+    else { setInspectorTab('terminal'); setInspectorOpen(true); }
+  }, [inspectorOpen, inspectorTab]);
 
   const reviewFileAction = useCallback(async (path: string, action: ReviewFileAction) => {
     if (!session || !desktopAvailable || reviewBusy) return;
@@ -491,13 +525,17 @@ export default function App() {
 
   const paletteActions = useMemo<PaletteAction[]>(() => {
     const actions: PaletteAction[] = [
-      { id: 'new-task', label: 'New task', detail: 'Start a task in the current project', group: 'Actions', icon: <Plus size={15} />, shortcut: 'Ctrl N', run: newTask },
-      { id: 'open-project', label: 'Open project', detail: 'Choose a local project folder', group: 'Actions', icon: <FolderOpen size={15} />, run: () => void openFolder() },
+      { id: 'new-task', label: 'New task', detail: 'Start a task in the current project', group: 'Actions', icon: <Plus size={15} />, shortcut: `${shortcutMod} N`, run: newTask },
+      { id: 'open-project', label: 'Open project', detail: 'Choose a local project folder', group: 'Actions', icon: <FolderOpen size={15} />, shortcut: `${shortcutMod} O`, run: () => void openFolder() },
       { id: 'create-project', label: 'Create project', detail: 'Create a new folder and register it as a project', group: 'Actions', icon: <FolderPlus size={15} />, run: () => setCreateProjectOpen(true) },
-      { id: 'toggle-sidebar', label: sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar', group: 'Actions', icon: <BriefcaseBusiness size={15} />, shortcut: 'Ctrl B', run: () => setSidebarCollapsed(value => !value) },
+      { id: 'toggle-sidebar', label: sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar', group: 'Actions', icon: <BriefcaseBusiness size={15} />, shortcut: `${shortcutMod} B`, run: () => setSidebarCollapsed(value => !value) },
+      { id: 'toggle-model-picker', label: 'Choose model', group: 'Actions', icon: <CircleDot size={15} />, shortcut: `${shortcutMod} Shift M`, run: () => { setView('agent'); if (!busy && !sending) setModelPickerOpenRequest(value => value + 1); } },
+      { id: 'toggle-terminal', label: 'Toggle terminal activity', group: 'Panels', icon: <Terminal size={15} />, shortcut: `${shortcutMod} J`, run: toggleTerminal },
+      { id: 'stop-agent', label: 'Stop agent', detail: busy ? 'Cancel the current task run' : 'No task is running', group: 'Actions', icon: <CircleDot size={15} />, shortcut: `${shortcutMod} Shift X`, run: () => { if (busy) void stopTask(); } },
       { id: 'settings', label: 'Open accounts', detail: 'Manage providers and API keys', group: 'Navigation', icon: <Settings2 size={15} />, run: () => setView('providers') },
       { id: 'permissions', label: 'Manage permissions', detail: 'Set a permission mode and revoke project rules', group: 'Navigation', icon: <ShieldCheck size={15} />, run: () => setView('permissions') },
       { id: 'mcp', label: 'Manage MCP servers', detail: 'Configure external tools and trust settings', group: 'Navigation', icon: <Settings2 size={15} />, run: () => setView('mcp') },
+      { id: 'diagnostics', label: 'Open diagnostics', detail: 'Application health, logs, and updates', group: 'Navigation', icon: <Activity size={15} />, run: () => setView('diagnostics') },
       { id: 'usage', label: 'View usage', group: 'Navigation', icon: <CircleDot size={15} />, run: () => setView('usage') },
       { id: 'overview', label: 'Show project overview', group: 'Navigation', icon: <FolderOpen size={15} />, run: () => setView('overview') },
       { id: 'files', label: 'Show changed files', group: 'Panels', icon: <FileCode2 size={15} />, run: () => { setView('agent'); setInspectorTab('changes'); setInspectorOpen(true); } },
@@ -510,16 +548,20 @@ export default function App() {
     for (const item of projects) actions.push({ id: `project-${item.id}`, label: item.name, detail: item.path, group: 'Projects', icon: <FolderOpen size={15} />, run: () => chooseProject(item.id) });
     for (const item of allSessions) actions.push({ id: `task-${item.id}`, label: item.title || 'New task', detail: item.archivedAt ? 'Archived task · resume' : ['queued', 'planning', 'working'].includes(item.status) ? 'Working' : 'Recent task', group: 'Tasks', icon: <CircleDot size={15} />, run: () => selectSession(item) });
     return actions;
-  }, [allSessions, chooseProject, darkMode, newTask, openFolder, projects, selectSession, sidebarCollapsed]);
+  }, [allSessions, busy, chooseProject, darkMode, newTask, openFolder, projects, selectSession, sending, sidebarCollapsed, stopTask, toggleTerminal]);
 
   useEffect(() => {
     function handleShortcuts(event: KeyboardEvent) {
       const commandKey = event.ctrlKey || event.metaKey;
       if (!commandKey || event.altKey || event.isComposing) return;
       const key = event.key.toLowerCase();
-      if (key === 'k') { event.preventDefault(); setPaletteOpen(true); }
-      else if (key === 'n') { event.preventDefault(); newTask(); }
-      else if (key === 'b') { event.preventDefault(); setSidebarCollapsed(value => !value); }
+      if (event.shiftKey && key === 'm') { event.preventDefault(); if (!busy && !sending && session?.status !== 'waiting_for_user') { setView('agent'); setModelPickerOpenRequest(value => value + 1); } }
+      else if (event.shiftKey && key === 'x') { if (busy) { event.preventDefault(); void stopTask(); } }
+      else if (!event.shiftKey && key === 'k') { event.preventDefault(); setPaletteOpen(true); }
+      else if (!event.shiftKey && key === 'o') { event.preventDefault(); void openFolder(); }
+      else if (!event.shiftKey && key === 'n') { event.preventDefault(); newTask(); }
+      else if (!event.shiftKey && key === 'b') { event.preventDefault(); setSidebarCollapsed(value => !value); }
+      else if (!event.shiftKey && key === 'j') { event.preventDefault(); toggleTerminal(); }
     }
     function handleEscape() {
       setContextOpen(false);
@@ -533,7 +575,7 @@ export default function App() {
       window.removeEventListener('keydown', handleShortcuts);
       window.removeEventListener('keydown', handleEscapeKey);
     };
-  }, [newTask, windowWidth]);
+  }, [busy, newTask, openFolder, sending, session?.status, stopTask, toggleTerminal, windowWidth]);
 
   if (desktop.loading) return <WorkspaceSkeleton />;
   if (!data) return <main className="startup-error"><div className="startup-error-card"><AlertCircle size={24} /><h1>JevCode couldn’t open</h1><p>{desktop.error ?? 'The local workspace service could not be reached.'}</p><button className="button-primary" onClick={desktop.retry}>Try again</button></div></main>;
@@ -556,8 +598,9 @@ export default function App() {
     {!sidebarCollapsed && <ResizeDivider label="Resize sidebar" width={sidebarWidth} min={210} max={340} onResize={setSidebarWidth} />}
 
     <main className="workbench-main">
-      {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onProject={chooseProject} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} session={session} modelLocked={!desktopAvailable || busy || sending || session?.status === 'waiting_for_user'} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>JevCode</span><strong>{isProjectView ? project?.name ?? 'Projects' : view === 'providers' ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
+      {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onProject={chooseProject} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} session={session} modelLocked={!desktopAvailable || busy || sending || session?.status === 'waiting_for_user'} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} modelPickerOpenRequest={modelPickerOpenRequest} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>JevCode</span><strong>{isProjectView ? project?.name ?? 'Projects' : view === 'providers' ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : view === 'diagnostics' ? 'Diagnostics' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
       {desktop.error && <div className="workspace-error-banner" role="alert"><AlertCircle size={15} /><span>{desktop.error}</span><button onClick={() => desktop.setError(null)} aria-label="Dismiss error">Dismiss</button></div>}
+      {!networkOnline && <div className="workspace-offline-banner" role="status"><WifiOff size={14} /><span>Offline. Local projects and saved tasks are still available; provider requests will retry when you reconnect.</span></div>}
 
       {view === 'agent' ? <>
         <div className="workspace-content">
@@ -565,7 +608,7 @@ export default function App() {
           <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
-      </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
+      </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
     </main>
 
     {isAgentView && <>

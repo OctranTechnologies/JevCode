@@ -1,9 +1,11 @@
 import { z } from 'zod';
-import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, Bootstrap, McpServerView, Model, ModelPreferences, PermissionPolicy, PermissionRequest, PermissionRule, Project, Provider, ProviderAccount, ProviderAccountInfo, SessionChange, SessionChanges, SessionFileDiff, Tool, ToolCall, ToolOutputChunk, ToolResult, UsageRecord, Workspace } from '../types/domain';
+import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpServerView, Model, ModelPreferences, PermissionPolicy, PermissionRequest, PermissionRule, Project, Provider, ProviderAccount, ProviderAccountInfo, SessionChange, SessionChanges, SessionFileDiff, Tool, ToolCall, ToolOutputChunk, ToolResult, UpdateInfo, UsageRecord, Workspace } from '../types/domain';
 
 const count = z.number().int().nonnegative();
 const decision = z.enum(['allow', 'ask', 'deny']);
 export const permissionModeSchema = z.enum(['ask', 'workspace_write', 'full_access']);
+export const appDiagnosticsSchema: z.ZodType<AppDiagnostics> = z.object({ appVersion: z.string(), operatingSystem: z.string(), architecture: z.string(), dataDirectory: z.string(), logsDirectory: z.string(), projectCount: count, taskCount: count, connectedProviderCount: count, providerAttentionCount: count });
+export const updateInfoSchema: z.ZodType<UpdateInfo> = z.object({ currentVersion: z.string(), latestVersion: z.string(), available: z.boolean(), releaseUrl: z.string().url(), notes: z.string(), publishedAt: z.string().nullable() });
 export const permissionCategorySchema = z.enum(['read', 'write', 'command', 'network', 'dangerous']);
 export const permissionSchema: z.ZodType<PermissionPolicy> = z.object({ mode: permissionModeSchema.default('ask'), readFiles: decision, git: decision, writeFiles: decision, shell: decision, externalFiles: decision.default('ask'), maxToolRounds: count });
 export const permissionRequestSchema: z.ZodType<PermissionRequest> = z.object({ categories: z.array(permissionCategorySchema), summary: z.string(), reason: z.string(), canAlwaysAllow: z.boolean() });

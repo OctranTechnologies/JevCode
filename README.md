@@ -1,9 +1,9 @@
 # JevCode
 
 A local desktop AI coding agent built with Tauri 2, React, TypeScript, Vite,
-Tailwind CSS and Rust. The project starts from a modular agent foundation: open a
-project, choose a provider, send a message, inspect tool activity, approve a tool
-when requested, and resume saved conversations.
+Tailwind CSS and Rust. Open a project, choose a provider and model, run a task,
+review tool activity and diffs, approve sensitive actions, and resume the last
+task when the desktop starts again.
 
 The original repository contained only this README and a license. No incumbent
 application or architecture was replaced. The initial architecture scope puts
@@ -45,6 +45,13 @@ clearly labeled sample project, task, activity, diff, and terminal output so the
 workspace can be reviewed without connecting a provider. Sample actions are not
 executed, and local-project, credential, and send controls require the desktop app.
 
+## Screenshots
+
+![Approved JevCode desktop workspace design reference](docs/desktop-mockup.png)
+
+This is the approved design reference, not a capture of a running build. A native
+runtime screenshot should be added after visual review on a supported capture host.
+
 ## Workspace interface
 
 The main window uses a project and task sidebar, an agent activity timeline, a
@@ -52,13 +59,17 @@ task composer, and an optional right inspector for files, diffs, terminal activi
 context, and task details. The sidebar and inspector resize from their dividers;
 the sidebar collapses to an icon rail. On narrower windows, the inspector and
 sidebar become drawers so the conversation stays usable. The layout has been
-reviewed at 1280×850, 900×640, and 618×708 browser viewports.
+reviewed at 1280×850, 900×640, and 618×708 browser viewports. A native desktop
+screenshot and live resizing pass still need a supported capture surface.
 
-Use **Ctrl+K** to search projects, tasks, and commands, **Ctrl+N** to start a task,
-and **Ctrl+B** to collapse the sidebar. Enter sends a task and Shift+Enter adds a
-line. The composer includes project-local file references, project context, a
-model selector, and Agent / Plan first modes. Selected files are limited to the
-open project; the task receives their relative paths for the existing read tool.
+Use **Ctrl/Cmd+N** for a new task, **Ctrl/Cmd+O** to open a project,
+**Ctrl/Cmd+K** for the command palette, **Ctrl/Cmd+Shift+M** for model selection,
+**Ctrl/Cmd+B** to toggle the sidebar, **Ctrl/Cmd+J** for terminal activity, and
+**Ctrl/Cmd+Shift+X** to stop a running agent. The command palette lists these
+actions too. Enter sends a task and Shift+Enter adds a line. The composer includes
+project-local file references, project context, a model selector, and Agent / Plan
+modes. Selected files are limited to the open project; the task receives their
+relative paths for the existing read tool.
 The inspector reports empty states in native sessions when that capability is not
 available. Browser preview labels every illustrative activity and diff as sample
 data.
@@ -383,9 +394,10 @@ Tauri resolves the OS-specific app data, config and log directories. On Windows,
 data/config live under `%APPDATA%/dev.jevcode.desktop`; logs live under
 `%LOCALAPPDATA%/dev.jevcode.desktop/logs`. `jevcode.sqlite` stores projects, complete
 session snapshots, usage records, permission mode and project permission rules;
-WAL mode, foreign keys and a busy timeout are enabled. `schema.sql` is version 6,
-with in-place migrations for workspace, authentication metadata, model catalogs,
-preferences and permissions. Conversation and project content are local plaintext;
+WAL mode, foreign keys and a busy timeout are enabled. SQLite schema version 9
+includes in-place migrations for workspace, authentication metadata, model catalogs,
+preferences, permissions, review checkpoints and MCP configuration. Conversation
+and project content are local plaintext;
 provider account metadata contains no secrets, and keys are separately protected
 by the OS keychain.
 
@@ -407,6 +419,10 @@ The backend reclassifies every request when it resumes and never trusts a UI-pro
 command classification. Denial returns an error tool result to the model. Cancellation
 closes unresolved calls with error results so provider history stays valid.
 Interrupted running sessions become failed on restart; pending approvals survive.
+The most recently opened, non-archived task is restored when its project is still
+available. Offline network status is shown in the workspace, provider request errors
+update account health without persisting remote response text, and Accounts offers
+revalidation for expired credentials.
 
 The Rust tool registry is the only route from model tool calls to project files,
 Git, and commands. Each tool descriptor declares a JSON schema, permission
@@ -424,8 +440,10 @@ File tools include `read_file`, `read_files`, `list_directory`, `search_files`,
 files and never recursively delete directories or overwrite move destinations.
 Repository context includes `git_status`, `git_diff`, `git_log`, `git_show`,
 `git_branch`, `inspect_project`, `find_symbol`, and `find_references`. `run_command`
-executes a program with an argument array and a validated working directory; it does
-not interpolate through a shell. Stdout and stderr stream into the task timeline
+starts a program with an argument array and a validated working directory; it does
+not add an implicit shell. A model can request an explicit shell interpreter, which
+is classified as dangerous and needs fresh approval because static inspection cannot
+predict its effects. Stdout and stderr stream into the task timeline
 separately and are capped before persistence or model context. Exit status and
 timeout details are returned as structured results. Cancelling a task drops the
 running child process. Agent-launched processes inherit a small allowlist of
@@ -458,15 +476,38 @@ billed remotely and are not represented in these successful-response totals.
 Rust returns structured `{ code, message }` errors across IPC. A React error
 boundary offers reload recovery; operation errors provide actionable inline copy.
 `tracing` writes daily JSONL logs with timestamps, service errors and allowlisted
-event names. Frontend logging accepts fixed identifiers only. Request/response bodies, prompts,
-tool content and API keys are not logged. `RUST_LOG=jevcode_lib=debug` changes verbosity.
-Logs currently need manual retention management.
+event names. Frontend logging accepts fixed identifiers only. Request/response bodies,
+prompts, tool content and API keys are not logged. Old application-owned log files
+are pruned after 30 days. Settings → Diagnostics shows app/OS/build information,
+local data and log locations, provider/project/session counts, connectivity, and a
+manual latest-release check. Diagnostics export is limited to those non-secret
+fields. `RUST_LOG=jevcode_lib=debug` changes Rust verbosity.
 
-The webview CSP permits local assets and Tauri IPC. Tauri capability grants allow
-core events and a folder dialog. Provider networking, filesystem access, Git and
-credential retrieval stay in Rust; general filesystem/shell plugins are not exposed
-to JavaScript. shadcn/ui is optional; this small foundation uses semantic native
+The webview CSP permits local assets and Tauri IPC. Tauri capability grants only
+the event listen/unlisten operations used by the UI and a folder dialog. Provider
+networking, filesystem access, Git, update checks and credential retrieval stay in
+Rust; general filesystem/shell plugins are not exposed to JavaScript. The update
+screen checks the official JevCode GitHub latest-release endpoint with a fixed URL,
+bounded response/time and redirects disabled; opening the release page uses a fixed
+official URL. shadcn/ui is optional; this small foundation uses semantic native
 controls and Lucide icons without introducing a component framework dependency.
+
+## Security audit and known limits
+
+| Area | Control in this build | Remaining limit |
+| --- | --- | --- |
+| API key exposure | Secrets live in OS keychain; typed IPC schemas omit secret reads; request bodies and credentials are not logged; child processes get an allowlisted environment | Project/session text and local DB are plaintext in the OS app-data directory |
+| Filesystem traversal | Project IDs plus canonicalized relative paths; Rust rejects traversal and escaping symlinks; webview has no generic FS API | A link/path can race between validation and use; approved processes run with the desktop user's filesystem rights |
+| Command injection | Process API receives executable and args separately; interpreter and inline-code commands receive dangerous classification and fresh approval | An approved shell script can do anything available to the current OS user; this is not a sandbox |
+| Environment leakage | Agent children get a small allowlist; provider and common authentication variables are filtered; MCP stderr is discarded | Allowlisted variables can still contain machine-specific information |
+| URL handling | Provider/model adapters use fixed official endpoints; MCP HTTP requires HTTPS except loopback, disallows redirects; release check validates the official GitHub host/path | A trusted server or provider still receives the data needed for its request |
+| Logs | Structured logs and frontend event allowlist exclude prompts, tool output, response bodies and keys; 30-day file retention | Debug builds can include additional Rust diagnostics; users should review logs before sharing |
+| Tauri permissions | Minimal event and dialog capability; no JS filesystem, shell or HTTP plugin permissions | Native Rust commands remain privileged and rely on typed inputs, project scope and tool permission checks |
+
+Provider failures distinguish invalid/expired authentication, quota, unavailable
+subscription, network errors and provider outages. Crash recovery marks in-progress
+tasks interrupted and restores the latest usable task; it does not automatically
+retry an interrupted billed model request.
 
 ## Validation and build
 
@@ -481,16 +522,32 @@ npm run build
 npm run tauri build
 ```
 
-`npm run check` runs lint, TypeScript, frontend tests, Rust checks and Rust tests.
+`npm run check` runs Rust formatting, lint, TypeScript, frontend tests, Rust checks,
+Rust tests and strict Clippy.
 Rust tests cover persistence, path scoping, permission enforcement, real preview
 tool runs, provider normalization and the shared TypeScript fixture. Frontend tests
-cover IPC schemas, stale-event protection and error redaction. The approved design
-reference is in `docs/desktop-mockup.png`; it is not shipped as interface pixels.
+cover IPC schemas, stale-event protection, error redaction, keyboard shortcuts and
+session restoration. There is not yet a separate packaged-app integration suite.
+The approved design reference is in `docs/desktop-mockup.png`; it is not shipped as
+interface pixels.
 
-OAuth, context compaction, automatic pricing synchronization and signed/updatable
-release packaging remain future work. Remote adapters are covered by offline
-protocol fixtures; live API calls require user credentials and have not been
-certified against every provider account or model.
+### Release builds and updates
+
+Push a semantic version tag such as `v0.1.0` to build Windows, Linux x64,
+macOS Apple Silicon and macOS Intel installers. `.github/workflows/release.yml`
+creates a draft GitHub release with unsigned artifacts. macOS notarization/signing
+and Windows signing require maintainer certificates and are not configured here.
+Settings → Diagnostics can check for a newer GitHub release and open its release
+page; it does not silently install updates. Signed in-app updates require an updater
+key and corresponding public key and CI private-key secrets before enabling Tauri's
+updater plugin.
+
+Provider adapters are covered by offline protocol fixtures. Live API calls require
+user credentials and have not been certified against every provider account/model.
+Official third-party OAuth for ChatGPT subscriptions, Claude Code subscriptions,
+and Gemini account access remains disabled unless the provider offers JevCode an
+official supported client flow. Provider-account billing is not imported; local
+usage estimates are explicitly separate from provider dashboards.
 
 ## Local usage dashboard
 

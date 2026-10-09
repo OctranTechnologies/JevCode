@@ -31,6 +31,11 @@ impl EventSink for TauriEvents {
             tracing::warn!(%error, "Event delivery failed");
         }
     }
+    fn provider_account_updated(&self, account: &ProviderAccount) {
+        if let Err(error) = self.0.emit("provider:account-updated", account) {
+            tracing::warn!(%error, "Provider account status delivery failed");
+        }
+    }
     fn stream_chunk(&self, session_id: &str, delta: &str, reset: bool) {
         let event = AgentStreamChunk {
             session_id: session_id.into(),
@@ -462,22 +467,32 @@ pub fn reveal_project(project_id: String, state: State<'_, SharedState>) -> AppR
             "This project is not a folder.",
         ));
     }
+    reveal_path_in_file_manager(&path)
+}
+
+#[tauri::command]
+pub fn reveal_application_logs(app: AppHandle) -> AppResult<()> {
+    let path = app.path().app_log_dir().map_err(AppError::internal)?;
+    reveal_path_in_file_manager(&path)
+}
+
+fn reveal_path_in_file_manager(path: &Path) -> AppResult<()> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = std::process::Command::new("explorer.exe");
-        command.arg(&path);
+        command.arg(path);
         command
     };
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
-        command.arg(&path);
+        command.arg(path);
         command
     };
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = {
         let mut command = std::process::Command::new("xdg-open");
-        command.arg(&path);
+        command.arg(path);
         command
     };
     #[cfg(windows)]
@@ -489,6 +504,183 @@ pub fn reveal_project(project_id: String, state: State<'_, SharedState>) -> AppR
             "reveal_failed",
             "The system file manager could not be opened.",
         )
+    })
+}
+
+#[derive(Deserialize)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+    #[serde(default)]
+    body: String,
+    published_at: Option<String>,
+}
+
+const RELEASE_API_URL: &str =
+    "https://api.github.com/repos/OctranTechnologies/JevCode/releases/latest";
+const RELEASE_PAGE_URL: &str = "https://github.com/OctranTechnologies/JevCode/releases/latest";
+const RELEASE_BODY_LIMIT: usize = 1024 * 1024;
+
+#[tauri::command]
+pub async fn check_for_updates() -> AppResult<UpdateInfo> {
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("JevCode/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(12))
+        .connect_timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(AppError::internal)?;
+    let mut response = client
+        .get(RELEASE_API_URL)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|_| {
+            AppError::new(
+                "network_error",
+                "Could not reach GitHub Releases. Check your connection and retry.",
+            )
+        })?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(AppError::new(
+            "release_unavailable",
+            "No public JevCode release is available yet.",
+        ));
+    }
+    if response.status() == reqwest::StatusCode::FORBIDDEN
+        || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Err(AppError::new(
+            "release_rate_limited",
+            "GitHub temporarily limited update checks. Try again later.",
+        ));
+    }
+    if !response.status().is_success() {
+        return Err(AppError::new(
+            "release_service_unavailable",
+            "GitHub Releases is temporarily unavailable. Try again later.",
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > RELEASE_BODY_LIMIT as u64)
+    {
+        return Err(AppError::new(
+            "release_response_limit",
+            "GitHub returned an unexpectedly large release record.",
+        ));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| {
+        AppError::new(
+            "network_error",
+            "The update check was interrupted. Check your connection and retry.",
+        )
+    })? {
+        if bytes.len().saturating_add(chunk.len()) > RELEASE_BODY_LIMIT {
+            return Err(AppError::new(
+                "release_response_limit",
+                "GitHub returned an unexpectedly large release record.",
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let release: GitHubRelease = serde_json::from_slice(&bytes).map_err(|_| {
+        AppError::new(
+            "release_format",
+            "GitHub returned update information JevCode could not read.",
+        )
+    })?;
+    if !is_jevcode_release_url(&release.html_url) {
+        return Err(AppError::new(
+            "release_url_invalid",
+            "GitHub returned an unexpected release link.",
+        ));
+    }
+    let latest =
+        semver::Version::parse(release.tag_name.trim_start_matches('v')).map_err(|_| {
+            AppError::new(
+                "release_version_invalid",
+                "GitHub returned a release with an invalid version.",
+            )
+        })?;
+    let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(AppError::internal)?;
+    Ok(UpdateInfo {
+        current_version: current.to_string(),
+        latest_version: latest.to_string(),
+        available: latest > current,
+        release_url: release.html_url,
+        notes: release.body.chars().take(4000).collect(),
+        published_at: release.published_at,
+    })
+}
+
+fn is_jevcode_release_url(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("github.com")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url
+                .path()
+                .starts_with("/OctranTechnologies/JevCode/releases/")
+    })
+}
+
+#[tauri::command]
+pub fn open_latest_release() -> AppResult<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer.exe");
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(RELEASE_PAGE_URL);
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    command.spawn().map(|_| ()).map_err(|_| {
+        AppError::new(
+            "release_open_failed",
+            "Could not open the official JevCode release page.",
+        )
+    })
+}
+
+#[tauri::command]
+pub fn get_app_diagnostics(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<AppDiagnostics> {
+    let accounts = state
+        .config
+        .providers
+        .iter()
+        .filter(|provider| provider.protocol != ProviderProtocol::Preview)
+        .map(|provider| account_status(&state, provider))
+        .collect::<AppResult<Vec<_>>>()?;
+    let data_directory = app.path().app_data_dir().map_err(AppError::internal)?;
+    let logs_directory = app.path().app_log_dir().map_err(AppError::internal)?;
+    Ok(AppDiagnostics {
+        app_version: app.package_info().version.to_string(),
+        operating_system: std::env::consts::OS.into(),
+        architecture: std::env::consts::ARCH.into(),
+        data_directory: data_directory.to_string_lossy().into_owned(),
+        logs_directory: logs_directory.to_string_lossy().into_owned(),
+        project_count: state.database.projects()?.len(),
+        task_count: state.database.sessions()?.len(),
+        connected_provider_count: accounts
+            .iter()
+            .filter(|account| account.state == ProviderAuthState::Connected)
+            .count(),
+        provider_attention_count: accounts
+            .iter()
+            .filter(|account| account.state == ProviderAuthState::NeedsAttention)
+            .count(),
     })
 }
 
@@ -1767,7 +1959,7 @@ fn safe_frontend_event(event: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod auth_logging_tests {
-    use super::safe_frontend_event;
+    use super::{is_jevcode_release_url, safe_frontend_event};
 
     #[test]
     fn arbitrary_frontend_strings_are_never_logged_as_event_names() {
@@ -1777,6 +1969,25 @@ mod auth_logging_tests {
         );
         assert_eq!(safe_frontend_event("sk-test-secret-value"), None);
         assert_eq!(safe_frontend_event("provider_auth_failed"), None);
+    }
+
+    #[test]
+    fn release_links_only_accept_the_official_github_release_path() {
+        assert!(is_jevcode_release_url(
+            "https://github.com/OctranTechnologies/JevCode/releases/tag/v0.1.0"
+        ));
+        assert!(!is_jevcode_release_url(
+            "https://evil.example/OctranTechnologies/JevCode/releases/tag/v0.1.0"
+        ));
+        assert!(!is_jevcode_release_url(
+            "https://github.com.evil.example/OctranTechnologies/JevCode/releases/latest"
+        ));
+        assert!(!is_jevcode_release_url(
+            "https://github.com/OctranTechnologies/JevCode/releases/latest?next=https://evil.example"
+        ));
+        assert!(!is_jevcode_release_url(
+            "https://user:password@github.com/OctranTechnologies/JevCode/releases/latest"
+        ));
     }
 }
 

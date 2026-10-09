@@ -672,6 +672,31 @@ pub struct UsageRecord {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDiagnostics {
+    pub app_version: String,
+    pub operating_system: String,
+    pub architecture: String,
+    pub data_directory: String,
+    pub logs_directory: String,
+    pub project_count: usize,
+    pub task_count: usize,
+    pub connected_provider_count: usize,
+    pub provider_attention_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub available: bool,
+    pub release_url: String,
+    pub notes: String,
+    pub published_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProviderAuthMethod {
     #[serde(rename = "api_key")]
