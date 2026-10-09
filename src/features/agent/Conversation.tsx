@@ -4,7 +4,7 @@ import {
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
-import type { AgentSession, AgentMessage, PermissionResolution } from '../../types/domain';
+import type { AgentSession, AgentMessage, PermissionResolution, SessionChanges } from '../../types/domain';
 
 const suggestions = [
   { icon: FileCode2, label: 'Explain this project', prompt: 'Explore this project and explain its main architecture.' },
@@ -13,16 +13,19 @@ const suggestions = [
 ];
 
 export function Conversation({
-  session, projectName, demo = false, streamingText = '', toolOutput, onSuggestion, onPermission, onRetry, permissionBusy,
+  session, projectName, demo = false, review, streamingText = '', toolOutput, onSuggestion, onPermission, onRetry, onReviewFile, onReviewChanges, permissionBusy,
 }: {
   session?: AgentSession;
   projectName?: string;
   demo?: boolean;
+  review?: SessionChanges | null;
   streamingText?: string;
   toolOutput?: Record<string, { stdout: string; stderr: string }>;
   onSuggestion: (prompt: string) => void;
   onPermission: (resolution: PermissionResolution) => void;
   onRetry: () => void;
+  onReviewFile: (path: string) => void;
+  onReviewChanges: () => void;
   permissionBusy: boolean;
 }) {
   const end = useRef<HTMLDivElement>(null);
@@ -38,7 +41,7 @@ export function Conversation({
       <p>{projectName ? 'Describe the outcome you want. JevCode will inspect the project and keep you in control.' : 'Open a local folder to give your agent a place to work.'}</p>
       {projectName ? <div className="starter-prompts" aria-label="Suggested tasks">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={15} /><span>{label}</span><ArrowUpRight size={13} className="starter-prompt-arrow" /></button>)}</div> : <div className="empty-state-note"><Shield size={15} /><span>Project files stay on this device. You approve actions that need it.</span></div>}
     </div> : <div className="task-timeline" aria-live="polite" aria-relevant="additions text">
-      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} />)}
+      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} onReviewFile={onReviewFile} />)}
       {session?.pendingToolCall && <div className="approval-card" role="group" aria-labelledby="approval-heading">
         <div className="approval-icon"><Shield size={17} /></div>
         <div className="approval-content"><div className="approval-title-row"><h2 id="approval-heading">Permission needed</h2><span className="approval-required">Review before continuing</span></div>
@@ -61,16 +64,21 @@ export function Conversation({
       {session?.activityEvents.filter(event => ['plan', 'progress', 'file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run'].includes(event.kind)).map(event => <div className="agent-activity-summary" key={event.id}><CircleDot size={12} /><span>{event.summary}</span><time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time></div>)}
       {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><div className="agent-prose">{streamingText}</div></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
+      {session?.status === 'completed' && !demo && review?.files.length ? <section className="task-change-summary" aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
       <div ref={end} />
     </div>}
   </div>;
 }
 
-function TimelineMessage({ message, completedCalls, toolOutput }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }> }) {
-  if (message.role === 'tool') return <details className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
+function TimelineMessage({ message, completedCalls, toolOutput, onReviewFile }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }>; onReviewFile: (path: string) => void }) {
+  if (message.role === 'tool') {
+    const changedPaths = resultChangedPaths(message);
+    return <details className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
     <summary><span className="activity-result-icon">{message.toolResult?.isError ? <AlertCircle size={14} /> : <Check size={14} />}</span><span className="activity-result-name">{message.toolResult?.name ?? 'Tool activity'}</span><span className="activity-result-state">{message.toolResult?.isError ? 'Needs attention' : 'Completed'}</span><span className="activity-result-duration">{formatDuration(message.toolResult?.durationMs ?? 0)}</span><ChevronDown size={13} className="activity-chevron" /></summary>
     <pre>{message.content}</pre>
+    {changedPaths.length > 0 && !message.toolResult?.isError && <div className="timeline-file-changes"><span><FileCode2 size={12} />File change</span>{changedPaths.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={12} /></button>)}</div>}
   </details>;
+  }
 
   if (message.role === 'user') return <article className="timeline-user">
     <div className="timeline-user-mark"><UserRound size={14} /></div><div className="timeline-user-content"><div className="timeline-meta"><strong>You</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div><p>{message.content}</p></div>
@@ -90,6 +98,15 @@ function TimelineMessage({ message, completedCalls, toolOutput }: { message: Age
       })}</div>}
     </div>
   </article>;
+}
+
+function resultChangedPaths(message: AgentMessage): string[] {
+  const name = message.toolResult?.name;
+  if (!name || !['apply_patch', 'create_file', 'delete_file', 'move_file'].includes(name)) return [];
+  const data = message.toolResult?.structuredContent;
+  if (!data || Array.isArray(data) || typeof data !== 'object') return [];
+  const values = name === 'move_file' ? [data.source, data.destination] : [data.path];
+  return values.filter((value): value is string => typeof value === 'string' && value.length > 0);
 }
 
 function formatTime(value: string) {

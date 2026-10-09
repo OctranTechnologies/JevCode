@@ -370,6 +370,67 @@ pub struct ChangedFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    Added,
+    Modified,
+    Deleted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionChange {
+    pub path: String,
+    pub kind: ChangeKind,
+    pub additions: u64,
+    pub deletions: u64,
+    pub preexisting_status: Option<String>,
+    pub staged: bool,
+    pub unstaged: bool,
+    pub conflicted: bool,
+    pub can_stage: bool,
+    pub reviewed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionChanges {
+    pub session_id: String,
+    pub files: Vec<SessionChange>,
+    pub additions: u64,
+    pub deletions: u64,
+    pub tests_summary: Option<String>,
+    pub working_tree: String,
+    pub baseline_head: Option<String>,
+    pub baseline_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFileDiff {
+    pub path: String,
+    pub diff: String,
+    pub binary: bool,
+    pub conflicted: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewFileAction {
+    Accept,
+    Revert,
+    Stage,
+    Open,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAllAction {
+    AcceptAll,
+    RevertAll,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageCount {
     pub name: String,

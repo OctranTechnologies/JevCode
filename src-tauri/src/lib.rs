@@ -9,6 +9,7 @@ mod git;
 mod permissions;
 mod persistence;
 mod providers;
+mod review;
 mod state;
 mod tools;
 mod usage;
@@ -97,7 +98,11 @@ pub fn run() {
             commands::frontend_log,
             commands::set_permission_mode,
             commands::list_permission_rules,
-            commands::revoke_permission_rule
+            commands::revoke_permission_rule,
+            commands::session_changes,
+            commands::session_file_diff,
+            commands::review_file_action,
+            commands::review_all_action
         ])
         .run(tauri::generate_context!())
         .expect("JevCode could not start; check configuration and application logs");

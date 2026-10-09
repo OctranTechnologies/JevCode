@@ -3,7 +3,7 @@ use crate::{
     auth::{self, ProviderAuthAdapter},
     domain::*,
     error::{AppError, AppResult},
-    git,
+    git, review,
     state::SharedState,
     tools, workspaces,
 };
@@ -873,6 +873,79 @@ pub fn list_permission_rules(state: State<'_, SharedState>) -> AppResult<Vec<Per
 #[tauri::command]
 pub fn revoke_permission_rule(rule_id: String, state: State<'_, SharedState>) -> AppResult<()> {
     state.database.revoke_permission_rule(&rule_id)
+}
+
+#[tauri::command]
+pub async fn session_changes(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<SessionChanges> {
+    let session = state.database.session(&session_id)?;
+    review::list_changes(&state.database, &session).await
+}
+
+#[tauri::command]
+pub fn session_file_diff(
+    session_id: String,
+    path: String,
+    state: State<'_, SharedState>,
+) -> AppResult<SessionFileDiff> {
+    let session = state.database.session(&session_id)?;
+    review::file_diff(&state.database, &session, &path)
+}
+
+#[tauri::command]
+pub async fn review_file_action(
+    session_id: String,
+    path: String,
+    action: ReviewFileAction,
+    state: State<'_, SharedState>,
+) -> AppResult<SessionChanges> {
+    if state
+        .runs
+        .lock()
+        .map_err(AppError::internal)?
+        .contains_key(&session_id)
+    {
+        return Err(AppError::new(
+            "session_busy",
+            "Wait for the task to finish before reviewing its files.",
+        ));
+    }
+    let session = state.database.session(&session_id)?;
+    let project = state.database.project(&session.project_id)?;
+    review::apply_file_action(
+        &state.database,
+        &session,
+        Path::new(&project.path),
+        &path,
+        action,
+    )
+    .await?;
+    review::list_changes(&state.database, &session).await
+}
+
+#[tauri::command]
+pub async fn review_all_action(
+    session_id: String,
+    action: ReviewAllAction,
+    state: State<'_, SharedState>,
+) -> AppResult<SessionChanges> {
+    if state
+        .runs
+        .lock()
+        .map_err(AppError::internal)?
+        .contains_key(&session_id)
+    {
+        return Err(AppError::new(
+            "session_busy",
+            "Wait for the task to finish before reviewing its files.",
+        ));
+    }
+    let session = state.database.session(&session_id)?;
+    let project = state.database.project(&session.project_id)?;
+    review::apply_all_action(&state.database, &session, Path::new(&project.path), action).await?;
+    review::list_changes(&state.database, &session).await
 }
 
 #[tauri::command]

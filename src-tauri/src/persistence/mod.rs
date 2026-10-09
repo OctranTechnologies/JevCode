@@ -3,7 +3,34 @@ use crate::{
     error::{AppError, AppResult},
 };
 use rusqlite::{params, Connection, OptionalExtension};
-use std::{path::Path, sync::Mutex};
+use std::{collections::BTreeMap, path::Path, sync::Mutex};
+
+#[derive(Debug, Clone)]
+pub struct SessionReviewBaseline {
+    pub session_id: String,
+    pub project_id: String,
+    pub root: String,
+    pub head: Option<String>,
+    pub statuses: BTreeMap<String, String>,
+    pub status_available: bool,
+    pub status_truncated: bool,
+    pub started_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionFileCheckpoint {
+    pub session_id: String,
+    pub path: String,
+    pub target_path: String,
+    pub existed_before: bool,
+    pub before_content: Option<Vec<u8>>,
+    pub before_mode: Option<u32>,
+    pub agent_exists: bool,
+    pub agent_content: Option<Vec<u8>>,
+    pub expected_hash: Option<String>,
+    pub preexisting_status: Option<String>,
+    pub reviewed: bool,
+}
 
 pub struct Database(Mutex<Connection>);
 
@@ -14,6 +41,7 @@ impl Database {
         Self::migrate_projects(&connection)?;
         Self::migrate_model_management(&connection)?;
         Self::migrate_permissions(&connection)?;
+        Self::migrate_code_review(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -96,6 +124,209 @@ impl Database {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn migrate_code_review(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_review_baselines (
+                 session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 root TEXT NOT NULL, head TEXT, statuses TEXT NOT NULL,
+                 status_available INTEGER NOT NULL, status_truncated INTEGER NOT NULL,
+                 started_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS session_file_checkpoints (
+                 session_id TEXT NOT NULL REFERENCES session_review_baselines(session_id) ON DELETE CASCADE,
+                 path TEXT NOT NULL, target_path TEXT NOT NULL, existed_before INTEGER NOT NULL,
+                 before_content BLOB, before_mode INTEGER, agent_exists INTEGER NOT NULL,
+                 agent_content BLOB, expected_hash TEXT, preexisting_status TEXT,
+                 reviewed INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY(session_id, path)
+             );
+             CREATE INDEX IF NOT EXISTS session_file_checkpoints_session ON session_file_checkpoints(session_id, path);
+             PRAGMA user_version = 8;",
+        )?;
+        let has_reviewed = {
+            let mut statement =
+                connection.prepare("PRAGMA table_info(session_file_checkpoints)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|name| name == "reviewed")
+        };
+        if !has_reviewed {
+            connection.execute("ALTER TABLE session_file_checkpoints ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0", [])?;
+        }
+        Ok(())
+    }
+
+    pub fn has_review_baseline(&self, session_id: &str) -> AppResult<bool> {
+        self.connection()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_review_baselines WHERE session_id = ?1)",
+                [session_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn save_review_baseline(&self, baseline: &SessionReviewBaseline) -> AppResult<()> {
+        self.connection()?.execute(
+            "INSERT OR IGNORE INTO session_review_baselines(session_id, project_id, root, head, statuses, status_available, status_truncated, started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                baseline.session_id,
+                baseline.project_id,
+                baseline.root,
+                baseline.head,
+                serde_json::to_string(&baseline.statuses)?,
+                baseline.status_available,
+                baseline.status_truncated,
+                baseline.started_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn review_baseline(&self, session_id: &str) -> AppResult<Option<SessionReviewBaseline>> {
+        let row = self.connection()?.query_row(
+            "SELECT project_id, root, head, statuses, status_available, status_truncated, started_at FROM session_review_baselines WHERE session_id = ?1",
+            [session_id],
+            |row| Ok((
+                row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?, row.get::<_, bool>(4)?, row.get::<_, bool>(5)?, row.get::<_, String>(6)?,
+            )),
+        ).optional()?;
+        row.map(
+            |(project_id, root, head, statuses, status_available, status_truncated, started_at)| {
+                Ok(SessionReviewBaseline {
+                    session_id: session_id.into(),
+                    project_id,
+                    root,
+                    head,
+                    statuses: serde_json::from_str(&statuses)?,
+                    status_available,
+                    status_truncated,
+                    started_at,
+                })
+            },
+        )
+        .transpose()
+    }
+
+    pub fn save_file_checkpoint(&self, checkpoint: &SessionFileCheckpoint) -> AppResult<()> {
+        self.connection()?.execute(
+            "INSERT OR IGNORE INTO session_file_checkpoints(session_id, path, target_path, existed_before, before_content, before_mode, agent_exists, agent_content, expected_hash, preexisting_status, reviewed) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                checkpoint.session_id, checkpoint.path, checkpoint.target_path,
+                checkpoint.existed_before, checkpoint.before_content, checkpoint.before_mode.map(i64::from),
+                checkpoint.agent_exists, checkpoint.agent_content, checkpoint.expected_hash, checkpoint.preexisting_status, checkpoint.reviewed,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn file_checkpoint(
+        &self,
+        session_id: &str,
+        path: &str,
+    ) -> AppResult<Option<SessionFileCheckpoint>> {
+        self.connection()?.query_row(
+            "SELECT target_path, existed_before, before_content, before_mode, agent_exists, agent_content, expected_hash, preexisting_status, reviewed FROM session_file_checkpoints WHERE session_id = ?1 AND path = ?2",
+            params![session_id, path],
+            |row| Ok(SessionFileCheckpoint {
+                session_id: session_id.into(), path: path.into(), target_path: row.get(0)?,
+                existed_before: row.get(1)?, before_content: row.get(2)?,
+                before_mode: row.get::<_, Option<i64>>(3)?.and_then(|mode| u32::try_from(mode).ok()),
+                agent_exists: row.get(4)?, agent_content: row.get(5)?, expected_hash: row.get(6)?, preexisting_status: row.get(7)?,
+                reviewed: row.get(8)?,
+            }),
+        ).optional().map_err(Into::into)
+    }
+
+    pub fn file_checkpoints(&self, session_id: &str) -> AppResult<Vec<SessionFileCheckpoint>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT path, target_path, existed_before, before_content, before_mode, agent_exists, agent_content, expected_hash, preexisting_status, reviewed FROM session_file_checkpoints WHERE session_id = ?1 ORDER BY path",
+        )?;
+        let checkpoints = statement
+            .query_map([session_id], |row| {
+                Ok(SessionFileCheckpoint {
+                    session_id: session_id.into(),
+                    path: row.get(0)?,
+                    target_path: row.get(1)?,
+                    existed_before: row.get(2)?,
+                    before_content: row.get(3)?,
+                    before_mode: row
+                        .get::<_, Option<i64>>(4)?
+                        .and_then(|mode| u32::try_from(mode).ok()),
+                    agent_exists: row.get(5)?,
+                    agent_content: row.get(6)?,
+                    expected_hash: row.get(7)?,
+                    preexisting_status: row.get(8)?,
+                    reviewed: row.get(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(AppError::internal)?;
+        Ok(checkpoints)
+    }
+
+    pub fn update_file_checkpoint_after(
+        &self,
+        checkpoint: &SessionFileCheckpoint,
+    ) -> AppResult<()> {
+        let changed = self.connection()?.execute(
+            "UPDATE session_file_checkpoints SET agent_exists = ?3, agent_content = ?4, expected_hash = ?5, reviewed = 0 WHERE session_id = ?1 AND path = ?2",
+            params![checkpoint.session_id, checkpoint.path, checkpoint.agent_exists, checkpoint.agent_content, checkpoint.expected_hash],
+        )?;
+        if changed == 0 {
+            return Err(AppError::new(
+                "checkpoint_missing",
+                "The file review checkpoint is unavailable.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn remove_file_checkpoint(&self, session_id: &str, path: &str) -> AppResult<()> {
+        self.connection()?.execute(
+            "DELETE FROM session_file_checkpoints WHERE session_id = ?1 AND path = ?2",
+            params![session_id, path],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_file_checkpoint_reviewed(&self, session_id: &str, path: &str) -> AppResult<()> {
+        self.connection()?.execute(
+            "UPDATE session_file_checkpoints SET reviewed = 1 WHERE session_id = ?1 AND path = ?2",
+            params![session_id, path],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_all_file_checkpoints_reviewed(&self, session_id: &str) -> AppResult<()> {
+        self.connection()?.execute(
+            "UPDATE session_file_checkpoints SET reviewed = 1 WHERE session_id = ?1",
+            [session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_review(&self, session_id: &str) -> AppResult<()> {
+        self.connection()?.execute(
+            "DELETE FROM session_review_baselines WHERE session_id = ?1",
+            [session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_empty_review(&self, session_id: &str) -> AppResult<()> {
+        self.connection()?.execute(
+            "DELETE FROM session_review_baselines WHERE session_id = ?1 AND NOT EXISTS(SELECT 1 FROM session_file_checkpoints WHERE session_id = ?1)",
+            [session_id],
+        )?;
         Ok(())
     }
 

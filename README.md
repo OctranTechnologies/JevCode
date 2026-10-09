@@ -160,6 +160,29 @@ configurable through `AgentRuntimeConfig`. `MockProvider` tests exercise streami
 parallel tools, permission/user pauses, cancellation, persistence, and context
 limits without provider credentials or API usage.
 
+## Code review and task checkpoints
+
+Each task records its canonical project root, Git HEAD, and bounded Git status
+snapshot before the first model request. Before a file tool writes, JevCode saves
+that file's pre-task bytes and permissions in the local SQLite database. Before a
+command runs, it snapshots non-ignored regular files in the workspace and then
+compares them afterward, so formatter and test-script edits also appear in the
+task review. The command snapshot is capped at 50,000 files, 512 MiB total, and
+16 MiB per file; a command is not started if the baseline cannot be captured.
+Git-ignored files and `.git` internals are excluded from command snapshots.
+
+The task inspector groups added, modified, and deleted files and shows unified
+diffs, line counts, staged state, pre-existing working-tree edits, and files that
+changed again after the agent's write. Accepting a file marks the task change as
+reviewed while keeping it visible in the task history. Reverting restores the
+captured pre-task bytes; it refuses to overwrite content that changed after the
+agent snapshot. Revert all preflights every changed file before restoring any of
+them. Whole-file staging is available only for files without pre-existing edits,
+and runs `git add` with a path argument (never shell interpolation). Reverting a
+task-only staged file also removes that path from the index; pre-task staged paths
+are left as captured. Checkpoint bytes stay local in SQLite alongside the
+task/session records.
+
 ## Provider configuration
 
 The catalog in `src-tauri/src/providers/defaults.json` includes:

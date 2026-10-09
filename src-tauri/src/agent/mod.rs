@@ -3,6 +3,7 @@ use crate::{
     error::{AppError, AppResult},
     permissions,
     providers::{self, LlmProvider, ProviderRequest, ProviderResponse},
+    review,
     state::SharedState,
     tools, usage,
 };
@@ -391,6 +392,31 @@ impl AgentRuntime {
             }
         }
 
+        let mut command_snapshot = None;
+        let mut preparation_error = None;
+        if let Some((call, _)) = batch.first() {
+            let result = match call.name.as_str() {
+                "run_command" => review::command_snapshot_before(
+                    &state.database,
+                    &session.id,
+                    Path::new(&project.path),
+                )
+                .await
+                .map(|snapshot| command_snapshot = Some(snapshot)),
+                "apply_patch" | "create_file" | "delete_file" | "move_file" => {
+                    review::checkpoint_before(
+                        &state.database,
+                        &session.id,
+                        Path::new(&project.path),
+                        call,
+                    )
+                    .await
+                }
+                _ => Ok(()),
+            };
+            preparation_error = result.err();
+        }
+
         for (call, tool) in &batch {
             record_activity(
                 session,
@@ -403,15 +429,56 @@ impl AgentRuntime {
         session.status = SessionStatus::Working;
         checkpoint(state, sink, session)?;
 
-        let results = execute_batch(
-            PathBuf::from(&project.path),
-            batch.clone(),
-            session.permission_policy.clone(),
-            self.config.tool_timeout,
-            &session.id,
-            sink,
-        )
-        .await;
+        let has_preparation_error = preparation_error.is_some();
+        let mut results = if let Some(error) = preparation_error {
+            vec![tool_error(&batch[0].0, error.message)]
+        } else {
+            execute_batch(
+                PathBuf::from(&project.path),
+                batch.clone(),
+                session.permission_policy.clone(),
+                self.config.tool_timeout,
+                &session.id,
+                sink,
+            )
+            .await
+        };
+        if let Some(snapshot) = command_snapshot {
+            if let Err(error) =
+                review::command_snapshot_after(&state.database, &session.id, snapshot)
+            {
+                if let Some(result) = results.first_mut() {
+                    result.is_error = true;
+                    result.content.push_str("\nThe command ran, but its file changes could not be checkpointed safely. Inspect the working tree before continuing.");
+                    result.structured_content = Some(
+                        serde_json::json!({"error":error.code,"message":error.message,"changesUntracked":true}),
+                    );
+                }
+            }
+        } else if !has_preparation_error {
+            if let Some((call, _)) = batch.first() {
+                if matches!(
+                    call.name.as_str(),
+                    "apply_patch" | "create_file" | "delete_file" | "move_file"
+                ) && results.first().is_some_and(|result| !result.is_error)
+                {
+                    if let Err(error) = review::checkpoint_after(
+                        &state.database,
+                        &session.id,
+                        Path::new(&project.path),
+                        call,
+                    ) {
+                        if let Some(result) = results.first_mut() {
+                            result.is_error = true;
+                            result.content.push_str("\nThe file changed, but its review checkpoint could not be updated. Inspect it before continuing.");
+                            result.structured_content = Some(
+                                serde_json::json!({"error":error.code,"message":error.message,"changesUntracked":true}),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         for ((call, _), result) in batch.into_iter().zip(results) {
             if !result.is_error {
                 if let Some(kind) = completed_tool_activity(&call) {
@@ -764,6 +831,7 @@ async fn drive(
     runtime: &AgentRuntime,
 ) -> AppResult<()> {
     let project = state.database.project(&session.project_id)?;
+    review::ensure_baseline(&state.database, session, Path::new(&project.path)).await?;
     let provider_config = state.config.provider(&session.provider_id)?;
     let models = state
         .database

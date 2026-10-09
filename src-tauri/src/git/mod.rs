@@ -1,5 +1,6 @@
 use crate::domain::ChangedFile;
 use crate::error::{AppError, AppResult};
+use std::collections::BTreeMap;
 use std::{path::Path, process::Output, time::Duration};
 use tokio::process::Command;
 
@@ -25,6 +26,82 @@ async fn output(root: &Path, args: &[String], timeout: Duration) -> AppResult<Ou
 
 fn git_args(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct ReviewRepoState {
+    pub head: String,
+    pub statuses: BTreeMap<String, String>,
+    pub truncated: bool,
+}
+
+/// Capture the repository revision and exact dirty-path state before the first
+/// agent edit in a task. File contents are checkpointed lazily before edits.
+pub async fn review_state(root: &Path) -> AppResult<ReviewRepoState> {
+    let head = output(
+        root,
+        &git_args(&["rev-parse", "--verify", "HEAD"]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    if !head.status.success() {
+        return Err(AppError::new(
+            "not_git_repository",
+            "This folder has no Git HEAD.",
+        ));
+    }
+    let status = output(
+        root,
+        &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
+        Duration::from_secs(15),
+    )
+    .await?;
+    if !status.status.success() {
+        return Err(AppError::new(
+            "git_error",
+            "Could not capture the initial Git state.",
+        ));
+    }
+    const MAX_STATUS_BYTES: usize = 8 * 1024 * 1024;
+    const MAX_STATUS_PATHS: usize = 50_000;
+    let bytes = &status.stdout[..status.stdout.len().min(MAX_STATUS_BYTES)];
+    let mut truncated = status.stdout.len() > MAX_STATUS_BYTES;
+    let mut statuses = BTreeMap::new();
+    let mut records = bytes
+        .split(|byte| *byte == 0)
+        .filter(|item| !item.is_empty());
+    while let Some(record) = records.next() {
+        if record.len() < 4 {
+            continue;
+        }
+        let status_code = String::from_utf8_lossy(&record[..2]).into_owned();
+        let relative = String::from_utf8_lossy(&record[3..]).replace('\\', "/");
+        let path = root.join(&relative).to_string_lossy().to_string();
+        statuses.insert(review_path_key(&path), status_code.clone());
+        if status_code.contains('R') || status_code.contains('C') {
+            let _ = records.next();
+        }
+        if statuses.len() >= MAX_STATUS_PATHS {
+            truncated = true;
+            break;
+        }
+    }
+    Ok(ReviewRepoState {
+        head: String::from_utf8_lossy(&head.stdout).trim().to_owned(),
+        statuses,
+        truncated,
+    })
+}
+
+pub fn review_path_key(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_owned()
+    }
 }
 
 /// Fixed arguments only: no shell interpolation, optional locks or mutations.

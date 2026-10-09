@@ -51,4 +51,29 @@ CREATE TABLE IF NOT EXISTS permission_rules (
 CREATE INDEX IF NOT EXISTS permission_rules_project ON permission_rules(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project_id, updated_at);
 CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id);
-PRAGMA user_version = 6;
+CREATE TABLE IF NOT EXISTS session_review_baselines (
+    session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    root TEXT NOT NULL,
+    head TEXT,
+    statuses TEXT NOT NULL,
+    status_available INTEGER NOT NULL,
+    status_truncated INTEGER NOT NULL,
+    started_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_file_checkpoints (
+    session_id TEXT NOT NULL REFERENCES session_review_baselines(session_id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    existed_before INTEGER NOT NULL,
+    before_content BLOB,
+    before_mode INTEGER,
+    agent_exists INTEGER NOT NULL,
+    agent_content BLOB,
+    expected_hash TEXT,
+    preexisting_status TEXT,
+    reviewed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(session_id, path)
+);
+CREATE INDEX IF NOT EXISTS session_file_checkpoints_session ON session_file_checkpoints(session_id, path);
+PRAGMA user_version = 8;

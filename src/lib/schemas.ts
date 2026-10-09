@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, PermissionPolicy, PermissionRequest, PermissionRule, Project, Provider, ProviderAccount, ProviderAccountInfo, Tool, ToolCall, ToolOutputChunk, ToolResult, UsageRecord, Workspace } from '../types/domain';
+import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, PermissionPolicy, PermissionRequest, PermissionRule, Project, Provider, ProviderAccount, ProviderAccountInfo, SessionChange, SessionChanges, SessionFileDiff, Tool, ToolCall, ToolOutputChunk, ToolResult, UsageRecord, Workspace } from '../types/domain';
 
 const count = z.number().int().nonnegative();
 const decision = z.enum(['allow', 'ask', 'deny']);
@@ -34,6 +34,9 @@ export const projectSchema: z.ZodType<Project> = z.object({
 });
 export const projectFileSchema: z.ZodType<import('../types/domain').ProjectFileEntry> = z.object({ name: z.string(), path: z.string(), kind: z.enum(['file', 'directory']), sizeBytes: count, isSymlink: z.boolean() });
 export const changedFileSchema: z.ZodType<import('../types/domain').ChangedFile> = z.object({ path: z.string(), status: z.string() });
+export const sessionChangeSchema: z.ZodType<SessionChange> = z.object({ path: z.string(), kind: z.enum(['added', 'modified', 'deleted']), additions: count, deletions: count, preexistingStatus: z.string().nullable(), staged: z.boolean(), unstaged: z.boolean(), conflicted: z.boolean(), canStage: z.boolean(), reviewed: z.boolean() });
+export const sessionChangesSchema: z.ZodType<SessionChanges> = z.object({ sessionId: z.string(), files: z.array(sessionChangeSchema), additions: count, deletions: count, testsSummary: z.string().nullable(), workingTree: z.enum(['clean', 'modified']), baselineHead: z.string().nullable(), baselineAt: z.string() });
+export const sessionFileDiffSchema: z.ZodType<SessionFileDiff> = z.object({ path: z.string(), diff: z.string(), binary: z.boolean(), conflicted: z.boolean() });
 export const languageCountSchema: z.ZodType<import('../types/domain').LanguageCount> = z.object({ name: z.string(), files: count });
 export const projectOverviewSchema: z.ZodType<import('../types/domain').ProjectOverview> = z.object({ projectId: z.string(), repositoryRoot: z.string().nullable(), activeBranch: z.string().nullable(), gitStatusAvailable: z.boolean(), isDirty: z.boolean(), changedFiles: z.array(changedFileSchema), repositorySizeBytes: count, scanLimited: z.boolean(), languages: z.array(languageCountSchema) });
 export const terminalResultSchema: z.ZodType<import('../types/domain').TerminalResult> = z.object({ output: z.string(), exitCode: z.number().int().nullable(), timedOut: z.boolean() });

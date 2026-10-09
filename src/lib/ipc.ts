@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ToolOutputChunk, UsageRecord } from '../types/domain';
-import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, ToolOutputChunk, UsageRecord } from '../types/domain';
+import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export const desktopAvailable = isTauri();
@@ -30,6 +30,10 @@ interface Commands {
   list_permission_rules: { args: undefined; result: PermissionRule[] };
   revoke_permission_rule: { args: { ruleId: string }; result: null };
   cancel_session: { args: { sessionId: string }; result: null };
+  session_changes: { args: { sessionId: string }; result: SessionChanges };
+  session_file_diff: { args: { sessionId: string; path: string }; result: SessionFileDiff };
+  review_file_action: { args: { sessionId: string; path: string; action: ReviewFileAction }; result: SessionChanges };
+  review_all_action: { args: { sessionId: string; action: ReviewAllAction }; result: SessionChanges };
   connect_provider: { args: { providerId: string; secret: string }; result: ProviderAccount };
   disconnect_provider: { args: { providerId: string }; result: ProviderAccount };
   validate_provider_auth: { args: { providerId: string }; result: ProviderAccount };
@@ -44,7 +48,7 @@ const responses = {
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
   reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), create_session: sessionSchema, send_message: sessionSchema,
-  resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), cancel_session: z.null(), connect_provider: providerAccountSchema,
+  resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), cancel_session: z.null(), session_changes: sessionChangesSchema, session_file_diff: sessionFileDiffSchema, review_file_action: sessionChangesSchema, review_all_action: sessionChangesSchema, connect_provider: providerAccountSchema,
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,
   refresh_provider_auth: providerAccountSchema, get_provider_auth_status: providerAccountSchema,
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),

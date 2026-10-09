@@ -141,6 +141,12 @@ export interface Project {
 }
 export interface ProjectFileEntry { name: string; path: string; kind: 'file' | 'directory'; sizeBytes: number; isSymlink: boolean }
 export interface ChangedFile { path: string; status: string }
+export type ChangeKind = 'added' | 'modified' | 'deleted';
+export interface SessionChange { path: string; kind: ChangeKind; additions: number; deletions: number; preexistingStatus: string | null; staged: boolean; unstaged: boolean; conflicted: boolean; canStage: boolean; reviewed: boolean }
+export interface SessionChanges { sessionId: string; files: SessionChange[]; additions: number; deletions: number; testsSummary: string | null; workingTree: 'clean' | 'modified'; baselineHead: string | null; baselineAt: string }
+export interface SessionFileDiff { path: string; diff: string; binary: boolean; conflicted: boolean }
+export type ReviewFileAction = 'accept' | 'revert' | 'stage' | 'open';
+export type ReviewAllAction = 'accept_all' | 'revert_all';
 export interface LanguageCount { name: string; files: number }
 export interface ProjectOverview {
   projectId: string;
