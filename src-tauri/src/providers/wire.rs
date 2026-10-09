@@ -405,6 +405,7 @@ mod tests {
                 &protocol,
                 &ProviderRequest {
                     model_id: "test",
+                    protocol: &protocol,
                     messages: &messages,
                     tools: &tools,
                 },
@@ -436,6 +437,7 @@ mod tests {
                 &protocol,
                 &ProviderRequest {
                     model_id: "test",
+                    protocol: &protocol,
                     messages: &messages,
                     tools: &[],
                 },
@@ -465,6 +467,7 @@ mod tests {
             &ProviderProtocol::Gemini,
             &ProviderRequest {
                 model_id: "gemini-2.5-flash",
+                protocol: &ProviderProtocol::Gemini,
                 messages: &messages,
                 tools: &crate::tools::definitions(),
             },

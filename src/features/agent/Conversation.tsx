@@ -1,29 +1,90 @@
-import { useEffect, useRef } from 'react';
-import { ArrowRight, FileText, Folder, GitBranch, ShieldCheck, Terminal, UserRound } from 'lucide-react';
+import { useEffect, useMemo, useRef } from 'react';
+import {
+  AlertCircle, ArrowUpRight, Check, ChevronDown, CircleDot, Clock3, FileCode2, GitBranch,
+  LoaderCircle, Shield, Sparkles, Terminal, UserRound,
+} from 'lucide-react';
 import { Brand } from '../../components/Brand';
-import type { AgentSession } from '../../types/domain';
+import type { AgentSession, AgentMessage } from '../../types/domain';
 
 const suggestions = [
-  { icon: Folder, label: 'Explore this project', prompt: 'Explore this project and explain its top-level structure.' },
-  { icon: FileText, label: 'Explain the architecture', prompt: 'Read the README and explain the architecture.' },
-  { icon: GitBranch, label: 'Review Git status', prompt: 'Review Git status for this project.' },
+  { icon: FileCode2, label: 'Explain this project', prompt: 'Explore this project and explain its main architecture.' },
+  { icon: GitBranch, label: 'Review recent changes', prompt: 'Review the current Git status and summarize the changes.' },
+  { icon: Terminal, label: 'Find a bug', prompt: 'Trace the main request flow and look for a likely source of bugs.' },
 ];
-export function Conversation({ session, onSuggestion, onPermission, permissionBusy }: { session?: AgentSession; onSuggestion: (prompt: string) => void; onPermission: (approved: boolean) => void; permissionBusy: boolean }) {
+
+export function Conversation({
+  session, projectName, demo = false, onSuggestion, onPermission, onRetry, permissionBusy,
+}: {
+  session?: AgentSession;
+  projectName?: string;
+  demo?: boolean;
+  onSuggestion: (prompt: string) => void;
+  onPermission: (approved: boolean) => void;
+  onRetry: () => void;
+  permissionBusy: boolean;
+}) {
   const end = useRef<HTMLDivElement>(null);
-  const messages = session?.messages.filter(message => message.role !== 'system') ?? [];
-  useEffect(() => { end.current?.scrollIntoView({ behavior: 'instant', block: 'end' }); }, [session?.updatedAt]);
-  if (!messages.length) return <div className="welcome"><Brand large /><h1>What are we building?</h1><p>Explore a project, understand the code,<br className="wide-break" /> and plan your next change.</p><div className="suggestions">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={19} /><span>{label}</span><ArrowRight size={17} /></button>)}</div></div>;
-  return <div className="conversation" aria-label="Agent conversation" aria-live="polite" aria-relevant="additions text">
-    {messages.map(message => <article className={`message message-${message.role}`} key={message.id}>
-      <div className="message-avatar">{message.role === 'user' ? <UserRound size={16} /> : message.role === 'tool' ? <Terminal size={16} /> : <Brand />}</div>
-      <div className="message-body"><div className="message-heading">{message.role === 'user' ? 'You' : message.role === 'tool' ? message.toolResult?.name : 'JevCode'}<time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>
-        {message.role === 'tool' ? <details className={message.toolResult?.isError ? 'tool-output tool-error' : 'tool-output'}><summary>{message.toolResult?.isError ? 'Tool could not complete' : 'Tool completed'}<span>{message.toolResult?.durationMs} ms</span></summary><pre>{message.content}</pre></details> : <div className="message-content">{message.content}</div>}
-        {message.toolCalls.map(call => <div className="tool-call" key={call.id}><Terminal size={14} /><span>{call.name}</span><code>{JSON.stringify(call.arguments)}</code></div>)}
-      </div>
-    </article>)}
-    {session?.pendingToolCall && <div className="permission-request"><ShieldCheck size={21} /><div><h2>Allow this tool call?</h2><p><strong>{session.pendingToolCall.name}</strong> will run in this project.</p><pre>{JSON.stringify(session.pendingToolCall.arguments, null, 2)}</pre><div className="permission-actions"><button className="secondary-button" disabled={permissionBusy} onClick={() => onPermission(false)}>Deny</button><button className="primary-button" disabled={permissionBusy} onClick={() => onPermission(true)}>Allow once</button></div></div></div>}
-    {session?.status === 'running' && <div className="run-indicator" role="status"><span className="status-dot pulse" />JevCode is working…</div>}
-    {session?.error && <p className="inline-error" role="alert">{session.error}</p>}
-    <div ref={end} />
+  const messages = useMemo(() => session?.messages.filter(message => message.role !== 'system') ?? [], [session?.messages]);
+  const completedCalls = useMemo(() => new Set(messages.flatMap(message => message.toolResult ? [message.toolResult.toolCallId] : [])), [messages]);
+  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [session?.updatedAt]);
+
+  return <div className="conversation-scroll" aria-label="Task conversation">
+    {demo && <div className="sample-notice"><Sparkles size={13} /><span><strong>Sample task</strong> · Activity, terminal output, and diff are illustrative. No files were changed.</span></div>}
+    {messages.length === 0 ? <div className="task-empty-state">
+      <div className="empty-state-mark"><Brand large /></div>
+      <h1>{projectName ? `What should JevCode do in ${projectName}?` : 'Start with a project'}</h1>
+      <p>{projectName ? 'Describe the outcome you want. JevCode will inspect the project and keep you in control.' : 'Open a local folder to give your agent a place to work.'}</p>
+      {projectName ? <div className="starter-prompts" aria-label="Suggested tasks">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={15} /><span>{label}</span><ArrowUpRight size={13} className="starter-prompt-arrow" /></button>)}</div> : <div className="empty-state-note"><Shield size={15} /><span>Project files stay on this device. You approve actions that need it.</span></div>}
+    </div> : <div className="task-timeline" aria-live="polite" aria-relevant="additions text">
+      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} />)}
+      {session?.pendingToolCall && <div className="approval-card" role="group" aria-labelledby="approval-heading">
+        <div className="approval-icon"><Shield size={17} /></div>
+        <div className="approval-content"><div className="approval-title-row"><h2 id="approval-heading">Permission needed</h2><span className="approval-required">Review before continuing</span></div>
+          <p><strong>{session.pendingToolCall.name}</strong> is requesting access in <code>{projectName ?? 'this project'}</code>.</p>
+          <pre>{JSON.stringify(session.pendingToolCall.arguments, null, 2)}</pre>
+          <div className="approval-actions"><button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission(false)}>Deny</button><button className="button-primary" disabled={permissionBusy} onClick={() => onPermission(true)}>{permissionBusy ? 'Applying…' : 'Allow once'}</button></div>
+        </div>
+      </div>}
+      {session?.status === 'running' && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>JevCode is working through this task</span><span className="working-dots"><i /><i /><i /></span></div>}
+      {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
+      <div ref={end} />
+    </div>}
   </div>;
+}
+
+function TimelineMessage({ message, completedCalls }: { message: AgentMessage; completedCalls: Set<string> }) {
+  if (message.role === 'tool') return <details className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
+    <summary><span className="activity-result-icon">{message.toolResult?.isError ? <AlertCircle size={14} /> : <Check size={14} />}</span><span className="activity-result-name">{message.toolResult?.name ?? 'Tool activity'}</span><span className="activity-result-state">{message.toolResult?.isError ? 'Needs attention' : 'Completed'}</span><span className="activity-result-duration">{formatDuration(message.toolResult?.durationMs ?? 0)}</span><ChevronDown size={13} className="activity-chevron" /></summary>
+    <pre>{message.content}</pre>
+  </details>;
+
+  if (message.role === 'user') return <article className="timeline-user">
+    <div className="timeline-user-mark"><UserRound size={14} /></div><div className="timeline-user-content"><div className="timeline-meta"><strong>You</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div><p>{message.content}</p></div>
+  </article>;
+
+  const hasCalls = message.toolCalls.length > 0;
+  return <article className="timeline-agent">
+    <div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content">
+      <div className="timeline-meta"><strong>JevCode</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>{hasCalls && <span className="activity-label"><CircleDot size={11} />Activity</span>}</div>
+      {message.content && <div className="agent-prose">{message.content}</div>}
+      {hasCalls && <div className="activity-list">{message.toolCalls.map(call => {
+        const done = completedCalls.has(call.id);
+        return <div className="activity-call" key={call.id}><span className={`activity-call-icon${done ? ' is-done' : ''}`}>{done ? <Check size={12} /> : <Clock3 size={12} />}</span><code>{call.name}</code><span className="activity-call-summary">{formatArguments(call.arguments)}</span><span className="activity-call-state">{done ? 'Done' : 'Queued'}</span></div>;
+      })}</div>}
+    </div>
+  </article>;
+}
+
+function formatTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function formatDuration(duration: number) {
+  return duration < 1000 ? `${duration} ms` : `${(duration / 1000).toFixed(1)} s`;
+}
+
+function formatArguments(args: Record<string, unknown>) {
+  const path = typeof args.path === 'string' ? args.path : null;
+  return path ?? Object.keys(args).join(', ');
 }

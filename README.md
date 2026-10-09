@@ -40,9 +40,54 @@ Keys are never stored in SQLite, config files, localStorage or logs. The typed
 password field holds a key briefly while saving it; Rust alone retrieves stored
 credentials. Existing conversations keep their original provider and model.
 
-`npm run dev` opens the UI in a browser for layout work. Browser mode displays
-provider metadata and disables native agent actions; it does not simulate a
-successful provider request or expose a separate backend web server.
+`npm run dev` opens the UI in a browser for layout work. Browser mode shows a
+clearly labeled sample project, task, activity, diff, and terminal output so the
+workspace can be reviewed without connecting a provider. Sample actions are not
+executed, and local-project, credential, and send controls require the desktop app.
+
+## Workspace interface
+
+The main window uses a project and task sidebar, an agent activity timeline, a
+task composer, and an optional right inspector for files, diffs, terminal activity,
+context, and task details. The sidebar and inspector resize from their dividers;
+the sidebar collapses to an icon rail. On narrower windows, the inspector and
+sidebar become drawers so the conversation stays usable. The layout has been
+reviewed at 1280×850, 900×640, and 618×708 browser viewports.
+
+Use **Ctrl+K** to search projects, tasks, and commands, **Ctrl+N** to start a task,
+and **Ctrl+B** to collapse the sidebar. Enter sends a task and Shift+Enter adds a
+line. The composer includes project-local file references, project context, a
+model selector, and Agent / Plan first modes. Selected files are limited to the
+open project; the task receives their relative paths for the existing read tool.
+The inspector reports empty states in native sessions when that capability is not
+available. Browser preview labels every illustrative activity and diff as sample
+data.
+
+## Projects and workspaces
+
+Choose **Open folder** to open an existing directory (including a Git repository),
+or **Create project** to make a new child folder under a selected parent. Project
+roots are canonicalized in Rust and are the only handles the webview keeps; the
+webview cannot read arbitrary paths. Typed commands expose project operations by
+project ID, and directory reads by a project ID plus a relative path. Rust checks
+containment and rejects traversal, links that escape the root, and protected
+directories before reading. The file tree fetches one directory at a time, honors
+Git ignore rules, and caps each listing. Project summaries use a bounded scan and
+report when their repository size and language counts are partial.
+
+The overview displays the current branch, Git working-tree state and changed
+files, recent tasks, approximate repository size, detected languages, and editable
+project instructions. Project IDs, canonical paths, instructions, preferred model,
+permission defaults, Git root, last-opened time, and recent status are stored in
+SQLite. Reopening a recent project validates its current folder and refreshes its
+Git metadata. Removing a project from recents leaves its saved sessions intact.
+**Reveal** opens the folder in Explorer, Finder, or the system file manager.
+
+The overview's terminal runs a command entered directly by the user in the selected
+project folder. It has an output limit and timeout. This one-shot command surface
+is not registered as an agent tool. Agent tools continue to use the backend's
+separate permission policy and scoped operations. Git branch switching only accepts
+an existing local branch name and uses Git arguments without shell interpolation.
 
 ## Module boundaries
 
@@ -55,7 +100,7 @@ successful provider request or expose a separate backend web server.
 | LLM adapters | `src-tauri/src/providers` | `LlmProvider` trait; protocol encoding and normalization |
 | Tool execution | `src-tauri/src/tools` | Registry, session policy checks, scoped execution |
 | Workspace/project management | `src-tauri/src/workspaces` | Canonical folder identities, local workspace, path checks |
-| Git operations | `src-tauri/src/git` | Fixed Git CLI arguments, no shell, timeout, read-only status |
+| Git operations | `src-tauri/src/git` | Fixed Git CLI arguments, no shell interpolation, bounded status and local branch switching |
 | Persistence | `src-tauri/src/persistence` | SQLite WAL, schema version, session/project/usage storage |
 | Authentication/credentials | `src-tauri/src/credentials` | Native OS keychain through `keyring` |
 | Usage tracking | `src-tauri/src/usage`, `src/features/usage` | Provider-reported tokens and request duration |
@@ -110,8 +155,10 @@ The catalog in `src-tauri/src/providers/defaults.json` includes:
 | OpenCode Zen | OpenAI-compatible Chat Completions | `deepseek-v4-flash` |
 | OpenCode Go | OpenAI-compatible Chat Completions | `deepseek-v4-flash` |
 
-These are editable starter entries, not a live entitlement catalog. Models and
-provider access can change. Zen and Go are separate configured providers using
+These are editable fallback entries for offline setup, not the authoritative
+entitlement catalog. When a provider is connected, JevCode retrieves its model
+list through that provider's adapter and persists the normalized catalog locally.
+Models and provider access can change. Zen and Go are separate configured providers using
 their [documented endpoints](https://opencode.ai/docs/zen/) and
 [Go endpoints](https://opencode.ai/docs/go/). A gateway model requiring a different
 protocol should be registered as a separate provider descriptor with that protocol.
@@ -133,10 +180,17 @@ Example additional provider:
   "baseUrl": "https://gateway.example.com/v1",
   "models": [{
     "id": "coding-model",
-    "providerId": "my-gateway",
-    "name": "Coding model",
+    "provider": "my-gateway",
+    "displayName": "Coding model",
+    "capabilities": ["tools", "streaming"],
     "supportsTools": true,
-    "contextWindow": null
+    "supportsVision": false,
+    "supportsReasoning": false,
+    "supportsStreaming": true,
+    "contextWindow": null,
+    "inputPrice": null,
+    "outputPrice": null,
+    "status": "available"
   }]
 }
 ```
@@ -150,15 +204,88 @@ Protocol references: [OpenAI function calling](https://developers.openai.com/api
 [Anthropic tool results](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls),
 and [Gemini GenerateContent](https://ai.google.dev/api/generate-content).
 
+## Accounts and provider authentication
+
+The Accounts screen connects OpenAI, Anthropic, Google Gemini, OpenCode Zen and
+OpenCode Go independently. Each API key is sent once over typed Tauri IPC to
+Rust, checked against the provider's documented model-list endpoint, and saved
+only after validation succeeds. Replacing a key with an invalid value leaves the
+previous working key intact. The Models action uses the same non-generation
+catalog endpoint, so a connection check does not issue a billable model request.
+
+`src-tauri/src/auth` defines the provider-neutral `ProviderAuthAdapter` contract
+for connect, disconnect, refresh, validation, account info, model discovery and
+status. The current API-key adapter uses bearer authorization for OpenAI and
+OpenCode, `x-api-key` for Anthropic, and `x-goog-api-key` for Gemini. Zen and Go
+model catalog URLs are taken from their official docs. Account labels and
+connection timestamps are safe metadata stored in SQLite; the secret remains
+in the OS keychain under service `dev.jevcode.desktop`.
+
+Authentication is intentionally separated by product entitlement:
+
+- OpenAI API keys are supported. OpenAI documents a distinct Sign in with
+  ChatGPT flow for eligible open-source clients; JevCode reports that method as
+  unavailable until its own adapter and token verification are enabled. It does
+  not read Codex credentials or use browser cookies.
+- Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
+  Claude.ai or subscription OAuth credentials.
+- Gemini API keys are supported. Google documents OAuth for Gemini with a
+  registered desktop client and Google Cloud project. That method remains gated
+  until JevCode has an app client configured.
+- OpenCode Zen and OpenCode Go use their respective API keys.
+
+The UI receives no secret on reads: account status, account info and available
+models are returned as non-secret types. Secrets are not serialized to SQLite,
+localStorage, JSON configuration, source code or logs. Frontend log commands
+accept only a small allowlist of fixed event names. Provider response bodies are
+never included in errors or logs. Connection failures map to stable categories:
+invalid credential, expired authentication, quota exhausted, subscription
+unavailable, network error and provider outage.
+
+Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
+[Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
+[Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
+[Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),
+[Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth),
+[OpenCode Zen](https://opencode.ai/docs/zen/) and
+[OpenCode Go](https://opencode.ai/docs/go/).
+
+## Model management
+
+`Model` is a provider-neutral contract shared by Rust and TypeScript: provider
+and model IDs, display name, context window, capabilities, tool/vision/reasoning/
+streaming support, optional input/output prices and lifecycle status. Provider
+adapters normalize their own catalog responses; the UI does not contain model
+names or provider-specific catalog logic. The checked-in catalog supplies only
+an initial fallback. Connected providers refresh through their documented model
+list endpoint: [OpenAI](https://developers.openai.com/api/reference/resources/models/methods/list),
+[Anthropic](https://platform.claude.com/docs/en/api/models/list),
+[Gemini](https://ai.google.dev/api/models),
+[OpenCode Zen](https://opencode.ai/docs/zen/) and
+[OpenCode Go](https://opencode.ai/docs/go/).
+
+The desktop caches normalized catalogs in SQLite `model_catalogs` and preferences
+in `model_preferences`; no credentials are stored in either table. Favorites,
+recently used models and the workspace default survive restarts. Projects keep a
+separate preferred model. The shared picker in the toolbar and composer groups by
+provider, supports search and keyboard selection, and shows tool, vision,
+reasoning and streaming capability marks. Changing a completed session's model
+updates that session in place; the visible conversation is preserved while
+opaque provider continuation data is cleared. A running or approval-waiting task
+must finish before switching. Removed models are shown as unavailable until the
+user selects a current catalog entry; saved defaults fall back to the next valid
+project/workspace choice. Catalogs that do not report prices leave prices null.
+
 ## Local storage, permissions and errors
 
 Tauri resolves the OS-specific app data, config and log directories. On Windows,
 data/config live under `%APPDATA%/dev.jevcode.desktop`; logs live under
 `%LOCALAPPDATA%/dev.jevcode.desktop/logs`. `jevcode.sqlite` stores projects, complete
 session snapshots and usage records; WAL mode, foreign keys and a busy timeout
-are enabled. `schema.sql` owns schema version 1. Add explicit migration steps
-before changing the schema in a future release. Conversation and project content
-are local plaintext; keys are separately protected by the OS keychain.
+are enabled. `schema.sql` is version 4, with in-place migrations for workspace,
+authentication metadata and cached model catalogs/preferences. Conversation and project content are local plaintext;
+provider account metadata contains no secrets, and keys are separately protected
+by the OS keychain.
 
 The policy has `allow`, `ask` and `deny` decisions for file reads, Git, writes and
 shell tools. The backend enforces it, including on resumed approvals. `ask` stores
@@ -171,11 +298,11 @@ Interrupted running sessions become failed on restart; pending approvals survive
 The only registered tools are `list_files`, `read_file` and `git_status`. File paths
 are canonicalized and must stay inside the selected project. Traversal, absolute
 paths and symlink/junction escapes are rejected. `.env*`, `.git`, `.aws`, `.ssh`,
-`.codex`, `node_modules` and `target` are excluded from file tools. This is a
+`.codex`, `node_modules`, `target`, and Git-ignored files are excluded from file tools. This is a
 read-only application guard, not an adversarial filesystem sandbox: files renamed
 concurrently with a read are not protected by OS handle-based isolation, and custom
 secret filenames are not automatically detected. Reads are UTF-8 and limited to
-64 KiB; directory listings to 250 visible entries. Git status uses fixed arguments,
+64 KiB; directory listings to 500 visible entries. Git status uses fixed arguments,
 optional locks disabled, no shell interpolation, and a ten-second timeout.
 
 Remote requests have a 15-second connection and 120-second total timeout, a 4 MiB
@@ -188,8 +315,8 @@ billed remotely and are not represented in these successful-response totals.
 
 Rust returns structured `{ code, message }` errors across IPC. A React error
 boundary offers reload recovery; operation errors provide actionable inline copy.
-`tracing` writes daily JSONL logs with timestamps, service errors and event names.
-Frontend logging sends sanitized identifiers only. Request/response bodies, prompts,
+`tracing` writes daily JSONL logs with timestamps, service errors and allowlisted
+event names. Frontend logging accepts fixed identifiers only. Request/response bodies, prompts,
 tool content and API keys are not logged. `RUST_LOG=jevcode_lib=debug` changes verbosity.
 Logs currently need manual retention management.
 
@@ -218,7 +345,7 @@ tool runs, provider normalization and the shared TypeScript fixture. Frontend te
 cover IPC schemas, stale-event protection and error redaction. The approved design
 reference is in `docs/desktop-mockup.png`; it is not shipped as interface pixels.
 
-This foundation intentionally leaves file editing, arbitrary shell execution,
+This foundation intentionally leaves file editing, agent shell tools,
 streamed token deltas, OAuth, live model discovery, context compaction, pricing
 sync and signed/updatable release packaging for later features. Remote adapters
 are covered by offline protocol fixtures; live API calls require user credentials

@@ -1,4 +1,5 @@
 mod agent;
+mod auth;
 mod commands;
 mod config;
 mod credentials;
@@ -68,12 +69,30 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
             commands::open_project,
+            commands::create_project,
+            commands::remove_project_from_recents,
+            commands::update_project_settings,
+            commands::list_project_directory,
+            commands::project_overview,
+            commands::project_branches,
+            commands::switch_project_branch,
+            commands::reveal_project,
+            commands::run_project_terminal,
+            commands::project_branch,
             commands::create_session,
+            commands::update_session_model,
+            commands::set_default_model,
+            commands::toggle_model_favorite,
             commands::send_message,
             commands::resolve_permission,
             commands::cancel_session,
-            commands::save_credential,
-            commands::delete_credential,
+            commands::connect_provider,
+            commands::disconnect_provider,
+            commands::validate_provider_auth,
+            commands::refresh_provider_auth,
+            commands::get_provider_auth_status,
+            commands::get_provider_account_info,
+            commands::get_provider_available_models,
             commands::frontend_log
         ])
         .run(tauri::generate_context!())

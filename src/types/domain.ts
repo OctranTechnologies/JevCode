@@ -10,13 +10,52 @@ export interface Provider {
   models: Model[];
   connected: boolean;
 }
+export type ProviderAuthMethod = 'api_key' | 'google_oauth' | 'openai_chatgpt';
+export type ProviderAuthState = 'not_connected' | 'connected' | 'needs_attention';
+export interface ProviderAuthMethodOption {
+  method: ProviderAuthMethod;
+  label: string;
+  available: boolean;
+  unavailableReason: string | null;
+}
+/** Non-secret provider metadata. Tokens and API keys never cross back to the webview. */
+export interface ProviderAccount {
+  providerId: string;
+  providerName: string;
+  state: ProviderAuthState;
+  authMethod: ProviderAuthMethod | null;
+  accountLabel: string | null;
+  connectedAt: string | null;
+  lastValidatedAt: string | null;
+  lastErrorCode: string | null;
+  availableMethods: ProviderAuthMethodOption[];
+}
+export interface ProviderAccountInfo {
+  providerId: string;
+  providerName: string;
+  authMethod: ProviderAuthMethod;
+  accountLabel: string;
+}
 export interface Model {
   id: string;
-  providerId: string;
-  name: string;
+  provider: string;
+  displayName: string;
+  /** Internal wire protocol for multi-protocol gateways; null uses provider default. */
+  apiProtocol: ProviderProtocol | null;
+  capabilities: ModelCapability[];
   supportsTools: boolean;
+  supportsVision: boolean;
+  supportsReasoning: boolean;
+  supportsStreaming: boolean;
   contextWindow: number | null;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  status: ModelStatus;
 }
+export type ModelCapability = 'tools' | 'vision' | 'reasoning' | 'streaming';
+export type ModelStatus = 'available' | 'deprecated' | 'unavailable';
+export interface ModelReference { providerId: string; modelId: string }
+export interface ModelPreferences { defaultModel: ModelReference | null; favorites: ModelReference[]; recent: ModelReference[] }
 export interface AgentSession {
   id: string;
   projectId: string;
@@ -58,7 +97,35 @@ export interface ToolResult {
   durationMs: number;
 }
 export interface Workspace { id: string; name: string; projects: Project[] }
-export interface Project { id: string; workspaceId: string; name: string; path: string; createdAt: string }
+export interface Project {
+  id: string;
+  workspaceId: string;
+  name: string;
+  path: string;
+  repositoryRoot: string | null;
+  activeBranch: string | null;
+  lastOpenedAt: string;
+  projectInstructions: string;
+  preferredModel: string | null;
+  permissions: PermissionPolicy;
+  isRecent: boolean;
+  createdAt: string;
+}
+export interface ProjectFileEntry { name: string; path: string; kind: 'file' | 'directory'; sizeBytes: number; isSymlink: boolean }
+export interface ChangedFile { path: string; status: string }
+export interface LanguageCount { name: string; files: number }
+export interface ProjectOverview {
+  projectId: string;
+  repositoryRoot: string | null;
+  activeBranch: string | null;
+  gitStatusAvailable: boolean;
+  isDirty: boolean;
+  changedFiles: ChangedFile[];
+  repositorySizeBytes: number;
+  scanLimited: boolean;
+  languages: LanguageCount[];
+}
+export interface TerminalResult { output: string; exitCode: number | null; timedOut: boolean }
 export interface UsageRecord {
   id: string;
   sessionId: string;
@@ -80,8 +147,10 @@ export interface PermissionPolicy {
 export interface Bootstrap {
   workspace: Workspace;
   providers: Provider[];
+  accounts: ProviderAccount[];
   sessions: AgentSession[];
   usage: UsageRecord[];
   tools: Tool[];
   permissionPolicy: PermissionPolicy;
+  modelPreferences: ModelPreferences;
 }

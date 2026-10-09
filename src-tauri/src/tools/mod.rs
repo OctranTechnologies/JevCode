@@ -2,7 +2,7 @@ use crate::{
     domain::*,
     error::{AppError, AppResult},
     git,
-    workspaces::scoped_path,
+    workspaces::{is_ignored, list_directory, scoped_path},
 };
 use serde_json::json;
 use std::{path::Path, time::Instant};
@@ -91,6 +91,12 @@ async fn execute_checked(
     let path = scoped_path(root, relative)?;
     match call.name.as_str() {
         "read_file" => {
+            if is_ignored(root, relative) {
+                return Err(AppError::new(
+                    "permission_denied",
+                    "This file is excluded by the project's ignore rules.",
+                ));
+            }
             let metadata = tokio::fs::metadata(&path).await?;
             if !metadata.is_file() || metadata.len() > 65536 {
                 return Err(AppError::new(
@@ -108,28 +114,17 @@ async fn execute_checked(
             String::from_utf8(bytes)
                 .map_err(|_| AppError::new("binary_file", "This tool only reads UTF-8 text files."))
         }
-        "list_files" => {
-            let mut entries = tokio::fs::read_dir(path).await?;
-            let mut names = Vec::new();
-            while let Some(entry) = entries.next_entry().await? {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let child = Path::new(relative).join(&name);
-                if scoped_path(root, &child.to_string_lossy()).is_ok() {
-                    let suffix = if entry.file_type().await?.is_dir() {
-                        "/"
-                    } else {
-                        ""
-                    };
-                    names.push(format!("{name}{suffix}"));
+        "list_files" => Ok(list_directory(root, relative)?
+            .into_iter()
+            .map(|entry| {
+                if entry.kind == "directory" {
+                    format!("{}/", entry.name)
+                } else {
+                    entry.name
                 }
-                if names.len() >= 250 {
-                    names.push("[Listing limited to 250 entries]".into());
-                    break;
-                }
-            }
-            names.sort();
-            Ok(names.join("\n"))
-        }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")),
         _ => Err(AppError::new(
             "unknown_tool",
             "The requested tool is not registered.",

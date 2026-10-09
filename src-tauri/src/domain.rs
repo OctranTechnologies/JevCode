@@ -30,14 +30,68 @@ pub struct Provider {
     pub connected: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Model {
     pub id: String,
-    pub provider_id: String,
-    pub name: String,
+    #[serde(alias = "providerId")]
+    pub provider: String,
+    #[serde(alias = "name")]
+    pub display_name: String,
+    /// Wire API selected for a model served through a multi-protocol gateway.
+    /// `None` means use the owning provider's configured default protocol.
+    #[serde(default)]
+    pub api_protocol: Option<ProviderProtocol>,
+    #[serde(default)]
+    pub capabilities: Vec<ModelCapability>,
+    #[serde(default)]
     pub supports_tools: bool,
+    #[serde(default)]
+    pub supports_vision: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
+    #[serde(default = "default_true")]
+    pub supports_streaming: bool,
     pub context_window: Option<u64>,
+    #[serde(default)]
+    pub input_price: Option<f64>,
+    #[serde(default)]
+    pub output_price: Option<f64>,
+    #[serde(default)]
+    pub status: ModelStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCapability {
+    Tools,
+    Vision,
+    Reasoning,
+    Streaming,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStatus {
+    #[default]
+    Available,
+    Deprecated,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelReference {
+    pub provider_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPreferences {
+    pub default_model: Option<ModelReference>,
+    pub favorites: Vec<ModelReference>,
+    pub recent: Vec<ModelReference>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -193,7 +247,71 @@ pub struct Project {
     pub workspace_id: String,
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub repository_root: Option<String>,
+    #[serde(default)]
+    pub active_branch: Option<String>,
+    #[serde(default = "now")]
+    pub last_opened_at: String,
+    #[serde(default)]
+    pub project_instructions: String,
+    #[serde(default)]
+    pub preferred_model: Option<String>,
+    #[serde(default)]
+    pub permissions: PermissionPolicy,
+    #[serde(default = "default_true")]
+    pub is_recent: bool,
     pub created_at: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub size_bytes: u64,
+    pub is_symlink: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageCount {
+    pub name: String,
+    pub files: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOverview {
+    pub project_id: String,
+    pub repository_root: Option<String>,
+    pub active_branch: Option<String>,
+    pub git_status_available: bool,
+    pub is_dirty: bool,
+    pub changed_files: Vec<ChangedFile>,
+    pub repository_size_bytes: u64,
+    pub scan_limited: bool,
+    pub languages: Vec<LanguageCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalResult {
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +326,57 @@ pub struct UsageRecord {
     pub cost_usd: Option<f64>,
     pub duration_ms: u64,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ProviderAuthMethod {
+    #[serde(rename = "api_key")]
+    ApiKey,
+    #[serde(rename = "google_oauth")]
+    GoogleOAuth,
+    #[serde(rename = "openai_chatgpt")]
+    OpenAiChatGpt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAuthState {
+    NotConnected,
+    Connected,
+    NeedsAttention,
+}
+
+/// Safe account metadata. Credential material is stored separately in the OS keychain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAccount {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub state: ProviderAuthState,
+    pub auth_method: Option<ProviderAuthMethod>,
+    pub account_label: Option<String>,
+    pub connected_at: Option<String>,
+    pub last_validated_at: Option<String>,
+    pub last_error_code: Option<String>,
+    pub available_methods: Vec<ProviderAuthMethodOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAuthMethodOption {
+    pub method: ProviderAuthMethod,
+    pub label: String,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderAccountInfo {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub auth_method: ProviderAuthMethod,
+    pub account_label: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]

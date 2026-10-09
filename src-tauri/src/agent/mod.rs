@@ -76,11 +76,20 @@ async fn drive(
         state.credentials.get(&provider.id)?
     };
     let adapter = providers::adapter(provider, secret)?;
-    let model = provider
-        .models
+    let models = state
+        .database
+        .model_catalog(&provider.id)?
+        .filter(|models| !models.is_empty())
+        .unwrap_or_else(|| provider.models.clone());
+    let model = models
         .iter()
-        .find(|model| model.id == session.model_id)
-        .ok_or_else(|| AppError::new("unknown_model", "This model is no longer configured."))?;
+        .find(|model| model.id == session.model_id && model.status != ModelStatus::Unavailable)
+        .ok_or_else(|| {
+            AppError::new(
+                "unknown_model",
+                "This model is no longer available. Choose another model from the picker.",
+            )
+        })?;
     let available: Vec<_> = if model.supports_tools {
         tools::definitions()
             .into_iter()
@@ -122,6 +131,7 @@ async fn drive(
         let response = adapter
             .complete(ProviderRequest {
                 model_id: &session.model_id,
+                protocol: model.api_protocol.as_ref().unwrap_or(&provider.protocol),
                 messages: &session.messages,
                 tools: &available,
             })

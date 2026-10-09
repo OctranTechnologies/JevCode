@@ -1,5 +1,6 @@
 use super::{wire, LlmProvider, ProviderRequest, ProviderResponse};
 use crate::{
+    auth,
     domain::{Provider, ProviderProtocol},
     error::{AppError, AppResult},
 };
@@ -43,7 +44,7 @@ impl LlmProvider for HttpProvider {
             .as_deref()
             .unwrap_or_default()
             .trim_end_matches('/');
-        let (path, payload) = wire::encode(&self.provider.protocol, &request)?;
+        let (path, payload) = wire::encode(request.protocol, &request)?;
         let builder = self.client.post(format!("{base}/{path}")).json(&payload);
         let builder = match self.provider.protocol {
             ProviderProtocol::Anthropic => builder
@@ -53,31 +54,20 @@ impl LlmProvider for HttpProvider {
             _ => builder.bearer_auth(&self.secret),
         };
         let mut response = builder.send().await.map_err(|error| {
-            if error.is_timeout() {
-                AppError::new(
-                    "provider_timeout",
-                    "The provider timed out. Retry or choose another model.",
-                )
+            if error.is_timeout() || error.is_connect() {
+                auth::network_error()
             } else {
-                AppError::new(
-                    "provider_network",
-                    "Could not reach the provider. Check your connection and configuration.",
-                )
+                auth::provider_outage()
             }
         })?;
         let status = response.status();
         if !status.is_success() {
             tracing::warn!(provider_id = %self.provider.id, status = status.as_u16(), "Provider rejected request");
-            return Err(match status.as_u16() {
-                401 | 403 => AppError::new("provider_auth", "The provider rejected your credentials. Update the API key or check account access."),
-                429 => AppError::new("provider_rate_limit", "The provider rate limit or quota was reached. Check your account and retry later."),
-                _ => AppError::new("provider_error", format!("The provider returned HTTP {}. Check the configured model and try again.", status.as_u16())),
-            });
+            let body = auth::read_limited(&mut response, 8192).await;
+            return Err(auth::provider_response_error(status, &body));
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| {
-            AppError::new("provider_network", "The provider response was interrupted.")
-        })? {
+        while let Some(chunk) = response.chunk().await.map_err(|_| auth::network_error())? {
             if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
                 return Err(AppError::new(
                     "response_limit",
@@ -92,6 +82,6 @@ impl LlmProvider for HttpProvider {
                 "The provider returned an invalid JSON response.",
             )
         })?;
-        wire::decode(&self.provider.protocol, value)
+        wire::decode(request.protocol, value)
     }
 }

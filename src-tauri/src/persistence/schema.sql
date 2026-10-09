@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
+    last_opened_at TEXT NOT NULL DEFAULT '',
+    is_recent INTEGER NOT NULL DEFAULT 1,
     data TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -19,6 +21,21 @@ CREATE TABLE IF NOT EXISTS usage (
     created_at TEXT NOT NULL,
     data TEXT NOT NULL
 );
+-- This table contains only non-secret account state. Credential bytes belong in
+-- the platform keychain, never in SQLite or serialized application settings.
+CREATE TABLE IF NOT EXISTS provider_accounts (
+    provider_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_catalogs (
+    provider_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_preferences (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project_id, updated_at);
 CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id);
-PRAGMA user_version = 1;
+PRAGMA user_version = 4;

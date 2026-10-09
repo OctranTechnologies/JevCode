@@ -8,6 +8,7 @@ use serde_json::Value;
 
 pub struct ProviderRequest<'a> {
     pub model_id: &'a str,
+    pub protocol: &'a crate::domain::ProviderProtocol,
     pub messages: &'a [AgentMessage],
     pub tools: &'a [Tool],
 }

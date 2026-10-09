@@ -53,7 +53,7 @@ impl AppConfig {
             }
             let mut models = std::collections::HashSet::new();
             for model in &provider.models {
-                if model.provider_id != provider.id
+                if model.provider != provider.id
                     || model.id.is_empty()
                     || !model
                         .id
