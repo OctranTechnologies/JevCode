@@ -14,7 +14,7 @@ describe('typed Tauri command boundary', () => {
     });
     const { command } = await import('../src/lib/ipc');
     const result = await command('send_message', { sessionId: 'test-session', content: 'Review Git status' });
-    expect(result.status).toBe('awaiting_permission');
+    expect(result.status).toBe('waiting_for_permission');
   });
   it('rejects malformed results and preserves structured backend errors', async () => {
     mockIPC(() => ({ status: 'oops' }));

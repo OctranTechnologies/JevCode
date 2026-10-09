@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import {
-  AlertCircle, ArrowUpRight, Check, ChevronDown, CircleDot, Clock3, FileCode2, GitBranch,
+  AlertCircle, ArrowUpRight, Check, ChevronDown, CircleDot, CircleHelp, Clock3, FileCode2, GitBranch,
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
@@ -13,11 +13,12 @@ const suggestions = [
 ];
 
 export function Conversation({
-  session, projectName, demo = false, onSuggestion, onPermission, onRetry, permissionBusy,
+  session, projectName, demo = false, streamingText = '', onSuggestion, onPermission, onRetry, permissionBusy,
 }: {
   session?: AgentSession;
   projectName?: string;
   demo?: boolean;
+  streamingText?: string;
   onSuggestion: (prompt: string) => void;
   onPermission: (approved: boolean) => void;
   onRetry: () => void;
@@ -45,7 +46,10 @@ export function Conversation({
           <div className="approval-actions"><button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission(false)}>Deny</button><button className="button-primary" disabled={permissionBusy} onClick={() => onPermission(true)}>{permissionBusy ? 'Applying…' : 'Allow once'}</button></div>
         </div>
       </div>}
-      {session?.status === 'running' && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>JevCode is working through this task</span><span className="working-dots"><i /><i /><i /></span></div>}
+      {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
+      {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span><span className="working-dots"><i /><i /><i /></span></div>}
+      {session?.activityEvents.filter(event => ['plan', 'progress', 'file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run'].includes(event.kind)).map(event => <div className="agent-activity-summary" key={event.id}><CircleDot size={12} /><span>{event.summary}</span><time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time></div>)}
+      {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><div className="agent-prose">{streamingText}</div></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
       <div ref={end} />
     </div>}

@@ -26,6 +26,20 @@ pub struct ProviderResponse {
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn complete(&self, request: ProviderRequest<'_>) -> AppResult<ProviderResponse>;
+
+    /// Stream user-visible text while normalizing the final response and tool calls.
+    /// Providers without a streaming transport use the buffered fallback.
+    async fn complete_stream(
+        &self,
+        request: ProviderRequest<'_>,
+        deltas: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> AppResult<ProviderResponse> {
+        let response = self.complete(request).await?;
+        if !response.content.is_empty() {
+            let _ = deltas.send(response.content.clone());
+        }
+        Ok(response)
+    }
 }
 
 pub fn adapter(provider: &Provider, secret: Option<String>) -> AppResult<Box<dyn LlmProvider>> {

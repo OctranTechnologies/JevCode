@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AgentMessage, AgentSession, Bootstrap, Model, ModelPreferences, PermissionPolicy, Project, Provider, ProviderAccount, ProviderAccountInfo, Tool, ToolCall, ToolResult, UsageRecord, Workspace } from '../types/domain';
+import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, PermissionPolicy, Project, Provider, ProviderAccount, ProviderAccountInfo, Tool, ToolCall, ToolResult, UsageRecord, Workspace } from '../types/domain';
 
 const count = z.number().int().nonnegative();
 const decision = z.enum(['allow', 'ask', 'deny']);
@@ -17,11 +17,13 @@ export const providerAccountSchema: z.ZodType<ProviderAccount> = z.object({
   })),
 });
 export const providerAccountInfoSchema: z.ZodType<ProviderAccountInfo> = z.object({ providerId: z.string(), providerName: z.string(), authMethod: providerAuthMethodSchema, accountLabel: z.string() });
-export const toolSchema: z.ZodType<Tool> = z.object({ name: z.string(), description: z.string(), category: z.enum(['read_files', 'git', 'write_files', 'shell']), inputSchema: z.record(z.string(), z.unknown()) });
+export const toolSchema: z.ZodType<Tool> = z.object({ name: z.string(), description: z.string(), category: z.enum(['read_files', 'git', 'write_files', 'shell', 'user_interaction']), parallelSafe: z.boolean().default(false), inputSchema: z.record(z.string(), z.unknown()) });
 export const toolCallSchema: z.ZodType<ToolCall> = z.object({ id: z.string(), name: z.string(), arguments: z.record(z.string(), z.unknown()) });
 export const toolResultSchema: z.ZodType<ToolResult> = z.object({ toolCallId: z.string(), name: z.string(), content: z.string(), isError: z.boolean(), durationMs: count });
 export const messageSchema: z.ZodType<AgentMessage> = z.object({ id: z.string(), role: z.enum(['system', 'user', 'assistant', 'tool']), content: z.string(), toolCalls: z.array(toolCallSchema), toolResult: toolResultSchema.nullable(), createdAt: z.string(), providerData: z.unknown() });
-export const sessionSchema: z.ZodType<AgentSession> = z.object({ id: z.string(), projectId: z.string(), providerId: z.string(), modelId: z.string(), title: z.string(), status: z.enum(['idle', 'running', 'awaiting_permission', 'completed', 'failed', 'cancelled']), messages: z.array(messageSchema), permissionPolicy: permissionSchema, pendingToolCall: toolCallSchema.nullable(), queuedToolCalls: z.array(toolCallSchema), createdAt: z.string(), updatedAt: z.string(), error: z.string().nullable(), toolRounds: count });
+const agentActivitySchema: z.ZodType<AgentActivityEvent> = z.object({ id: z.string(), sessionId: z.string(), kind: z.enum(['plan', 'progress', 'tool_started', 'tool_completed', 'file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run']), summary: z.string(), toolCallId: z.string().nullable(), createdAt: z.string() });
+export const sessionSchema: z.ZodType<AgentSession> = z.object({ id: z.string(), projectId: z.string(), providerId: z.string(), modelId: z.string(), title: z.string(), status: z.enum(['queued', 'planning', 'working', 'waiting_for_permission', 'waiting_for_user', 'completed', 'failed', 'cancelled']), messages: z.array(messageSchema), permissionPolicy: permissionSchema, pendingToolCall: toolCallSchema.nullable().default(null), pendingUserInput: toolCallSchema.nullable().default(null), queuedToolCalls: z.array(toolCallSchema), iterations: count.default(0), toolCalls: count.default(0), activityEvents: z.array(agentActivitySchema).default([]), createdAt: z.string(), updatedAt: z.string(), error: z.string().nullable(), toolRounds: count });
+export const agentStreamChunkSchema: z.ZodType<AgentStreamChunk> = z.object({ sessionId: z.string(), delta: z.string(), reset: z.boolean() });
 export const projectSchema: z.ZodType<Project> = z.object({
   id: z.string(), workspaceId: z.string(), name: z.string(), path: z.string(), repositoryRoot: z.string().nullable(), activeBranch: z.string().nullable(), lastOpenedAt: z.string(), projectInstructions: z.string(), preferredModel: z.string().nullable(), permissions: permissionSchema, isRecent: z.boolean(), createdAt: z.string(),
 });

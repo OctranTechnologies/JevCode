@@ -1,7 +1,7 @@
 export type ProviderProtocol = 'preview' | 'open_ai_responses' | 'open_ai_chat' | 'anthropic' | 'gemini';
 export type PermissionDecision = 'allow' | 'ask' | 'deny';
-export type ToolCategory = 'read_files' | 'git' | 'write_files' | 'shell';
-export type SessionStatus = 'idle' | 'running' | 'awaiting_permission' | 'completed' | 'failed' | 'cancelled';
+export type ToolCategory = 'read_files' | 'git' | 'write_files' | 'shell' | 'user_interaction';
+export type SessionStatus = 'queued' | 'planning' | 'working' | 'waiting_for_permission' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled';
 export interface Provider {
   id: string;
   name: string;
@@ -66,12 +66,17 @@ export interface AgentSession {
   messages: AgentMessage[];
   permissionPolicy: PermissionPolicy;
   pendingToolCall: ToolCall | null;
+  pendingUserInput: ToolCall | null;
   queuedToolCalls: ToolCall[];
+  iterations: number;
+  toolCalls: number;
+  activityEvents: AgentActivityEvent[];
   createdAt: string;
   updatedAt: string;
   error: string | null;
   toolRounds: number;
 }
+export interface AgentStreamChunk { sessionId: string; delta: string; reset: boolean }
 export interface AgentMessage {
   id: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -86,7 +91,17 @@ export interface Tool {
   name: string;
   description: string;
   category: ToolCategory;
+  parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
+}
+export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run';
+export interface AgentActivityEvent {
+  id: string;
+  sessionId: string;
+  kind: AgentActivityKind;
+  summary: string;
+  toolCallId: string | null;
+  createdAt: string;
 }
 export interface ToolCall { id: string; name: string; arguments: Record<string, unknown> }
 export interface ToolResult {

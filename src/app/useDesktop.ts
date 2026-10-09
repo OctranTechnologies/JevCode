@@ -9,6 +9,7 @@ export function useDesktop() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
+  const [streaming, setStreaming] = useState<Record<string, string>>({});
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -16,7 +17,17 @@ export function useDesktop() {
     setError(null);
     void (async () => {
       try {
-        const cleanup = await subscribeEvents(session => dispatch({ type: 'session', session }), record => dispatch({ type: 'usage', record }), () => { logEvent('ipc_event_invalid', 'error'); setError('An update could not be read. Reload JevCode.'); });
+        const cleanup = await subscribeEvents(
+          session => {
+            dispatch({ type: 'session', session });
+            if (['waiting_for_permission', 'waiting_for_user', 'completed', 'failed', 'cancelled'].includes(session.status)) {
+              setStreaming(current => { const next = { ...current }; delete next[session.id]; return next; });
+            }
+          },
+          record => dispatch({ type: 'usage', record }),
+          () => { logEvent('ipc_event_invalid', 'error'); setError('An update could not be read. Reload JevCode.'); },
+          chunk => setStreaming(current => ({ ...current, [chunk.sessionId]: chunk.reset ? '' : `${current[chunk.sessionId] ?? ''}${chunk.delta}` })),
+        );
         if (disposed) { cleanup(); return; }
         unlisten = cleanup;
         const data = await loadBootstrap();
@@ -26,5 +37,5 @@ export function useDesktop() {
     })();
     return () => { disposed = true; unlisten?.(); };
   }, [reload]);
-  return { ...state, dispatch, loading, error, setError, retry: () => setReload(value => value + 1) };
+  return { ...state, dispatch, streaming, loading, error, setError, retry: () => setReload(value => value + 1) };
 }

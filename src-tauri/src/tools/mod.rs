@@ -14,6 +14,7 @@ pub fn definitions() -> Vec<Tool> {
             description: "List one project directory. Internal and credential files are excluded."
                 .into(),
             category: ToolCategory::ReadFiles,
+            parallel_safe: true,
             input_schema: json!({"type":"object","properties":{"path":{"type":"string","description":"Relative directory; use . for the project root"}},"required":["path"],"additionalProperties":false}),
         },
         Tool {
@@ -21,6 +22,7 @@ pub fn definitions() -> Vec<Tool> {
             description: "Read a UTF-8 project file up to 64 KiB. Credential files are blocked."
                 .into(),
             category: ToolCategory::ReadFiles,
+            parallel_safe: true,
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}),
         },
         Tool {
@@ -28,7 +30,15 @@ pub fn definitions() -> Vec<Tool> {
             description:
                 "Read Git status for the selected project. Does not modify the repository.".into(),
             category: ToolCategory::Git,
+            parallel_safe: true,
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+        },
+        Tool {
+            name: "ask_user".into(),
+            description: "Ask the user one concise question when required information is missing. Pause until they answer.".into(),
+            category: ToolCategory::UserInteraction,
+            parallel_safe: false,
+            input_schema: json!({"type":"object","properties":{"question":{"type":"string","description":"A concise question for the user"}},"required":["question"],"additionalProperties":false}),
         },
     ]
 }
@@ -38,6 +48,62 @@ pub fn definition(name: &str) -> AppResult<Tool> {
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| AppError::new("unknown_tool", "The requested tool is not registered."))
+}
+
+pub fn validate_call(call: &ToolCall) -> AppResult<Tool> {
+    let tool = definition(&call.name)?;
+    let arguments = call.arguments.as_object().ok_or_else(|| {
+        AppError::new(
+            "invalid_tool_arguments",
+            "Tool arguments must be a JSON object.",
+        )
+    })?;
+    let properties = tool.input_schema["properties"].as_object().ok_or_else(|| {
+        AppError::new(
+            "tool_schema",
+            "The registered tool has an invalid input schema.",
+        )
+    })?;
+    for required in tool.input_schema["required"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let key = required.as_str().unwrap_or_default();
+        if !arguments.contains_key(key) {
+            return Err(AppError::new(
+                "invalid_tool_arguments",
+                "The model omitted a required tool argument.",
+            ));
+        }
+    }
+    if arguments.keys().any(|key| !properties.contains_key(key)) {
+        return Err(AppError::new(
+            "invalid_tool_arguments",
+            "The model supplied an unsupported tool argument.",
+        ));
+    }
+    for (key, value) in arguments {
+        let expected = properties[key]["type"].as_str().unwrap_or_default();
+        let valid = match expected {
+            "string" => value
+                .as_str()
+                .is_some_and(|value| !value.is_empty() && value.len() <= 4096),
+            "boolean" => value.is_boolean(),
+            "integer" => value.as_i64().is_some(),
+            "number" => value.as_f64().is_some(),
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            _ => false,
+        };
+        if !valid {
+            return Err(AppError::new(
+                "invalid_tool_arguments",
+                "A tool argument did not match the registered input schema.",
+            ));
+        }
+    }
+    Ok(tool)
 }
 
 /// Every execution, including an approved call, rechecks its policy and scope.
@@ -64,7 +130,13 @@ async fn execute_checked(
     policy: &PermissionPolicy,
     approved: bool,
 ) -> AppResult<String> {
-    let tool = definition(&call.name)?;
+    let tool = validate_call(call)?;
+    if call.name == "ask_user" {
+        return Err(AppError::new(
+            "runtime_tool",
+            "The user interaction tool must be handled by the agent runtime.",
+        ));
+    }
     match policy.decision(&tool.category) {
         PermissionDecision::Deny => {
             return Err(AppError::new(
@@ -135,6 +207,35 @@ async fn execute_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_requests_must_match_registered_schemas() {
+        let valid = ToolCall {
+            id: "1".into(),
+            name: "read_file".into(),
+            arguments: json!({"path":"README.md"}),
+        };
+        assert!(validate_call(&valid).is_ok());
+
+        let extra = ToolCall {
+            arguments: json!({"path":"README.md","outsideWorkspace":true}),
+            ..valid.clone()
+        };
+        assert_eq!(
+            validate_call(&extra).unwrap_err().code,
+            "invalid_tool_arguments"
+        );
+
+        let missing = ToolCall {
+            arguments: json!({}),
+            ..valid
+        };
+        assert_eq!(
+            validate_call(&missing).unwrap_err().code,
+            "invalid_tool_arguments"
+        );
+    }
+
     #[tokio::test]
     async fn deny_cannot_be_overridden_by_approval() {
         let root = tempfile::tempdir().unwrap();

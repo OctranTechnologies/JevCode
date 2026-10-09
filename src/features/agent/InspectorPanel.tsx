@@ -102,8 +102,11 @@ function TaskPanel({ session, demo, project, provider }: { session?: AgentSessio
 
 function humanStatus(status: AgentSession['status']) {
   if (status === 'completed') return 'Completed';
-  if (status === 'running') return 'Working';
-  if (status === 'awaiting_permission') return 'Waiting for approval';
+  if (status === 'queued') return 'Queued';
+  if (status === 'planning') return 'Planning';
+  if (status === 'working') return 'Working';
+  if (status === 'waiting_for_permission') return 'Waiting for approval';
+  if (status === 'waiting_for_user') return 'Waiting for your answer';
   if (status === 'failed') return 'Failed';
   if (status === 'cancelled') return 'Stopped';
   return 'Ready';

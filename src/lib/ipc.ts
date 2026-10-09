@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, Bootstrap, Model, ModelPreferences, ModelReference, PermissionPolicy, Project, ProviderAccount, ProviderAccountInfo, UsageRecord } from '../types/domain';
-import { bootstrapSchema, modelPreferencesSchema, modelSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionSchema, terminalResultSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionPolicy, Project, ProviderAccount, ProviderAccountInfo, UsageRecord } from '../types/domain';
+import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionSchema, terminalResultSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export const desktopAvailable = isTauri();
@@ -87,12 +87,13 @@ export function providerAuthAdapter(providerId: string): ProviderAuthAdapter {
   };
 }
 
-export async function subscribeEvents(onSession: (session: AgentSession) => void, onUsage: (record: UsageRecord) => void, onError: () => void): Promise<UnlistenFn> {
+export async function subscribeEvents(onSession: (session: AgentSession) => void, onUsage: (record: UsageRecord) => void, onError: () => void, onStream?: (chunk: AgentStreamChunk) => void): Promise<UnlistenFn> {
   if (!desktopAvailable) return () => {};
   const listeners: UnlistenFn[] = [];
   try {
     listeners.push(await listen<unknown>('session:updated', event => { const parsed = sessionSchema.safeParse(event.payload); if (parsed.success) onSession(parsed.data); else onError(); }));
     listeners.push(await listen<unknown>('usage:updated', event => { const parsed = usageSchema.safeParse(event.payload); if (parsed.success) onUsage(parsed.data); else onError(); }));
+    if (onStream) listeners.push(await listen<unknown>('agent:stream', event => { const parsed = agentStreamChunkSchema.safeParse(event.payload); if (parsed.success) onStream(parsed.data); else onError(); }));
     return () => listeners.forEach(unlisten => unlisten());
   } catch (error) { listeners.forEach(unlisten => unlisten()); throw normalizeError(error); }
 }

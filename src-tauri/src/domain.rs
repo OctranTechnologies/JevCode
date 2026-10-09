@@ -97,9 +97,14 @@ pub struct ModelPreferences {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
-    Idle,
-    Running,
-    AwaitingPermission,
+    #[serde(alias = "idle")]
+    Queued,
+    Planning,
+    #[serde(alias = "running")]
+    Working,
+    #[serde(alias = "awaiting_permission")]
+    WaitingForPermission,
+    WaitingForUser,
     Completed,
     Failed,
     Cancelled,
@@ -116,8 +121,17 @@ pub struct AgentSession {
     pub status: SessionStatus,
     pub messages: Vec<AgentMessage>,
     pub permission_policy: PermissionPolicy,
+    #[serde(default)]
     pub pending_tool_call: Option<ToolCall>,
+    #[serde(default)]
+    pub pending_user_input: Option<ToolCall>,
     pub queued_tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub iterations: u32,
+    #[serde(default)]
+    pub tool_calls: u32,
+    #[serde(default)]
+    pub activity_events: Vec<AgentActivityEvent>,
     pub created_at: String,
     pub updated_at: String,
     pub error: Option<String>,
@@ -156,8 +170,42 @@ impl AgentSession {
             self.messages.push(message);
         }
         self.pending_tool_call = None;
+        self.pending_user_input = None;
         self.queued_tool_calls.clear();
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentActivityKind {
+    Plan,
+    Progress,
+    ToolStarted,
+    ToolCompleted,
+    FileInspected,
+    SearchPerformed,
+    CommandExecuted,
+    FileEdited,
+    TestRun,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActivityEvent {
+    pub id: String,
+    pub session_id: String,
+    pub kind: AgentActivityKind,
+    pub summary: String,
+    pub tool_call_id: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStreamChunk {
+    pub session_id: String,
+    pub delta: String,
+    pub reset: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -203,6 +251,7 @@ pub enum ToolCategory {
     Git,
     WriteFiles,
     Shell,
+    UserInteraction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +260,8 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub category: ToolCategory,
+    #[serde(default)]
+    pub parallel_safe: bool,
     pub input_schema: Value,
 }
 
@@ -416,6 +467,7 @@ impl PermissionPolicy {
             ToolCategory::Git => self.git,
             ToolCategory::WriteFiles => self.write_files,
             ToolCategory::Shell => self.shell,
+            ToolCategory::UserInteraction => PermissionDecision::Allow,
         }
     }
 }

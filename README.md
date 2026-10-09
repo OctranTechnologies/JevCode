@@ -121,13 +121,16 @@ flowchart LR
     Runtime -. session:updated / usage:updated .-> UI
 ```
 
-The runtime depends on the `LlmProvider` trait, which accepts normalized
-`ProviderRequest` values and returns `ProviderResponse` values. It does not switch
-on provider IDs. The adapter factory chooses a wire protocol from configuration.
-OpenAI Responses, OpenAI-compatible Chat Completions, Anthropic Messages and
-Gemini GenerateContent encode tool definitions and normalize text, calls and usage.
-Opaque continuation blocks preserve Responses reasoning items, Anthropic content
-blocks and Gemini thought signatures. React never interprets these blocks.
+The provider-neutral `AgentRuntime` owns the task state machine, context budgeting,
+request retries and timeouts, tool-call limits, permission pauses, cancellation,
+and scheduling. `LlmProvider` accepts normalized `ProviderRequest` values and
+streams visible text while returning normalized tool calls and usage. The adapter
+factory chooses a wire protocol from configuration. OpenAI Responses,
+OpenAI-compatible Chat Completions, Anthropic Messages and Gemini GenerateContent
+encode tool definitions and normalize their responses. Provider continuation data
+is sanitized before persistence: hidden reasoning and thinking blocks are neither
+displayed nor stored. Only useful task activity such as concise progress, inspected
+files, and tool outcomes is exposed to the UI.
 
 All core interfaces are in `src/types/domain.ts` and `src-tauri/src/domain.rs`:
 `Provider`, `Model`, `AgentSession`, `AgentMessage`, `Tool`, `ToolCall`, `ToolResult`,
@@ -137,10 +140,24 @@ and events before they enter React state. Both languages roundtrip the same
 session fixture under `tests/fixtures/session.json` to catch contract drift.
 
 `send_message` reserves a session, persists the user message, and starts an async
-run without blocking IPC. Checkpoints emit full session snapshots. The frontend
-merges snapshots by their update timestamp so an older command response cannot
-overwrite a newer event. Multiple sessions can run independently; one session
-cannot have competing runs. Provider requests are non-streaming in this version.
+run without blocking IPC. Tasks move through `queued`, `planning`, `working`,
+`waiting_for_permission`, `waiting_for_user`, and a terminal state (`completed`,
+`failed`, or `cancelled`). Checkpoints persist full conversation and activity
+snapshots. The frontend merges snapshots by their update timestamp so an older
+command response cannot overwrite a newer event. Text deltas stream as a separate
+ephemeral event; the completed assistant message is persisted in the conversation.
+Multiple sessions can run independently; one session cannot have competing runs.
+Only tools explicitly marked parallel-safe are batched, and permission or user
+questions pause the same task until it is resumed. Provider and model selection is
+resolved for each task run, so switching does not require restarting the app.
+
+The runtime defaults to 32 model iterations, 64 tool calls, two retries for
+transient provider failures, a 120-second model-request timeout, and a 30-second
+tool timeout. Its context budget reserves room for the model response and removes
+old conversation turns as complete units. The limits and timing values are
+configurable through `AgentRuntimeConfig`. `MockProvider` tests exercise streaming,
+parallel tools, permission/user pauses, cancellation, persistence, and context
+limits without provider credentials or API usage.
 
 ## Provider configuration
 

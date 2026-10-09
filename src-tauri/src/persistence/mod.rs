@@ -65,7 +65,10 @@ impl Database {
 
     fn recover_interrupted(&self) -> AppResult<()> {
         for mut session in self.sessions()? {
-            if session.status == SessionStatus::Running {
+            if matches!(
+                session.status,
+                SessionStatus::Queued | SessionStatus::Planning | SessionStatus::Working
+            ) {
                 session.status = SessionStatus::Failed;
                 session.error =
                     Some("The app closed during this run. Send a new message to continue.".into());
@@ -321,7 +324,7 @@ mod tests {
             .unwrap();
         let mut session: AgentSession =
             serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
-        session.status = SessionStatus::Running;
+        session.status = SessionStatus::Working;
         database.save_session(&session).unwrap();
         drop(database);
         let reopened = Database::open(&path).unwrap();

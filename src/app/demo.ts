@@ -67,7 +67,8 @@ export const demoSession: AgentSession = {
     },
   ],
   permissionPolicy: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', maxToolRounds: 8 },
-  pendingToolCall: null, queuedToolCalls: [],
+  pendingToolCall: null, pendingUserInput: null, queuedToolCalls: [],
+  iterations: 0, toolCalls: 0, activityEvents: [],
   createdAt: earlier, updatedAt: '2026-10-09T09:16:32.000Z', error: null, toolRounds: 2,
 };
 

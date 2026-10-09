@@ -4,6 +4,7 @@ use crate::{
     error::{AppError, AppResult},
 };
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 fn role(role: &MessageRole) -> &'static str {
     match role {
@@ -34,6 +35,252 @@ pub fn encode(
         }
     }
     Ok((path, payload))
+}
+
+pub fn encode_streaming(
+    protocol: &ProviderProtocol,
+    request: &ProviderRequest<'_>,
+) -> AppResult<(String, Value)> {
+    let (mut path, mut payload) = encode(protocol, request)?;
+    match protocol {
+        ProviderProtocol::OpenAiChat => {
+            payload["stream"] = json!(true);
+            payload["stream_options"] = json!({"include_usage": true});
+        }
+        ProviderProtocol::OpenAiResponses | ProviderProtocol::Anthropic => {
+            payload["stream"] = json!(true);
+        }
+        ProviderProtocol::Gemini => {
+            path = path.replace(":generateContent", ":streamGenerateContent?alt=sse");
+        }
+        ProviderProtocol::Preview => {
+            return Err(AppError::new(
+                "provider_format",
+                "The preview provider does not use HTTP.",
+            ));
+        }
+    }
+    Ok((path, payload))
+}
+
+pub fn stream_delta(protocol: &ProviderProtocol, value: &Value) -> String {
+    match protocol {
+        ProviderProtocol::OpenAiChat => value["choices"][0]["delta"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        ProviderProtocol::OpenAiResponses if value["type"] == "response.output_text.delta" => {
+            value["delta"].as_str().unwrap_or_default().to_owned()
+        }
+        ProviderProtocol::Anthropic if value["type"] == "content_block_delta" => {
+            if value["delta"]["type"] == "text_delta" {
+                value["delta"]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            } else {
+                String::new()
+            }
+        }
+        ProviderProtocol::Gemini => value["candidates"][0]["content"]["parts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|part| part["thought"] != true)
+            .filter_map(|part| part["text"].as_str())
+            .collect(),
+        _ => String::new(),
+    }
+}
+
+#[derive(Default)]
+struct PartialChatTool {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// Collect protocol-specific SSE frames into the same response shape used by
+/// buffered adapters. Only visible text deltas leave this collector.
+pub struct StreamAccumulator {
+    protocol: ProviderProtocol,
+    chat_tools: BTreeMap<u64, PartialChatTool>,
+    anthropic_blocks: BTreeMap<u64, Value>,
+    anthropic_arguments: BTreeMap<u64, String>,
+    visible_text: String,
+    gemini_parts: Vec<Value>,
+    final_response: Option<Value>,
+    input_tokens: u64,
+    output_tokens: u64,
+}
+
+impl StreamAccumulator {
+    pub fn new(protocol: ProviderProtocol) -> Self {
+        Self {
+            protocol,
+            chat_tools: BTreeMap::new(),
+            anthropic_blocks: BTreeMap::new(),
+            anthropic_arguments: BTreeMap::new(),
+            visible_text: String::new(),
+            gemini_parts: Vec::new(),
+            final_response: None,
+            input_tokens: 0,
+            output_tokens: 0,
+        }
+    }
+
+    pub fn push(&mut self, value: &Value) {
+        if matches!(
+            self.protocol,
+            ProviderProtocol::OpenAiChat | ProviderProtocol::OpenAiResponses
+        ) {
+            self.visible_text
+                .push_str(&stream_delta(&self.protocol, value));
+        }
+        match self.protocol {
+            ProviderProtocol::OpenAiChat => {
+                self.input_tokens = value["usage"]["prompt_tokens"]
+                    .as_u64()
+                    .unwrap_or(self.input_tokens);
+                self.output_tokens = value["usage"]["completion_tokens"]
+                    .as_u64()
+                    .unwrap_or(self.output_tokens);
+                if let Some(calls) = value["choices"][0]["delta"]["tool_calls"].as_array() {
+                    for call in calls {
+                        let index = call["index"].as_u64().unwrap_or(0);
+                        let partial = self.chat_tools.entry(index).or_default();
+                        partial.id.push_str(call["id"].as_str().unwrap_or_default());
+                        partial
+                            .name
+                            .push_str(call["function"]["name"].as_str().unwrap_or_default());
+                        partial
+                            .arguments
+                            .push_str(call["function"]["arguments"].as_str().unwrap_or_default());
+                    }
+                }
+            }
+            ProviderProtocol::OpenAiResponses => {
+                if value["type"] == "response.completed" {
+                    self.final_response = value.get("response").cloned();
+                }
+            }
+            ProviderProtocol::Anthropic => match value["type"].as_str().unwrap_or_default() {
+                "message_start" => {
+                    self.input_tokens = value["message"]["usage"]["input_tokens"]
+                        .as_u64()
+                        .unwrap_or(0);
+                }
+                "content_block_start" => {
+                    if let Some(index) = value["index"].as_u64() {
+                        self.anthropic_blocks
+                            .insert(index, value["content_block"].clone());
+                    }
+                }
+                "content_block_delta" => {
+                    if let Some(index) = value["index"].as_u64() {
+                        let delta = &value["delta"];
+                        if delta["type"] == "text_delta" {
+                            if let Some(block) = self.anthropic_blocks.get_mut(&index) {
+                                let text = delta["text"].as_str().unwrap_or_default();
+                                let current = block["text"].as_str().unwrap_or_default();
+                                block["text"] = json!(format!("{current}{text}"));
+                            }
+                        } else if delta["type"] == "input_json_delta" {
+                            self.anthropic_arguments
+                                .entry(index)
+                                .or_default()
+                                .push_str(delta["partial_json"].as_str().unwrap_or_default());
+                        }
+                    }
+                }
+                "message_delta" => {
+                    self.output_tokens = value["usage"]["output_tokens"]
+                        .as_u64()
+                        .unwrap_or(self.output_tokens);
+                }
+                _ => {}
+            },
+            ProviderProtocol::Gemini => {
+                if let Some(parts) = value["candidates"][0]["content"]["parts"].as_array() {
+                    for part in parts {
+                        if part["thought"] == true {
+                            // Never retain or display hidden reasoning text.
+                            continue;
+                        }
+                        if let Some(text) = part["text"].as_str() {
+                            self.visible_text.push_str(text);
+                        } else if part.is_object() {
+                            self.gemini_parts.push(part.clone());
+                        }
+                    }
+                }
+                self.input_tokens = value["usageMetadata"]["promptTokenCount"]
+                    .as_u64()
+                    .unwrap_or(self.input_tokens);
+                self.output_tokens = value["usageMetadata"]["candidatesTokenCount"]
+                    .as_u64()
+                    .unwrap_or(self.output_tokens)
+                    + value["usageMetadata"]["thoughtsTokenCount"]
+                        .as_u64()
+                        .unwrap_or(0);
+            }
+            ProviderProtocol::Preview => {}
+        }
+    }
+
+    pub fn finish(mut self) -> AppResult<ProviderResponse> {
+        match self.protocol {
+            ProviderProtocol::OpenAiResponses => {
+                let response = self.final_response.ok_or_else(|| {
+                    AppError::new(
+                        "provider_format",
+                        "The provider stream ended before a complete response arrived.",
+                    )
+                })?;
+                decode(&self.protocol, response)
+            }
+            ProviderProtocol::OpenAiChat => {
+                let calls: Vec<_> = self
+                    .chat_tools
+                    .into_values()
+                    .map(|partial| {
+                        json!({"id":partial.id,"type":"function","function":{"name":partial.name,"arguments":partial.arguments}})
+                    })
+                    .collect();
+                decode(
+                    &self.protocol,
+                    json!({"choices":[{"message":{"role":"assistant","content":if self.visible_text.is_empty() { Value::Null } else { json!(self.visible_text) },"tool_calls":calls}}],"usage":{"prompt_tokens":self.input_tokens,"completion_tokens":self.output_tokens}}),
+                )
+            }
+            ProviderProtocol::Anthropic => {
+                for (index, arguments) in self.anthropic_arguments {
+                    if let Some(block) = self.anthropic_blocks.get_mut(&index) {
+                        block["input"] = serde_json::from_str(&arguments).unwrap_or(Value::Null);
+                    }
+                }
+                let content: Vec<_> = self.anthropic_blocks.into_values().collect();
+                decode(
+                    &self.protocol,
+                    json!({"content":content,"usage":{"input_tokens":self.input_tokens,"output_tokens":self.output_tokens}}),
+                )
+            }
+            ProviderProtocol::Gemini => {
+                let mut parts = Vec::new();
+                if !self.visible_text.is_empty() {
+                    parts.push(json!({"text":self.visible_text}));
+                }
+                parts.append(&mut self.gemini_parts);
+                decode(
+                    &self.protocol,
+                    json!({"candidates":[{"content":{"role":"model","parts":parts}}],"usageMetadata":{"promptTokenCount":self.input_tokens,"candidatesTokenCount":self.output_tokens}}),
+                )
+            }
+            ProviderProtocol::Preview => Err(AppError::new(
+                "provider_format",
+                "The preview provider does not use HTTP.",
+            )),
+        }
+    }
 }
 
 fn encode_inner(
@@ -73,10 +320,9 @@ fn encode_inner(
                 }
             }
             let definitions: Vec<_> = tools.iter().map(|tool| json!({"type":"function","name":tool.name,"description":tool.description,"parameters":tool.input_schema,"strict":true})).collect();
-            // Preserve encrypted reasoning items so stateless tool continuations work.
             Ok((
                 "responses".into(),
-                json!({"model":model,"instructions":system(request.messages),"input":input,"tools":definitions,"store":false,"include":["reasoning.encrypted_content"]}),
+                json!({"model":model,"instructions":system(request.messages),"input":input,"tools":definitions,"store":false}),
             ))
         }
         ProviderProtocol::Anthropic => {
@@ -247,7 +493,19 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
                     });
                 }
             }
-            response.provider_data = Some(message.clone());
+            let mut safe_message = message.clone();
+            if let Some(object) = safe_message.as_object_mut() {
+                for private_field in [
+                    "reasoning",
+                    "reasoning_content",
+                    "reasoning_details",
+                    "analysis",
+                    "thinking",
+                ] {
+                    object.remove(private_field);
+                }
+            }
+            response.provider_data = Some(safe_message);
             response.input_tokens = value["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
             response.output_tokens = value["usage"]["completion_tokens"].as_u64().unwrap_or(0);
         }
@@ -275,7 +533,13 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
                     }
                 }
             }
-            response.provider_data = Some(Value::Array(output.clone()));
+            response.provider_data = Some(Value::Array(
+                output
+                    .iter()
+                    .filter(|item| item["type"] != "reasoning")
+                    .cloned()
+                    .collect(),
+            ));
             response.input_tokens = value["usage"]["input_tokens"].as_u64().unwrap_or(0);
             response.output_tokens = value["usage"]["output_tokens"].as_u64().unwrap_or(0);
         }
@@ -297,7 +561,15 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
                     });
                 }
             }
-            response.provider_data = Some(Value::Array(content.clone()));
+            response.provider_data = Some(Value::Array(
+                content
+                    .iter()
+                    .filter(|part| {
+                        part["type"] != "thinking" && part["type"] != "redacted_thinking"
+                    })
+                    .cloned()
+                    .collect(),
+            ));
             response.input_tokens = value["usage"]["input_tokens"].as_u64().unwrap_or(0);
             response.output_tokens = value["usage"]["output_tokens"].as_u64().unwrap_or(0);
         }
@@ -325,7 +597,13 @@ pub fn decode(protocol: &ProviderProtocol, value: Value) -> AppResult<ProviderRe
                     });
                 }
             }
-            response.provider_data = Some(Value::Array(parts.clone()));
+            response.provider_data = Some(Value::Array(
+                parts
+                    .iter()
+                    .filter(|part| part["thought"] != true)
+                    .cloned()
+                    .collect(),
+            ));
             response.input_tokens = value["usageMetadata"]["promptTokenCount"]
                 .as_u64()
                 .unwrap_or(0);
@@ -422,6 +700,49 @@ mod tests {
     #[test]
     fn rejects_invalid_arguments_instead_of_executing_them() {
         assert!(decode(&ProviderProtocol::OpenAiResponses, json!({"output":[{"type":"function_call","call_id":"x","name":"read_file","arguments":"bad"}]})).is_err());
+    }
+
+    #[test]
+    fn hidden_reasoning_is_neither_returned_nor_retained() {
+        let fixtures = [
+            (
+                ProviderProtocol::OpenAiChat,
+                json!({"choices":[{"message":{"role":"assistant","content":"Visible","reasoning":"private thought","reasoning_content":"private thought","reasoning_details":[{"text":"private thought"}],"analysis":"private thought","thinking":"private thought"}}]}),
+            ),
+            (
+                ProviderProtocol::OpenAiResponses,
+                json!({"output":[{"type":"reasoning","summary":[{"text":"private thought"}]},{"type":"message","content":[{"type":"output_text","text":"Visible"}]}]}),
+            ),
+            (
+                ProviderProtocol::Anthropic,
+                json!({"content":[{"type":"thinking","thinking":"private thought"},{"type":"text","text":"Visible"}]}),
+            ),
+            (
+                ProviderProtocol::Gemini,
+                json!({"candidates":[{"content":{"parts":[{"text":"Visible"},{"text":"private thought","thought":true}]}}]}),
+            ),
+        ];
+        for (protocol, fixture) in fixtures {
+            let response = decode(&protocol, fixture).unwrap();
+            assert_eq!(response.content, "Visible");
+            let retained = serde_json::to_string(&response.provider_data).unwrap();
+            assert!(!retained.contains("private thought"));
+        }
+    }
+
+    #[test]
+    fn streaming_collectors_keep_visible_text_and_tool_calls() {
+        let protocol = ProviderProtocol::OpenAiChat;
+        let mut stream = StreamAccumulator::new(protocol.clone());
+        stream.push(&json!({"choices":[{"delta":{"content":"Hello "}}]}));
+        stream.push(
+            &json!({"choices":[{"delta":{"content":"world","reasoning_content":"private"}}]}),
+        );
+        stream.push(&json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call","function":{"name":"list_files","arguments":json!({"path":"."}).to_string()}}]}}]}));
+        let response = stream.finish().unwrap();
+        assert_eq!(response.content, "Hello world");
+        assert_eq!(response.tool_calls[0].name, "list_files");
+        assert_eq!(response.tool_calls[0].arguments["path"], ".");
     }
 
     #[test]

@@ -105,8 +105,8 @@ function SidebarSection({ title, icon, action, children }: { title: string; icon
 }
 
 function TaskState({ status }: { status: AgentSession['status'] }) {
-  if (status === 'running') return <span className="task-state is-running" aria-label="Running" />;
-  if (status === 'awaiting_permission') return <span className="task-state is-waiting" aria-label="Needs approval" />;
+  if (['queued', 'planning', 'working'].includes(status)) return <span className="task-state is-running" aria-label={status} />;
+  if (status === 'waiting_for_permission' || status === 'waiting_for_user') return <span className="task-state is-waiting" aria-label={status} />;
   if (status === 'failed') return <span className="task-state is-error" aria-label="Failed" />;
   return <MessageSquare size={14} />;
 }

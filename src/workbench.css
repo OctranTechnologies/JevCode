@@ -379,10 +379,20 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .task-detail-panel { padding: 14px 11px; }
 .task-detail-status { display: flex; align-items: center; gap: 6px; color: var(--wb-muted-strong); font-size: 9px; }
 .task-status-mark { width: 7px; height: 7px; background: #5d986d; border-radius: 50%; }
-.status-running { background: #d7a34e; }
-.status-awaiting_permission { background: #d7a34e; }
+.status-queued, .status-planning, .status-working { background: #d7a34e; }
+.status-waiting_for_permission, .status-waiting_for_user { background: #d7a34e; }
 .status-failed { background: var(--wb-danger); }
 .status-cancelled { background: var(--wb-muted); }
+.agent-question-card { display: flex; gap: 10px; max-width: 620px; margin: 16px 0 16px 39px; padding: 12px 14px; color: var(--wb-ink); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 9px; }
+.agent-question-card > svg { flex: 0 0 auto; margin-top: 1px; color: var(--wb-accent); }
+.agent-question-card p { margin: 5px 0; color: var(--wb-muted-strong); font-size: 12px; }
+.agent-question-card small { color: var(--wb-muted); font-size: 10px; }
+.agent-activity-summary { display: flex; align-items: center; gap: 8px; margin: 5px 0 5px 40px; color: var(--wb-muted); font-size: 10px; }
+.agent-activity-summary svg { flex: 0 0 auto; color: var(--wb-accent); }
+.agent-activity-summary time { margin-left: auto; font-size: 9px; }
+.streaming-label { display: inline-flex; align-items: center; gap: 5px; color: var(--wb-muted); font-size: 9px; }
+.streaming-label i { width: 6px; height: 6px; background: var(--wb-accent); border-radius: 50%; animation: task-pulse 1.2s infinite; }
+.timeline-agent.is-streaming .agent-prose { white-space: pre-wrap; }
 .task-demo-tag { margin-left: auto; padding: 2px 5px; color: var(--wb-muted); font-size: 8px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 4px; }
 .task-detail-panel h3 { margin: 11px 0 15px; color: var(--wb-ink); font-size: 13px; font-weight: 610; line-height: 1.45; }
 .task-detail-field { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--wb-border); }
