@@ -499,6 +499,21 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_session(&self, id: &str) -> AppResult<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM usage WHERE session_id = ?1", [id])?;
+        let removed = transaction.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+        if removed == 0 {
+            return Err(AppError::new(
+                "not_found",
+                "This task has already been deleted.",
+            ));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn save_usage(&self, record: &UsageRecord) -> AppResult<()> {
         self.connection()?.execute(
             "INSERT INTO usage (id, session_id, created_at, data) VALUES (?1, ?2, ?3, ?4)",
@@ -760,6 +775,69 @@ mod tests {
                 .unwrap()
                 .is_error
         );
+    }
+
+    #[test]
+    fn task_context_roundtrips_and_delete_removes_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let mut session: AgentSession =
+            serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
+        session.archived_at = Some(now());
+        session.git_branch = Some("feature/task-history".into());
+        session.project_instruction_files = vec!["AGENTS.md".into()];
+        session.working_context = WorkingContext {
+            objective: "Preserve this task objective.".into(),
+            protected_instructions: vec!["Keep the API stable.".into()],
+            compacted_turns: 3,
+            ..WorkingContext::default()
+        };
+        {
+            let database = Database::open(&path).unwrap();
+            database
+                .save_project(&Project {
+                    id: session.project_id.clone(),
+                    workspace_id: "local".into(),
+                    name: "tasks".into(),
+                    path: root.path().display().to_string(),
+                    repository_root: None,
+                    active_branch: None,
+                    last_opened_at: now(),
+                    project_instructions: String::new(),
+                    preferred_model: None,
+                    permissions: PermissionPolicy::default(),
+                    is_recent: true,
+                    created_at: now(),
+                })
+                .unwrap();
+            database.save_session(&session).unwrap();
+            database
+                .save_usage(&UsageRecord {
+                    id: "usage-test".into(),
+                    session_id: session.id.clone(),
+                    provider_id: session.provider_id.clone(),
+                    model_id: session.model_id.clone(),
+                    input_tokens: 3,
+                    output_tokens: 2,
+                    cost_usd: None,
+                    duration_ms: 10,
+                    created_at: now(),
+                })
+                .unwrap();
+        }
+        let database = Database::open(&path).unwrap();
+        let reopened = database.session(&session.id).unwrap();
+        assert_eq!(
+            reopened.working_context.protected_instructions,
+            vec!["Keep the API stable."]
+        );
+        assert_eq!(reopened.working_context.compacted_turns, 3);
+        assert_eq!(reopened.archived_at, session.archived_at);
+        assert_eq!(reopened.git_branch.as_deref(), Some("feature/task-history"));
+        assert_eq!(reopened.project_instruction_files, vec!["AGENTS.md"]);
+        database.delete_session(&session.id).unwrap();
+        assert!(database.sessions().unwrap().is_empty());
+        assert!(database.usage().unwrap().is_empty());
     }
     #[test]
     fn projects_survive_reopening_and_unknown_ids_fail() {

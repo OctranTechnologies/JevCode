@@ -48,6 +48,7 @@ export default function App() {
   const [contextOpen, setContextOpen] = useState(false);
   const [mode, setMode] = useState<'agent' | 'plan'>('agent');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth >= 1180);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('changes');
@@ -77,7 +78,8 @@ export default function App() {
   const project: Project | undefined = actualProjects.find(item => item.id === projectId)
     ?? (!desktopAvailable && projectId === demoProject.id ? demoProject : undefined);
   const projects = useMemo(() => !desktopAvailable ? [demoProject] : actualProjects, [actualProjects]);
-  const recentSessions = useMemo(() => !desktopAvailable ? [demoSession] : desktop.sessions, [desktop.sessions]);
+  const allSessions = useMemo(() => !desktopAvailable ? [demoSession] : desktop.sessions, [desktop.sessions]);
+  const recentSessions = useMemo(() => allSessions.filter(item => !item.archivedAt), [allSessions]);
   const providerId = session?.providerId ?? providerChoice;
   const provider = data?.providers.find(item => item.id === providerId);
   const modelId = (session?.modelId ?? modelChoice) || provider?.models[0]?.id || '';
@@ -207,17 +209,62 @@ export default function App() {
   }, [actualProjects, dispatch, preferredFor, setError]);
 
   const selectSession = useCallback((item: AgentSession) => {
-    setProjectChoice(item.projectId);
-    setSessionId(item.id);
-    setReviewChanges(null);
-    setSelectedReviewPath(null);
-    setReviewDiff(null);
-    setDraft('');
-    setAttachments([]);
-    setView('agent');
-    setMobileSidebarOpen(false);
-    setError(null);
-  }, [setError]);
+    const activate = (selected: AgentSession) => {
+      setProjectChoice(selected.projectId);
+      setProviderChoice(selected.providerId);
+      setModelChoice(selected.modelId);
+      setSessionId(selected.id);
+      setReviewChanges(null);
+      setSelectedReviewPath(null);
+      setReviewDiff(null);
+      setDraft('');
+      setAttachments([]);
+      setShowArchivedTasks(false);
+      setView('agent');
+      setMobileSidebarOpen(false);
+      setError(null);
+    };
+    if (item.archivedAt && desktopAvailable) {
+      void command('resume_session', { sessionId: item.id }).then(resumed => { dispatch({ type: 'session', session: resumed }); activate(resumed); }).catch(error => setError(normalizeError(error).message));
+    } else activate(item);
+  }, [dispatch, setError]);
+
+  const renameSession = useCallback(async (item: AgentSession) => {
+    const title = window.prompt('Rename task', item.title);
+    if (title === null || !title.trim()) return;
+    try { dispatch({ type: 'session', session: await command('rename_session', { input: { sessionId: item.id, title } }) }); }
+    catch (error) { setError(normalizeError(error).message); }
+  }, [dispatch, setError]);
+
+  const toggleSessionArchive = useCallback(async (item: AgentSession) => {
+    try { dispatch({ type: 'session', session: await command('archive_session', { sessionId: item.id, archived: !item.archivedAt }) }); }
+    catch (error) { setError(normalizeError(error).message); }
+  }, [dispatch, setError]);
+
+  const duplicateSession = useCallback(async (item: AgentSession) => {
+    try {
+      const duplicate = await command('duplicate_session', { sessionId: item.id });
+      dispatch({ type: 'session', session: duplicate });
+      selectSession(duplicate);
+    } catch (error) { setError(normalizeError(error).message); }
+  }, [dispatch, selectSession, setError]);
+
+  const forkSession = useCallback(async (item: AgentSession) => {
+    try {
+      const fork = await command('fork_session', { sessionId: item.id });
+      dispatch({ type: 'session', session: fork });
+      selectSession(fork);
+    } catch (error) { setError(normalizeError(error).message); }
+  }, [dispatch, selectSession, setError]);
+
+  const deleteSession = useCallback(async (item: AgentSession) => {
+    if (!window.confirm(`Delete “${item.title}” and its saved task history? This cannot be undone.`)) return;
+    try {
+      await command('delete_session', { sessionId: item.id });
+      dispatch({ type: 'delete-session', sessionId: item.id });
+      if (sessionId === item.id) { setSessionId(null); setView('overview'); }
+    } catch (error) { setError(normalizeError(error).message); }
+  }, [dispatch, sessionId, setError]);
 
   const chooseView = useCallback((next: View) => {
     setView(next);
@@ -428,9 +475,9 @@ export default function App() {
       { id: 'theme', label: darkMode ? 'Switch to light appearance' : 'Switch to dark appearance', group: 'Appearance', icon: <CircleDot size={15} />, run: () => setDarkMode(value => !value) },
     ];
     for (const item of projects) actions.push({ id: `project-${item.id}`, label: item.name, detail: item.path, group: 'Projects', icon: <FolderOpen size={15} />, run: () => chooseProject(item.id) });
-    for (const item of recentSessions) actions.push({ id: `task-${item.id}`, label: item.title || 'New task', detail: ['queued', 'planning', 'working'].includes(item.status) ? 'Working' : 'Recent task', group: 'Tasks', icon: <CircleDot size={15} />, run: () => selectSession(item) });
+    for (const item of allSessions) actions.push({ id: `task-${item.id}`, label: item.title || 'New task', detail: item.archivedAt ? 'Archived task · resume' : ['queued', 'planning', 'working'].includes(item.status) ? 'Working' : 'Recent task', group: 'Tasks', icon: <CircleDot size={15} />, run: () => selectSession(item) });
     return actions;
-  }, [chooseProject, darkMode, newTask, openFolder, projects, recentSessions, selectSession, sidebarCollapsed]);
+  }, [allSessions, chooseProject, darkMode, newTask, openFolder, projects, selectSession, sidebarCollapsed]);
 
   useEffect(() => {
     function handleShortcuts(event: KeyboardEvent) {
@@ -472,7 +519,7 @@ export default function App() {
 
   return <div className={compactClasses} style={{ '--sidebar-size': `${sidebarCollapsed ? 68 : sidebarWidth}px`, '--inspector-size': `${inspectorWidth}px` } as CSSProperties}>
     {(mobileSidebarOpen || (inspectorOpen && windowWidth < 1180)) && <button className="panel-backdrop" aria-label="Close open panel" onClick={() => { setMobileSidebarOpen(false); setInspectorOpen(false); }} />}
-    <WorkspaceSidebar projects={projects} sessions={recentSessions} projectId={projectId} sessionId={session?.id ?? null} view={view} provider={provider} collapsed={sidebarCollapsed} opening={opening} onCollapse={() => setSidebarCollapsed(value => !value)} onProject={chooseProject} onSession={selectSession} onView={chooseView} onNew={newTask} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} onRemoveRecent={item => void removeFromRecents(item)} onReveal={item => void revealProject(item)} onSearch={() => setPaletteOpen(true)} />
+    <WorkspaceSidebar projects={projects} sessions={allSessions} projectId={projectId} sessionId={session?.id ?? null} view={view} provider={provider} collapsed={sidebarCollapsed} opening={opening} showArchived={showArchivedTasks} onShowArchived={() => setShowArchivedTasks(value => !value)} onCollapse={() => setSidebarCollapsed(value => !value)} onProject={chooseProject} onSession={selectSession} onRenameSession={item => void renameSession(item)} onArchiveSession={item => void toggleSessionArchive(item)} onDeleteSession={item => void deleteSession(item)} onDuplicateSession={item => void duplicateSession(item)} onForkSession={item => void forkSession(item)} onView={chooseView} onNew={newTask} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} onRemoveRecent={item => void removeFromRecents(item)} onReveal={item => void revealProject(item)} onSearch={() => setPaletteOpen(true)} />
     {!sidebarCollapsed && <ResizeDivider label="Resize sidebar" width={sidebarWidth} min={210} max={340} onResize={setSidebarWidth} />}
 
     <main className="workbench-main">
@@ -490,7 +537,7 @@ export default function App() {
 
     {isAgentView && <>
       {inspectorOpen && <ResizeDivider label="Resize task details" width={inspectorWidth} min={276} max={480} reverse onResize={setInspectorWidth} />}
-      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} onSelectFile={selectReviewFile} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
+      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} usage={desktop.usage} onSelectFile={selectReviewFile} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
     </>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
     <CreateProjectDialog open={createProjectOpen} busy={creatingProject} onClose={() => setCreateProjectOpen(false)} onCreate={createProject} onOpenExisting={() => { setCreateProjectOpen(false); void openFolder(); }} />

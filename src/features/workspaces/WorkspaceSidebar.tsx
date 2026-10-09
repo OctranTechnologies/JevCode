@@ -1,6 +1,6 @@
 import {
-  BarChart3, ChevronDown, ChevronsLeft, ExternalLink, Folder, FolderPlus, GitBranch,
-  Layers3, MessageSquare, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, X,
+  Archive, BarChart3, ChevronDown, ChevronsLeft, Copy, ExternalLink, Folder, FolderPlus, GitBranch,
+  GitFork, Layers3, MessageSquare, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Brand } from '../../components/Brand';
@@ -9,8 +9,9 @@ import type { AgentSession, Project, Provider } from '../../types/domain';
 import type { View } from './Sidebar';
 
 export function WorkspaceSidebar({
-  projects, sessions, projectId, sessionId, view, provider, collapsed, opening, onCollapse,
-  onProject, onSession, onView, onNew, onOpen, onCreate, onRemoveRecent, onReveal, onSearch,
+  projects, sessions, projectId, sessionId, view, provider, collapsed, opening, showArchived, onShowArchived, onCollapse,
+  onProject, onSession, onRenameSession, onArchiveSession, onDeleteSession, onDuplicateSession, onForkSession,
+  onView, onNew, onOpen, onCreate, onRemoveRecent, onReveal, onSearch,
 }: {
   projects: Project[];
   sessions: AgentSession[];
@@ -20,9 +21,16 @@ export function WorkspaceSidebar({
   provider?: Provider;
   collapsed: boolean;
   opening: boolean;
+  showArchived: boolean;
+  onShowArchived: () => void;
   onCollapse: () => void;
   onProject: (id: string) => void;
   onSession: (session: AgentSession) => void;
+  onRenameSession: (session: AgentSession) => void;
+  onArchiveSession: (session: AgentSession) => void;
+  onDeleteSession: (session: AgentSession) => void;
+  onDuplicateSession: (session: AgentSession) => void;
+  onForkSession: (session: AgentSession) => void;
   onView: (view: View) => void;
   onNew: () => void;
   onOpen: () => void;
@@ -32,7 +40,9 @@ export function WorkspaceSidebar({
   onSearch: () => void;
 }) {
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
+  const [taskMenu, setTaskMenu] = useState<string | null>(null);
   const recentProjects = projects.filter(project => project.isRecent).slice(0, 5);
+  const visibleTasks = sessions.filter(session => showArchived ? !!session.archivedAt : !session.archivedAt);
   const projectRow = (project: Project, prefix: string) => {
     const active = projectId === project.id && view === 'overview';
     const menuOpen = projectMenu === `${prefix}-${project.id}`;
@@ -70,10 +80,28 @@ export function WorkspaceSidebar({
         {recentProjects.map(project => projectRow(project, 'recent'))}
       </SidebarSection>}
 
-      <SidebarSection title="Recent tasks" icon={<ChevronDown size={12} />}>
-        {sessions.length > 0 ? sessions.slice(0, 8).map(session => <button key={session.id} className={`sidebar-row task-row${sessionId === session.id && view === 'agent' ? ' is-active' : ''}`} onClick={() => onSession(session)} title={session.title} aria-current={sessionId === session.id && view === 'agent' ? 'page' : undefined}>
-          <TaskState status={session.status} /><span>{session.title || 'New task'}</span>
-        </button>) : <p className="sidebar-empty">Your tasks will show up here.</p>}
+      <SidebarSection title={showArchived ? 'Archived tasks' : 'Recent tasks'} icon={<ChevronDown size={12} />} action={<button className="task-filter-toggle" onClick={onShowArchived}>{showArchived ? 'Recent' : 'Archived'}</button>}>
+        {visibleTasks.length > 0 ? visibleTasks.map(session => {
+          const active = sessionId === session.id && view === 'agent';
+          const menuOpen = taskMenu === session.id;
+          return <div className="sidebar-task-wrap" key={session.id}>
+            <div className="sidebar-task-row">
+              <button className={`sidebar-row task-row${active ? ' is-active' : ''}`} onClick={() => onSession(session)} title={session.title} aria-current={active ? 'page' : undefined}>
+                <TaskState status={session.status} /><span>{session.title || 'New task'}</span>
+              </button>
+              <button className="task-row-menu-toggle" onClick={() => setTaskMenu(menuOpen ? null : session.id)} title={`${session.title} actions`} aria-label={`${session.title} task actions`} aria-expanded={menuOpen}><MoreHorizontal size={15} /></button>
+            </div>
+            {menuOpen && <div className="sidebar-project-actions task-row-actions" role="group" aria-label={`${session.title} task actions`}>
+              <button onClick={() => { setTaskMenu(null); onRenameSession(session); }}><Pencil size={13} />Rename</button>
+              {session.archivedAt
+                ? <button onClick={() => { setTaskMenu(null); onArchiveSession(session); }}><RotateCcw size={13} />Resume task</button>
+                : <button onClick={() => { setTaskMenu(null); onArchiveSession(session); }}><Archive size={13} />Archive</button>}
+              <button onClick={() => { setTaskMenu(null); onDuplicateSession(session); }}><Copy size={13} />Duplicate</button>
+              <button onClick={() => { setTaskMenu(null); onForkSession(session); }}><GitFork size={13} />Fork</button>
+              <button className="task-delete-action" onClick={() => { setTaskMenu(null); onDeleteSession(session); }}><Trash2 size={13} />Delete</button>
+            </div>}
+          </div>;
+        }) : <p className="sidebar-empty">{showArchived ? 'No archived tasks.' : 'Your tasks will show up here.'}</p>}
       </SidebarSection>
 
       <SidebarSection title="Projects" icon={<ChevronDown size={12} />} action={<button className="section-add" onClick={onCreate} title="Create project" aria-label="Create project"><Plus size={14} /></button>}>

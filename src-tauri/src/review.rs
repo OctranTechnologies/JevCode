@@ -1156,6 +1156,11 @@ mod tests {
             updated_at: now(),
             error: None,
             tool_rounds: 0,
+            archived_at: None,
+            git_branch: None,
+            worktree_path: None,
+            working_context: Default::default(),
+            project_instruction_files: vec![],
         };
         database.save_session(&session).unwrap();
         session

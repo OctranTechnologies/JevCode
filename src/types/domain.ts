@@ -82,6 +82,23 @@ export interface AgentSession {
   updatedAt: string;
   error: string | null;
   toolRounds: number;
+  archivedAt: string | null;
+  gitBranch: string | null;
+  worktreePath: string | null;
+  workingContext: WorkingContext;
+  projectInstructionFiles: string[];
+}
+/** Durable summaries of visible task context; private model reasoning is never stored. */
+export interface WorkingContext {
+  objective: string;
+  decisions: string[];
+  repositoryFacts: string[];
+  implementationState: string;
+  outstandingTasks: string[];
+  /** Original user requests stay verbatim when older assistant/tool turns are compacted. */
+  protectedInstructions: string[];
+  compactedThrough: string | null;
+  compactedTurns: number;
 }
 export interface AgentStreamChunk { sessionId: string; delta: string; reset: boolean }
 export interface ToolOutputChunk { sessionId: string; toolCallId: string; stream: 'stdout' | 'stderr'; chunk: string }
@@ -106,7 +123,7 @@ export interface Tool {
   parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
 }
-export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run';
+export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted';
 export interface AgentActivityEvent {
   id: string;
   sessionId: string;

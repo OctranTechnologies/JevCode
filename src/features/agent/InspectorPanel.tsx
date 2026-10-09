@@ -3,13 +3,13 @@ import {
   ListChecks, RotateCcw, Shield, Terminal, X, GitCommitHorizontal,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { AgentSession, Project, Provider, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff } from '../../types/domain';
+import type { AgentSession, Project, Provider, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UsageRecord } from '../../types/domain';
 import { demoChanges, demoDiff, demoTerminal } from '../../app/demo';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
 export function InspectorPanel({
-  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, onSelectFile, onFileAction, onAllAction,
+  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, usage, onSelectFile, onFileAction, onAllAction,
 }: {
   project?: Project;
   branch: string | null;
@@ -24,6 +24,7 @@ export function InspectorPanel({
   reviewDiff: SessionFileDiff | null;
   selectedPath: string | null;
   reviewBusy: boolean;
+  usage: UsageRecord[];
   onSelectFile: (path: string) => void;
   onFileAction: (path: string, action: ReviewFileAction) => void;
   onAllAction: (action: ReviewAllAction) => void;
@@ -44,7 +45,7 @@ export function InspectorPanel({
       {tab === 'diff' && <DiffPanel demo={demo} selectedFile={selectedPath} selectedChange={review?.files.find(file => file.path === selectedPath)} reviewDiff={reviewDiff} reviewBusy={reviewBusy} onFileAction={onFileAction} />}
       {tab === 'terminal' && <TerminalPanel demo={demo} />}
       {tab === 'context' && <ContextPanel project={project} branch={branch} session={session} provider={provider} />}
-      {tab === 'task' && <TaskPanel session={session} demo={demo} project={project} provider={provider} />}
+      {tab === 'task' && <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />}
     </div>
   </aside>;
 }
@@ -94,7 +95,16 @@ function ContextPanel({ project, branch, session, provider }: { project?: Projec
   return <div className="context-detail-panel"><p className="inspector-section-label">PROJECT</p>
     <ContextRow label="Project" value={project?.name ?? 'No project selected'} icon={<FileCode2 size={13} />} />
     <ContextRow label="Branch" value={branch ?? 'Not detected'} icon={<GitBranch size={13} />} />
+    {session?.gitBranch && <ContextRow label="Task branch" value={session.gitBranch} icon={<GitBranch size={13} />} />}
     <ContextRow label="Location" value={project?.path ?? 'Open a project to get started'} />
+    <p className="inspector-section-label context-section-spaced">PROJECT GUIDANCE</p>
+    <ContextRow label="Loaded" value={session?.projectInstructionFiles.length ? session.projectInstructionFiles.join(' · ') : 'No instruction files loaded'} />
+    <p className="inspector-section-label context-section-spaced">WORKING CONTEXT</p>
+    <ContextRow label="Compacted turns" value={String(session?.workingContext.compactedTurns ?? 0)} />
+    {session?.workingContext.objective && <ContextBlock label="Objective" value={session.workingContext.objective} />}
+    {!!session?.workingContext.decisions.length && <ContextList label="Decisions and progress" items={session.workingContext.decisions} />}
+    {!!session?.workingContext.repositoryFacts.length && <ContextList label="Repository facts" items={session.workingContext.repositoryFacts} />}
+    {!!session?.workingContext.outstandingTasks.length && <ContextList label="Outstanding" items={session.workingContext.outstandingTasks} />}
     <p className="inspector-section-label context-section-spaced">MODEL</p>
     <ContextRow label="Provider" value={provider?.name ?? 'No provider'} />
     <ContextRow label="Model" value={session?.modelId ?? provider?.models[0]?.displayName ?? 'Choose in the composer'} />
@@ -112,14 +122,28 @@ function ContextRow({ label, value, icon }: { label: string; value: string; icon
   return <div className="context-detail-row"><span>{icon}{label}</span><strong title={value}>{value}</strong></div>;
 }
 
-function TaskPanel({ session, demo, project, provider }: { session?: AgentSession; demo: boolean; project?: Project; provider?: Provider }) {
+function ContextBlock({ label, value }: { label: string; value: string }) {
+  return <div className="context-summary-block"><span>{label}</span><p>{value}</p></div>;
+}
+
+function ContextList({ label, items }: { label: string; items: string[] }) {
+  return <div className="context-summary-block"><span>{label}</span><ul>{items.map((item, index) => <li key={`${label}-${index}`}>{item}</li>)}</ul></div>;
+}
+
+function TaskPanel({ session, demo, project, provider, review, usage }: { session?: AgentSession; demo: boolean; project?: Project; provider?: Provider; review: SessionChanges | null; usage: UsageRecord[] }) {
   if (!session) return <div className="inspector-empty"><Clock3 size={18} /><strong>No active task</strong><p>Start with a prompt to create a task in this project.</p></div>;
   return <div className="task-detail-panel"><div className="task-detail-status"><span className={`task-status-mark status-${session.status}`} />{humanStatus(session.status)}{demo && <span className="task-demo-tag">Example</span>}</div>
     <h3>{session.title || 'New task'}</h3>
     <div className="task-detail-field"><span>Project</span><strong>{project?.name ?? 'Unknown project'}</strong></div>
     <div className="task-detail-field"><span>Model</span><strong>{provider?.models.find(model => model.id === session.modelId)?.displayName ?? `Unavailable · ${session.modelId}`}</strong></div>
+    {session.gitBranch && <div className="task-detail-field"><span>Git branch</span><strong>{session.gitBranch}</strong></div>}
+    {session.worktreePath && <div className="task-detail-field"><span>Worktree</span><strong title={session.worktreePath}>{session.worktreePath}</strong></div>}
     <div className="task-detail-field"><span>Started</span><strong>{new Date(session.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</strong></div>
+    <div className="task-detail-field"><span>Changed files</span><strong>{review?.files.length ?? 0}</strong></div>
+    <div className="task-detail-field"><span>Usage</span><strong>{usage.filter(record => record.sessionId === session.id).reduce((total, record) => total + record.inputTokens + record.outputTokens, 0).toLocaleString()} tokens</strong></div>
     <div className="task-detail-field"><span>Tool rounds</span><strong>{session.toolRounds}</strong></div>
+    <div className="task-detail-field"><span>Compacted turns</span><strong>{session.workingContext.compactedTurns}</strong></div>
+    {session.projectInstructionFiles.length > 0 && <div className="task-instruction-status"><Check size={13} /><span>Project guidance loaded · {session.projectInstructionFiles.join(' · ')}</span></div>}
     <div className="task-summary-block"><span>REQUEST</span><p>{session.messages.find(message => message.role === 'user')?.content ?? 'No prompt yet.'}</p></div>
     <div className="task-detail-foot"><FilePlus2 size={13} /><span>Task history is saved on this device</span></div>
   </div>;

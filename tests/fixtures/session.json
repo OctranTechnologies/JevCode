@@ -16,5 +16,19 @@
   "createdAt": "2026-10-09T01:00:00+00:00",
   "updatedAt": "2026-10-09T01:00:00+00:00",
   "error": null,
-  "toolRounds": 1
+  "toolRounds": 1,
+  "archivedAt": null,
+  "gitBranch": null,
+  "worktreePath": null,
+  "workingContext": {
+    "objective": "",
+    "decisions": [],
+    "repositoryFacts": [],
+    "implementationState": "",
+    "outstandingTasks": [],
+    "protectedInstructions": [],
+    "compactedThrough": null,
+    "compactedTurns": 0
+  },
+  "projectInstructionFiles": []
 }

@@ -25,6 +25,12 @@ interface Commands {
   set_default_model: { args: { selection: ModelReference | null }; result: ModelPreferences };
   toggle_model_favorite: { args: { selection: ModelReference }; result: ModelPreferences };
   send_message: { args: { sessionId: string; content: string }; result: AgentSession };
+  rename_session: { args: { input: { sessionId: string; title: string } }; result: AgentSession };
+  archive_session: { args: { sessionId: string; archived: boolean }; result: AgentSession };
+  resume_session: { args: { sessionId: string }; result: AgentSession };
+  delete_session: { args: { sessionId: string }; result: null };
+  duplicate_session: { args: { sessionId: string }; result: AgentSession };
+  fork_session: { args: { sessionId: string }; result: AgentSession };
   resolve_permission: { args: { sessionId: string; toolCallId: string; resolution: import('../types/domain').PermissionResolution }; result: AgentSession };
   set_permission_mode: { args: { mode: PermissionMode }; result: PermissionMode };
   list_permission_rules: { args: undefined; result: PermissionRule[] };
@@ -48,6 +54,7 @@ const responses = {
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
   reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), create_session: sessionSchema, send_message: sessionSchema,
+  rename_session: sessionSchema, archive_session: sessionSchema, resume_session: sessionSchema, delete_session: z.null(), duplicate_session: sessionSchema, fork_session: sessionSchema,
   resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), cancel_session: z.null(), session_changes: sessionChangesSchema, session_file_diff: sessionFileDiffSchema, review_file_action: sessionChangesSchema, review_all_action: sessionChangesSchema, connect_provider: providerAccountSchema,
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,
   refresh_provider_auth: providerAccountSchema, get_provider_auth_status: providerAccountSchema,

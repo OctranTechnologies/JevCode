@@ -160,6 +160,36 @@ configurable through `AgentRuntimeConfig`. `MockProvider` tests exercise streami
 parallel tools, permission/user pauses, cancellation, persistence, and context
 limits without provider credentials or API usage.
 
+## Persistent tasks and project guidance
+
+An agent task is a durable session, not a transient chat view. Its SQLite JSON
+record stores the project/provider/model selection, title, lifecycle status,
+conversation, visible activity events, permission state, Git branch or worktree,
+archive state, loaded instruction sources, and structured working context.
+Usage is normalized in the `usage` table by session ID. Review baselines and file
+checkpoints are also keyed by session ID, so task changes remain reviewable after
+restart without including changes that predated the task.
+
+The sidebar supports renaming, archiving and resuming, deleting, duplicating, and
+forking tasks. Ctrl+K searches both active and archived tasks. Duplicate starts
+from the original request with fresh activity and review state; fork carries the
+visible transcript and activity into an independent task with its own review
+baseline. Deleting a task removes its associated usage and review records.
+
+For long tasks, the provider receives a compact view after eight conversation
+turns: the complete local transcript remains intact, every original user request
+is retained verbatim in `WorkingContext.protectedInstructions`, and older
+assistant/tool output is reduced to visible progress, repository facts, current
+implementation state, and outstanding requests. This does not ask for, store, or
+expose hidden model reasoning. Compaction events and the structured context are
+saved with the task and are inspectable in the Context panel.
+
+At task creation, Rust loads root-level `AGENTS.md` and `CLAUDE.md` files, plus
+the project instructions saved in settings. Symlinked or oversized instruction
+files are ignored. Their source names appear in the conversation, Context panel,
+and task details so users can see which guidance was applied. The webview never
+receives an unrestricted filesystem API.
+
 ## Code review and task checkpoints
 
 Each task records its canonical project root, Git HEAD, and bounded Git status

@@ -8,6 +8,36 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_DIRECTORY_ENTRIES: usize = 500;
 const MAX_SCANNED_FILES: usize = 20_000;
+const MAX_INSTRUCTION_BYTES: u64 = 64 * 1024;
+
+/// Load root-level project guidance without giving the webview a filesystem
+/// primitive. Symlinks and unexpectedly large instruction files are ignored.
+pub fn load_project_instructions(root: &Path) -> AppResult<Vec<(String, String)>> {
+    let root = std::fs::canonicalize(root)?;
+    let mut loaded = Vec::new();
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let path = root.join(name);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => continue,
+        };
+        if metadata.file_type().is_symlink()
+            || !metadata.is_file()
+            || metadata.len() > MAX_INSTRUCTION_BYTES
+        {
+            continue;
+        }
+        let contents = std::fs::read_to_string(&path).map_err(|_| {
+            AppError::new(
+                "instruction_read_failed",
+                format!("Could not read {name} from this project."),
+            )
+        })?;
+        loaded.push((name.to_owned(), contents));
+    }
+    Ok(loaded)
+}
 
 pub fn open_project(database: &Database, path: &str) -> AppResult<Project> {
     let root = std::fs::canonicalize(path).map_err(|_| {
@@ -429,6 +459,37 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn loads_root_project_guidance_files() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("AGENTS.md"), "Keep edits focused.\n").unwrap();
+        std::fs::write(root.path().join("CLAUDE.md"), "Run focused tests.\n").unwrap();
+        let loaded = load_project_instructions(root.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(
+            loaded[0],
+            ("AGENTS.md".into(), "Keep edits focused.\n".into())
+        );
+        assert_eq!(
+            loaded[1],
+            ("CLAUDE.md".into(), "Run focused tests.\n".into())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ignores_symlinked_instruction_files() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("instructions.md"), "outside guidance").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("instructions.md"),
+            root.path().join("AGENTS.md"),
+        )
+        .unwrap();
+        assert!(load_project_instructions(root.path()).unwrap().is_empty());
     }
 
     #[test]

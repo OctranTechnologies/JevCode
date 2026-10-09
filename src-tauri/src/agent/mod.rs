@@ -132,7 +132,17 @@ impl AgentRuntime {
                 ));
             }
 
-            let context = bounded_context(&session.messages, model.context_window)?;
+            let (prepared_messages, compacted) = prepare_context(session);
+            if compacted {
+                record_activity(
+                    session,
+                    AgentActivityKind::ContextCompacted,
+                    format!("Compacted {} earlier task turns; original requests remain available in task context.", session.working_context.compacted_turns),
+                    None,
+                );
+                checkpoint(state, sink, session)?;
+            }
+            let context = bounded_context(&prepared_messages, model.context_window)?;
             session.iterations += 1;
             session.status = SessionStatus::Working;
             record_activity(
@@ -179,6 +189,7 @@ impl AgentRuntime {
             }
 
             session.status = SessionStatus::Completed;
+            session.working_context.outstanding_tasks.clear();
             record_activity(
                 session,
                 AgentActivityKind::Progress,
@@ -707,6 +718,151 @@ pub fn bounded_context(
     Ok(context)
 }
 
+/// Build a compact provider view while keeping the complete local transcript.
+/// User requests remain verbatim in the structured context; only older visible
+/// assistant and tool output is reduced to concise progress and repository facts.
+fn prepare_context(session: &mut AgentSession) -> (Vec<AgentMessage>, bool) {
+    const RECENT_TURNS: usize = 8;
+    let mut turns: Vec<Vec<AgentMessage>> = Vec::new();
+    for message in session
+        .messages
+        .iter()
+        .filter(|message| message.role != MessageRole::System)
+    {
+        if message.role == MessageRole::User || turns.is_empty() {
+            turns.push(Vec::new());
+        }
+        if let Some(turn) = turns.last_mut() {
+            turn.push(message.clone());
+        }
+    }
+    let old_count = turns.len().saturating_sub(RECENT_TURNS);
+    let mut changed = false;
+    if old_count > session.working_context.compacted_turns as usize {
+        let mut requests = session.working_context.protected_instructions.clone();
+        for message in session
+            .messages
+            .iter()
+            .filter(|message| message.role == MessageRole::User)
+        {
+            if !requests.contains(&message.content) {
+                requests.push(message.content.clone());
+            }
+        }
+        if session.working_context.objective.is_empty() {
+            session.working_context.objective = requests.first().cloned().unwrap_or_default();
+        }
+        // The complete requests are retained exactly so explicit requirements
+        // and corrections cannot be lost to summarization.
+        session.working_context.protected_instructions = requests;
+        session.working_context.decisions = session
+            .activity_events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.kind,
+                    AgentActivityKind::Plan | AgentActivityKind::Progress
+                )
+            })
+            .map(|event| event.summary.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .take(16)
+            .collect();
+        session.working_context.repository_facts = session
+            .messages
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .map(|message| concise_context(&message.content, 520))
+            .filter(|fact| !fact.is_empty())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .take(16)
+            .collect();
+        session.working_context.implementation_state = session
+            .messages
+            .iter()
+            .rev()
+            .find(|message| {
+                message.role == MessageRole::Assistant && !message.content.trim().is_empty()
+            })
+            .map(|message| concise_context(&message.content, 1_000))
+            .unwrap_or_default();
+        session.working_context.outstanding_tasks = session
+            .working_context
+            .protected_instructions
+            .last()
+            .map(|request| vec![concise_context(request, 2_000)])
+            .unwrap_or_default();
+        session.working_context.compacted_through = session
+            .messages
+            .last()
+            .map(|message| message.created_at.clone());
+        session.working_context.compacted_turns = old_count as u32;
+        changed = true;
+    }
+
+    let systems: Vec<_> = session
+        .messages
+        .iter()
+        .filter(|message| message.role == MessageRole::System)
+        .cloned()
+        .collect();
+    let mut prepared = systems;
+    if session.working_context.compacted_turns > 0 {
+        let context = &session.working_context;
+        let mut summary = format!("Durable task context ({} earlier turns compacted). This is a summary of visible activity, not private reasoning.\n\nOBJECTIVE\n{}", context.compacted_turns, context.objective);
+        if !context.protected_instructions.is_empty() {
+            summary.push_str("\n\nORIGINAL USER REQUESTS (verbatim; preserve all constraints)\n");
+            for (index, request) in context.protected_instructions.iter().enumerate() {
+                summary.push_str(&format!("{}. {}\n", index + 1, request));
+            }
+        }
+        append_context_section(&mut summary, "DECISIONS AND PROGRESS", &context.decisions);
+        append_context_section(&mut summary, "REPOSITORY FACTS", &context.repository_facts);
+        if !context.implementation_state.is_empty() {
+            summary.push_str(&format!(
+                "\nIMPLEMENTATION STATE\n{}",
+                context.implementation_state
+            ));
+        }
+        append_context_section(
+            &mut summary,
+            "OUTSTANDING TASKS",
+            &context.outstanding_tasks,
+        );
+        let mut message = AgentMessage::text(MessageRole::System, summary);
+        message.created_at = context.compacted_through.clone().unwrap_or_else(now);
+        prepared.push(message);
+    }
+    if turns.len() > RECENT_TURNS {
+        turns.drain(..turns.len() - RECENT_TURNS);
+    }
+    prepared.extend(turns.into_iter().flatten());
+    (prepared, changed)
+}
+
+fn append_context_section(output: &mut String, heading: &str, entries: &[String]) {
+    if entries.is_empty() {
+        return;
+    }
+    output.push_str(&format!("\n\n{heading}\n"));
+    for entry in entries {
+        output.push_str("- ");
+        output.push_str(entry);
+        output.push('\n');
+    }
+}
+
+fn concise_context(input: &str, limit: usize) -> String {
+    let compacted = input.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut output: String = compacted.chars().take(limit).collect();
+    if compacted.chars().count() > limit {
+        output.push('…');
+    }
+    output
+}
+
 fn estimate_message_tokens(message: &AgentMessage) -> usize {
     let mut chars = message.content.chars().count();
     chars += message
@@ -1013,6 +1169,11 @@ mod tests {
             updated_at: now(),
             error: None,
             tool_rounds: 0,
+            archived_at: None,
+            git_branch: None,
+            worktree_path: None,
+            working_context: WorkingContext::default(),
+            project_instruction_files: vec![],
         };
         state.database.save_session(&session).unwrap();
         (state, project, session)
@@ -1326,6 +1487,82 @@ mod tests {
             state.database.session(&session.id).unwrap().status,
             SessionStatus::Cancelled
         );
+    }
+
+    #[test]
+    fn compaction_preserves_all_user_instructions_and_full_local_history() {
+        let system = AgentMessage::text(MessageRole::System, "Project policy");
+        let mut session = AgentSession {
+            id: "compact-test".into(),
+            project_id: "project".into(),
+            provider_id: "preview".into(),
+            model_id: "mock".into(),
+            title: "context".into(),
+            status: SessionStatus::Working,
+            messages: vec![system],
+            permission_policy: Default::default(),
+            pending_tool_call: None,
+            pending_permission: None,
+            session_permission_grants: vec![],
+            one_time_permission_grants: vec![],
+            pending_user_input: None,
+            queued_tool_calls: vec![],
+            iterations: 0,
+            tool_calls: 0,
+            activity_events: vec![],
+            created_at: now(),
+            updated_at: now(),
+            error: None,
+            tool_rounds: 0,
+            archived_at: None,
+            git_branch: None,
+            worktree_path: None,
+            working_context: Default::default(),
+            project_instruction_files: vec![],
+        };
+        for index in 0..10 {
+            session.messages.push(AgentMessage::text(
+                MessageRole::User,
+                format!("request {index}: preserve this constraint exactly"),
+            ));
+            session.messages.push(AgentMessage::text(
+                MessageRole::Assistant,
+                format!("Visible progress {index}"),
+            ));
+            session.messages.push(AgentMessage::text(
+                MessageRole::Tool,
+                format!("large repository output {index} {}", "detail ".repeat(200)),
+            ));
+        }
+        let full_history_size = session.messages.len();
+        let old_tool_output = session
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::Tool)
+            .unwrap()
+            .content
+            .clone();
+        let (context, compacted) = prepare_context(&mut session);
+        assert!(compacted);
+        assert_eq!(session.messages.len(), full_history_size);
+        assert_eq!(session.working_context.protected_instructions.len(), 10);
+        assert!(session.working_context.protected_instructions[0]
+            .contains("preserve this constraint exactly"));
+        assert!(context
+            .iter()
+            .any(|message| message.content.contains("ORIGINAL USER REQUESTS (verbatim")));
+        assert!(context.iter().any(|message| message
+            .content
+            .contains("request 0: preserve this constraint exactly")));
+        assert!(context
+            .iter()
+            .any(|message| message.content.contains("large repository output 0")));
+        assert!(!context
+            .iter()
+            .any(|message| message.content == old_tool_output));
+        assert!(context
+            .iter()
+            .any(|message| message.content.contains("large repository output 9")));
     }
 
     #[test]

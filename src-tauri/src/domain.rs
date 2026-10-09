@@ -144,6 +144,41 @@ pub struct AgentSession {
     pub updated_at: String,
     pub error: Option<String>,
     pub tool_rounds: u32,
+    #[serde(default)]
+    pub archived_at: Option<String>,
+    #[serde(default)]
+    pub git_branch: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub working_context: WorkingContext,
+    #[serde(default)]
+    pub project_instruction_files: Vec<String>,
+}
+
+/// Durable, user-visible task context. It contains summaries of observable
+/// work only; private model reasoning is never requested or stored here.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingContext {
+    #[serde(default)]
+    pub objective: String,
+    #[serde(default)]
+    pub decisions: Vec<String>,
+    #[serde(default)]
+    pub repository_facts: Vec<String>,
+    #[serde(default)]
+    pub implementation_state: String,
+    #[serde(default)]
+    pub outstanding_tasks: Vec<String>,
+    /// Original user requests are retained verbatim when older assistant/tool
+    /// turns are compacted so explicit constraints are never summarized away.
+    #[serde(default)]
+    pub protected_instructions: Vec<String>,
+    #[serde(default)]
+    pub compacted_through: Option<String>,
+    #[serde(default)]
+    pub compacted_turns: u32,
 }
 
 impl AgentSession {
@@ -197,6 +232,7 @@ pub enum AgentActivityKind {
     CommandExecuted,
     FileEdited,
     TestRun,
+    ContextCompacted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
