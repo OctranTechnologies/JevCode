@@ -164,6 +164,7 @@ impl AgentSession {
                 content: reason.into(),
                 is_error: true,
                 duration_ms: 0,
+                structured_content: None,
             };
             let mut message = AgentMessage::text(MessageRole::Tool, result.content.clone());
             message.tool_result = Some(result);
@@ -254,12 +255,24 @@ pub enum ToolCategory {
     UserInteraction,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolRiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
     pub description: String,
-    pub category: ToolCategory,
+    /// Permission category checked by the runtime before execution.
+    pub permission: ToolCategory,
+    pub risk_level: ToolRiskLevel,
+    pub timeout_ms: u64,
     #[serde(default)]
     pub parallel_safe: bool,
     pub input_schema: Value,
@@ -281,6 +294,8 @@ pub struct ToolResult {
     pub content: String,
     pub is_error: bool,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub structured_content: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -445,7 +460,13 @@ pub struct PermissionPolicy {
     pub git: PermissionDecision,
     pub write_files: PermissionDecision,
     pub shell: PermissionDecision,
+    #[serde(default = "deny_permission")]
+    pub external_files: PermissionDecision,
     pub max_tool_rounds: u32,
+}
+
+fn deny_permission() -> PermissionDecision {
+    PermissionDecision::Deny
 }
 
 impl Default for PermissionPolicy {
@@ -455,6 +476,7 @@ impl Default for PermissionPolicy {
             git: PermissionDecision::Ask,
             write_files: PermissionDecision::Deny,
             shell: PermissionDecision::Deny,
+            external_files: PermissionDecision::Deny,
             max_tool_rounds: 8,
         }
     }

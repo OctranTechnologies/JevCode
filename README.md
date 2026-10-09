@@ -1,9 +1,9 @@
 # JevCode
 
 A local desktop AI coding agent built with Tauri 2, React, TypeScript, Vite,
-Tailwind CSS and Rust. The project starts from a modular, read-only agent
-foundation: open a project, choose a provider, send a message, inspect tool
-activity, approve a tool when requested, and resume saved conversations.
+Tailwind CSS and Rust. The project starts from a modular agent foundation: open a
+project, choose a provider, send a message, inspect tool activity, approve a tool
+when requested, and resume saved conversations.
 
 The original repository contained only this README and a license. No incumbent
 application or architecture was replaced. The initial architecture scope puts
@@ -312,15 +312,39 @@ a matching tool-call ID to resume. Approval authorizes one call and never overri
 unresolved calls with error results so future messages keep valid provider history.
 Interrupted running sessions become failed on restart; pending approvals survive.
 
-The only registered tools are `list_files`, `read_file` and `git_status`. File paths
-are canonicalized and must stay inside the selected project. Traversal, absolute
-paths and symlink/junction escapes are rejected. `.env*`, `.git`, `.aws`, `.ssh`,
-`.codex`, `node_modules`, `target`, and Git-ignored files are excluded from file tools. This is a
-read-only application guard, not an adversarial filesystem sandbox: files renamed
-concurrently with a read are not protected by OS handle-based isolation, and custom
-secret filenames are not automatically detected. Reads are UTF-8 and limited to
-64 KiB; directory listings to 500 visible entries. Git status uses fixed arguments,
-optional locks disabled, no shell interpolation, and a ten-second timeout.
+The Rust tool registry is the only route from model tool calls to project files,
+Git, and commands. Each tool descriptor declares a JSON schema, permission
+category, risk level, timeout, and whether it is safe to batch with other calls.
+The registry rejects unknown fields and invalid arguments before dispatch. Its
+structured results include bounded content, pagination metadata, truncation, and
+stable error codes; large files, walks, searches, diffs and command output have
+explicit limits. Search uses `rg` when installed and falls back to the Rust
+ignore-aware walker. Both honor `.gitignore`; credential and build directories
+are excluded from search.
+
+File tools include `read_file`, `read_files`, `list_directory`, `search_files`,
+`search_text`, and `file_metadata`. Editing is incremental through unique-context
+`apply_patch`; `create_file`, `delete_file`, and `move_file` are bounded to regular
+files and never recursively delete directories or overwrite move destinations.
+Repository context includes `git_status`, `git_diff`, `git_log`, `git_show`,
+`git_branch`, `inspect_project`, `find_symbol`, and `find_references`. `run_command`
+executes a program with an argument array and the project as its working directory;
+it does not interpolate through a shell.
+
+Filesystem tool paths are canonicalized and limited to the active project by
+default. Traversal, absolute paths and symlink/junction escapes require
+outside-project permission; that permission defaults to deny and can be set to ask
+or allow in the project tool-access controls. Edit and command actions have
+separate policies, and asked permissions pause the agent before one approved call
+is executed. `run_command` starts in the project folder but is not an OS sandbox:
+an approved child process runs with the desktop user's operating-system rights.
+Its command permission defaults to deny; use ask to review each command. A
+non-adversarial filesystem guard cannot prevent a path being replaced concurrently
+between validation and use, and custom secret filenames are not automatically
+detected.
+Reads are UTF-8 and limited to 64 KiB per file; patches are limited to 1 MiB;
+directory pages are capped at 100 visible entries. Git and process execution use
+fixed argument arrays, bounded output and per-tool timeouts.
 
 Remote requests have a 15-second connection and 120-second total timeout, a 4 MiB
 response limit, and at most 16 tool calls per response. No automatic request retries
@@ -362,8 +386,7 @@ tool runs, provider normalization and the shared TypeScript fixture. Frontend te
 cover IPC schemas, stale-event protection and error redaction. The approved design
 reference is in `docs/desktop-mockup.png`; it is not shipped as interface pixels.
 
-This foundation intentionally leaves file editing, agent shell tools,
-streamed token deltas, OAuth, live model discovery, context compaction, pricing
+This foundation intentionally leaves OAuth, context compaction, pricing
 sync and signed/updatable release packaging for later features. Remote adapters
 are covered by offline protocol fixtures; live API calls require user credentials
 and have not been certified against every provider account or model.

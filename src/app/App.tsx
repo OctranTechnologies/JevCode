@@ -289,7 +289,15 @@ export default function App() {
       if (!active) {
         active = await command('create_session', { input: {
           projectId, providerId, modelId,
-          permissionPolicy: { ...data.permissionPolicy, readFiles: !includeProject ? 'deny' : askReads ? 'ask' : 'allow' },
+          permissionPolicy: {
+            ...data.permissionPolicy,
+            readFiles: !includeProject ? 'deny' : askReads ? 'ask' : 'allow',
+            git: project?.permissions.git ?? data.permissionPolicy.git,
+            writeFiles: project?.permissions.writeFiles ?? data.permissionPolicy.writeFiles,
+            shell: project?.permissions.shell ?? data.permissionPolicy.shell,
+            externalFiles: project?.permissions.externalFiles ?? data.permissionPolicy.externalFiles,
+            maxToolRounds: project?.permissions.maxToolRounds ?? data.permissionPolicy.maxToolRounds,
+          },
         } });
         desktop.dispatch({ type: 'session', session: active });
         updateRecent({ providerId: active.providerId, modelId: active.modelId });

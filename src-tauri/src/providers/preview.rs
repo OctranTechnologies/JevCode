@@ -18,7 +18,7 @@ impl LlmProvider for PreviewProvider {
             } else if prompt.contains("architecture") || prompt.contains("readme") {
                 ("read_file", json!({"path":"README.md"}))
             } else {
-                ("list_files", json!({"path":"."}))
+                ("list_directory", json!({"path":".","limit":50}))
             };
             (
                 "I’ll inspect the selected project using a local read-only tool.".into(),

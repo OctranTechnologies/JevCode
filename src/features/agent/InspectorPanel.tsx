@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Check, ChevronDown, CircleHelp, Clock3, Copy, FileCode2, FilePlus2, GitBranch,
-  ListChecks, Terminal, X,
+  ListChecks, Shield, Terminal, X,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { AgentSession, Project, Provider } from '../../types/domain';
@@ -64,7 +64,7 @@ function DiffPanel({ demo, selectedFile }: { demo: boolean; selectedFile: string
 }
 
 function TerminalPanel({ demo }: { demo: boolean }) {
-  if (!demo) return <div className="inspector-empty"><Terminal size={18} /><strong>Terminal is unavailable</strong><p>This foundation does not execute shell commands. Tool access stays limited to project reads and Git status.</p></div>;
+  if (!demo) return <div className="inspector-empty"><Terminal size={18} /><strong>Agent commands run with approval</strong><p>When project command access is set to Ask or Allow, executed commands and bounded output appear in the task timeline.</p></div>;
   return <div className="terminal-panel"><div className="terminal-panel-heading"><span className="terminal-live-dot" /> SAMPLE OUTPUT <button title="Copy output" aria-label="Copy terminal output" onClick={() => void navigator.clipboard?.writeText(demoTerminal)}><Copy size={13} /></button></div><pre>{demoTerminal}</pre><div className="terminal-footnote">Example command output · no command was run</div></div>;
 }
 
@@ -79,7 +79,9 @@ function ContextPanel({ project, branch, session, provider }: { project?: Projec
     <p className="inspector-section-label context-section-spaced">PERMISSIONS</p>
     <div className="permission-summary"><Check size={13} /><span>Read project files</span><small>{session?.permissionPolicy.readFiles === 'ask' ? 'Ask first' : 'Allowed'}</small></div>
     <div className="permission-summary"><CircleHelp size={13} /><span>Git status</span><small>{session?.permissionPolicy.git === 'allow' ? 'Allowed' : 'Ask first'}</small></div>
-    <div className="permission-summary is-muted"><X size={13} /><span>File edits and terminal</span><small>Disabled</small></div>
+    <div className="permission-summary"><CircleHelp size={13} /><span>File edits</span><small>{permissionLabel(session?.permissionPolicy.writeFiles)}</small></div>
+    <div className="permission-summary"><CircleHelp size={13} /><span>Agent commands</span><small>{permissionLabel(session?.permissionPolicy.shell)}</small></div>
+    <div className="permission-summary"><Shield size={13} /><span>Outside project</span><small>{permissionLabel(session?.permissionPolicy.externalFiles)}</small></div>
   </div>;
 }
 
@@ -110,4 +112,8 @@ function humanStatus(status: AgentSession['status']) {
   if (status === 'failed') return 'Failed';
   if (status === 'cancelled') return 'Stopped';
   return 'Ready';
+}
+
+function permissionLabel(value: AgentSession['permissionPolicy']['shell'] | undefined) {
+  return value === 'allow' ? 'Allowed' : value === 'ask' ? 'Ask first' : 'Denied';
 }

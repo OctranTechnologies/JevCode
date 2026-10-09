@@ -197,8 +197,9 @@ export function ProjectOverview({
           <label>Preferred model<select value={preferredModel} onChange={event => setPreferredModel(event.target.value)} disabled={!desktopAllowed}><option value="">Use workspace default</option>{modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <PermissionSelect label="File access" value={permissions.readFiles} onChange={value => setPermissions(current => ({ ...current, readFiles: value }))} disabled={!desktopAllowed} />
           <PermissionSelect label="Git tools" value={permissions.git} onChange={value => setPermissions(current => ({ ...current, git: value }))} disabled={!desktopAllowed} />
-          <label className="permission-fixed">Write access<span>Disabled</span></label>
-          <label className="permission-fixed">Agent shell<span>Disabled</span></label>
+          <PermissionSelect label="File edits" value={permissions.writeFiles} onChange={value => setPermissions(current => ({ ...current, writeFiles: value }))} disabled={!desktopAllowed} />
+          <PermissionSelect label="Agent commands" value={permissions.shell} onChange={value => setPermissions(current => ({ ...current, shell: value }))} disabled={!desktopAllowed} />
+          <PermissionSelect label="Outside project" value={permissions.externalFiles} onChange={value => setPermissions(current => ({ ...current, externalFiles: value }))} disabled={!desktopAllowed} />
         </div>
       </section>
     </div>
@@ -337,7 +338,7 @@ function extensionIcon(name: string) {
 }
 
 function samePolicy(first: PermissionPolicy, second: PermissionPolicy) {
-  return first.readFiles === second.readFiles && first.git === second.git && first.writeFiles === second.writeFiles && first.shell === second.shell && first.maxToolRounds === second.maxToolRounds;
+  return first.readFiles === second.readFiles && first.git === second.git && first.writeFiles === second.writeFiles && first.shell === second.shell && first.externalFiles === second.externalFiles && first.maxToolRounds === second.maxToolRounds;
 }
 
 function formatBytes(value: number) {

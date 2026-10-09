@@ -3,7 +3,7 @@ use crate::{
     error::{AppError, AppResult},
     persistence::Database,
 };
-use ignore::WalkBuilder;
+use ignore::{gitignore::GitignoreBuilder, Match, WalkBuilder};
 use std::path::{Component, Path, PathBuf};
 
 const MAX_DIRECTORY_ENTRIES: usize = 500;
@@ -240,21 +240,83 @@ pub fn list_directory(root: &Path, relative: &str) -> AppResult<Vec<ProjectFileE
 }
 
 pub fn is_ignored(root: &Path, relative: &str) -> bool {
-    let path = Path::new(relative);
-    let Some(parent) = path.parent() else {
+    let Ok(root) = std::fs::canonicalize(root) else {
         return false;
     };
-    let parent = if parent.as_os_str().is_empty() {
-        "."
+    let input = Path::new(relative);
+    let target = if input.is_absolute() {
+        input.to_path_buf()
     } else {
-        parent.to_str().unwrap_or(".")
+        root.join(input)
     };
-    let Ok(entries) = list_directory(root, parent) else {
+    let target = lexical_normalize(&target);
+    if !target.starts_with(&root) {
         return false;
+    }
+
+    let is_dir = target.is_dir();
+    let mut directories = Vec::new();
+    let mut current = if is_dir {
+        target.as_path()
+    } else {
+        target.parent().unwrap_or(&root)
     };
-    !entries
-        .iter()
-        .any(|entry| entry.path == relative.replace('\\', "/"))
+    loop {
+        directories.push(current.to_path_buf());
+        if current == root {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+    directories.reverse();
+
+    let mut ignored = false;
+    for directory in directories {
+        let mut ignore_files = vec![directory.join(".gitignore")];
+        if directory == root {
+            ignore_files.push(root.join(".git").join("info").join("exclude"));
+        }
+        for ignore_file in ignore_files {
+            if !ignore_file.is_file() {
+                continue;
+            }
+            let mut builder = GitignoreBuilder::new(&directory);
+            if builder.add(&ignore_file).is_some() {
+                continue;
+            }
+            let Ok(matcher) = builder.build() else {
+                continue;
+            };
+            let Ok(candidate) = target.strip_prefix(&directory) else {
+                continue;
+            };
+            match matcher.matched_path_or_any_parents(candidate, is_dir) {
+                Match::Ignore(_) => ignored = true,
+                Match::Whitelist(_) => ignored = false,
+                Match::None => {}
+            }
+        }
+    }
+    ignored
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[derive(Debug, Default)]

@@ -1,6 +1,7 @@
 export type ProviderProtocol = 'preview' | 'open_ai_responses' | 'open_ai_chat' | 'anthropic' | 'gemini';
 export type PermissionDecision = 'allow' | 'ask' | 'deny';
 export type ToolCategory = 'read_files' | 'git' | 'write_files' | 'shell' | 'user_interaction';
+export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type SessionStatus = 'queued' | 'planning' | 'working' | 'waiting_for_permission' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled';
 export interface Provider {
   id: string;
@@ -90,7 +91,9 @@ export interface AgentMessage {
 export interface Tool {
   name: string;
   description: string;
-  category: ToolCategory;
+  permission: ToolCategory;
+  riskLevel: ToolRiskLevel;
+  timeoutMs: number;
   parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
 }
@@ -110,6 +113,7 @@ export interface ToolResult {
   content: string;
   isError: boolean;
   durationMs: number;
+  structuredContent: Record<string, unknown> | unknown[] | null;
 }
 export interface Workspace { id: string; name: string; projects: Project[] }
 export interface Project {
@@ -157,6 +161,7 @@ export interface PermissionPolicy {
   git: PermissionDecision;
   writeFiles: PermissionDecision;
   shell: PermissionDecision;
+  externalFiles: PermissionDecision;
   maxToolRounds: number;
 }
 export interface Bootstrap {

@@ -655,24 +655,24 @@ mod tests {
         let fixtures = [
             (
                 ProviderProtocol::OpenAiChat,
-                json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call","function":{"name":"list_files","arguments":"{\"path\":\".\"}"}}]}}]}),
+                json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]}}]}),
             ),
             (
                 ProviderProtocol::OpenAiResponses,
-                json!({"output":[{"type":"function_call","call_id":"call","name":"list_files","arguments":"{\"path\":\".\"}"}]}),
+                json!({"output":[{"type":"function_call","call_id":"call","name":"list_directory","arguments":"{\"path\":\".\"}"}]}),
             ),
             (
                 ProviderProtocol::Anthropic,
-                json!({"content":[{"type":"tool_use","id":"call","name":"list_files","input":{"path":"."}}]}),
+                json!({"content":[{"type":"tool_use","id":"call","name":"list_directory","input":{"path":"."}}]}),
             ),
             (
                 ProviderProtocol::Gemini,
-                json!({"candidates":[{"content":{"parts":[{"functionCall":{"id":"call","name":"list_files","args":{"path":"."}},"thoughtSignature":"opaque"}]}}]}),
+                json!({"candidates":[{"content":{"parts":[{"functionCall":{"id":"call","name":"list_directory","args":{"path":"."}},"thoughtSignature":"opaque"}]}}]}),
             ),
         ];
         for (protocol, fixture) in fixtures {
             let response = decode(&protocol, fixture).unwrap();
-            assert_eq!(response.tool_calls[0].name, "list_files");
+            assert_eq!(response.tool_calls[0].name, "list_directory");
             assert_eq!(response.tool_calls[0].arguments["path"], ".");
             let mut message = AgentMessage::text(MessageRole::Assistant, response.content);
             message.provider_data = response.provider_data;
@@ -738,10 +738,10 @@ mod tests {
         stream.push(
             &json!({"choices":[{"delta":{"content":"world","reasoning_content":"private"}}]}),
         );
-        stream.push(&json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call","function":{"name":"list_files","arguments":json!({"path":"."}).to_string()}}]}}]}));
+        stream.push(&json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call","function":{"name":"list_directory","arguments":json!({"path":"."}).to_string()}}]}}]}));
         let response = stream.finish().unwrap();
         assert_eq!(response.content, "Hello world");
-        assert_eq!(response.tool_calls[0].name, "list_files");
+        assert_eq!(response.tool_calls[0].name, "list_directory");
         assert_eq!(response.tool_calls[0].arguments["path"], ".");
     }
 
@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn gemini_does_not_invent_wire_ids_for_older_models() {
-        let response = decode(&ProviderProtocol::Gemini, json!({"candidates":[{"content":{"parts":[{"functionCall":{"name":"list_files","args":{"path":"."}}}]}}]})).unwrap();
+        let response = decode(&ProviderProtocol::Gemini, json!({"candidates":[{"content":{"parts":[{"functionCall":{"name":"list_directory","args":{"path":"."}}}]}}]})).unwrap();
         let call = &response.tool_calls[0];
         let mut assistant = AgentMessage::text(MessageRole::Assistant, "");
         assistant.tool_calls = response.tool_calls.clone();
@@ -782,6 +782,7 @@ mod tests {
             content: "README.md".into(),
             is_error: false,
             duration_ms: 1,
+            structured_content: None,
         });
         let messages = vec![assistant, tool_message];
         let (_, payload) = encode(

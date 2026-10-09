@@ -10,7 +10,7 @@ export const demoProject: Project = {
   lastOpenedAt: '2026-10-09T09:12:00.000Z',
   projectInstructions: '',
   preferredModel: null,
-  permissions: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', maxToolRounds: 8 },
+  permissions: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', externalFiles: 'deny', maxToolRounds: 8 },
   isRecent: true,
   createdAt: '2026-10-08T14:15:00.000Z',
 };
@@ -33,12 +33,12 @@ export const demoSession: AgentSession = {
     {
       id: 'sample-assistant-1', role: 'assistant',
       content: 'I’ll trace the workspace boundary checks first, then compare the existing test coverage before proposing the smallest change.',
-      toolCalls: [{ id: 'sample-call-1', name: 'list_files', arguments: { path: 'src/workspaces' } }],
+      toolCalls: [{ id: 'sample-call-1', name: 'list_directory', arguments: { path: 'src/workspaces', limit: 50 } }],
       toolResult: null, createdAt: '2026-10-09T09:12:08.000Z', providerData: null,
     },
     {
       id: 'sample-tool-1', role: 'tool', content: 'mod.rs\npaths.rs\nproject.rs', toolCalls: [],
-      toolResult: { toolCallId: 'sample-call-1', name: 'list_files', content: 'mod.rs\npaths.rs\nproject.rs', isError: false, durationMs: 84 },
+      toolResult: { toolCallId: 'sample-call-1', name: 'list_directory', content: 'mod.rs\npaths.rs\nproject.rs', isError: false, durationMs: 84, structuredContent: null },
       createdAt: '2026-10-09T09:12:09.000Z', providerData: null,
     },
     {
@@ -52,12 +52,12 @@ export const demoSession: AgentSession = {
     },
     {
       id: 'sample-tool-2', role: 'tool', content: 'Path checks were duplicated in three call sites. Symlink targets are already resolved before reads.', toolCalls: [],
-      toolResult: { toolCallId: 'sample-call-2', name: 'read_file', content: 'Path checks were duplicated in three call sites. Symlink targets are already resolved before reads.', isError: false, durationMs: 52 },
+      toolResult: { toolCallId: 'sample-call-2', name: 'read_file', content: 'Path checks were duplicated in three call sites. Symlink targets are already resolved before reads.', isError: false, durationMs: 52, structuredContent: null },
       createdAt: '2026-10-09T09:12:15.000Z', providerData: null,
     },
     {
       id: 'sample-tool-3', role: 'tool', content: 'Existing cases cover parent traversal, absolute paths, hidden directories, and symlink escapes.', toolCalls: [],
-      toolResult: { toolCallId: 'sample-call-3', name: 'read_file', content: 'Existing cases cover parent traversal, absolute paths, hidden directories, and symlink escapes.', isError: false, durationMs: 43 },
+      toolResult: { toolCallId: 'sample-call-3', name: 'read_file', content: 'Existing cases cover parent traversal, absolute paths, hidden directories, and symlink escapes.', isError: false, durationMs: 43, structuredContent: null },
       createdAt: '2026-10-09T09:12:16.000Z', providerData: null,
     },
     {
@@ -66,7 +66,7 @@ export const demoSession: AgentSession = {
       toolCalls: [], toolResult: null, createdAt: '2026-10-09T09:16:32.000Z', providerData: null,
     },
   ],
-  permissionPolicy: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', maxToolRounds: 8 },
+  permissionPolicy: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', externalFiles: 'deny', maxToolRounds: 8 },
   pendingToolCall: null, pendingUserInput: null, queuedToolCalls: [],
   iterations: 0, toolCalls: 0, activityEvents: [],
   createdAt: earlier, updatedAt: '2026-10-09T09:16:32.000Z', error: null, toolRounds: 2,

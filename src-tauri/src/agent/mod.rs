@@ -97,8 +97,8 @@ impl AgentRuntime {
             tools::definitions()
                 .into_iter()
                 .filter(|tool| {
-                    tool.category == ToolCategory::UserInteraction
-                        || session.permission_policy.decision(&tool.category)
+                    tool.permission == ToolCategory::UserInteraction
+                        || session.permission_policy.decision(&tool.permission)
                             != PermissionDecision::Deny
                 })
                 .collect::<Vec<_>>()
@@ -299,7 +299,33 @@ impl AgentRuntime {
             return Ok(true);
         }
 
-        if session.permission_policy.decision(&tool.category) == PermissionDecision::Ask {
+        let permission = session.permission_policy.decision(&tool.permission);
+        let external = tools::requires_external_access(Path::new(&project.path), &call)?;
+        let external_permission = if external {
+            session.permission_policy.external_files
+        } else {
+            PermissionDecision::Allow
+        };
+        if permission == PermissionDecision::Deny || external_permission == PermissionDecision::Deny
+        {
+            let result = tools::execute(
+                Path::new(&project.path),
+                &call,
+                &session.permission_policy,
+                false,
+            )
+            .await;
+            record_activity(
+                session,
+                AgentActivityKind::ToolCompleted,
+                format!("{} was denied by the permission policy.", call.name),
+                Some(call.id.clone()),
+            );
+            append_result(session, result);
+            checkpoint(state, sink, session)?;
+            return Ok(false);
+        }
+        if permission == PermissionDecision::Ask || external_permission == PermissionDecision::Ask {
             session.pending_tool_call = Some(call.clone());
             session.status = SessionStatus::WaitingForPermission;
             record_activity(
@@ -314,16 +340,21 @@ impl AgentRuntime {
 
         let mut batch = vec![(call, tool)];
         if batch[0].1.parallel_safe
-            && session.permission_policy.decision(&batch[0].1.category) == PermissionDecision::Allow
+            && session.permission_policy.decision(&batch[0].1.permission)
+                == PermissionDecision::Allow
         {
             while let Some(next) = session.queued_tool_calls.first() {
                 let Ok(next_tool) = tools::validate_call(next) else {
                     break;
                 };
+                let external =
+                    tools::requires_external_access(Path::new(&project.path), next).unwrap_or(true);
                 if !next_tool.parallel_safe
                     || next.name == "ask_user"
-                    || session.permission_policy.decision(&next_tool.category)
+                    || session.permission_policy.decision(&next_tool.permission)
                         != PermissionDecision::Allow
+                    || (external
+                        && session.permission_policy.external_files != PermissionDecision::Allow)
                 {
                     break;
                 }
@@ -347,14 +378,6 @@ impl AgentRuntime {
                 tool_summary(call),
                 Some(call.id.clone()),
             );
-            if call.name == "read_file" {
-                record_activity(
-                    session,
-                    AgentActivityKind::FileInspected,
-                    tool_summary(call),
-                    Some(call.id.clone()),
-                );
-            }
             let _ = tool;
         }
         session.status = SessionStatus::Working;
@@ -368,6 +391,11 @@ impl AgentRuntime {
         )
         .await;
         for ((call, _), result) in batch.into_iter().zip(results) {
+            if !result.is_error {
+                if let Some(kind) = completed_tool_activity(&call) {
+                    record_activity(session, kind, tool_summary(&call), Some(call.id.clone()));
+                }
+            }
             record_activity(
                 session,
                 AgentActivityKind::ToolCompleted,
@@ -440,6 +468,7 @@ fn tool_error(call: &ToolCall, message: impl Into<String>) -> ToolResult {
         content: message.into(),
         is_error: true,
         duration_ms: 0,
+        structured_content: None,
     }
 }
 
@@ -447,9 +476,36 @@ fn tool_summary(call: &ToolCall) -> String {
     let path = call.arguments["path"].as_str();
     match (call.name.as_str(), path) {
         ("read_file", Some(path)) => format!("Read {path}"),
-        ("list_files", Some(path)) => format!("Listed {path}"),
+        ("list_directory", Some(path)) => format!("Listed {path}"),
         ("git_status", _) => "Checked Git status".into(),
         (name, _) => format!("Ran {name}"),
+    }
+}
+
+fn completed_tool_activity(call: &ToolCall) -> Option<AgentActivityKind> {
+    match call.name.as_str() {
+        "read_file" | "read_files" | "list_directory" | "file_metadata" => {
+            Some(AgentActivityKind::FileInspected)
+        }
+        "search_files" | "search_text" | "find_symbol" | "find_references" => {
+            Some(AgentActivityKind::SearchPerformed)
+        }
+        "run_command" => Some(
+            if call.arguments["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|argument| argument.as_str() == Some("test"))
+            {
+                AgentActivityKind::TestRun
+            } else {
+                AgentActivityKind::CommandExecuted
+            },
+        ),
+        "apply_patch" | "create_file" | "delete_file" | "move_file" => {
+            Some(AgentActivityKind::FileEdited)
+        }
+        _ => None,
     }
 }
 
@@ -588,6 +644,7 @@ pub fn accept_user_input(session: &mut AgentSession, content: &str) -> AppResult
             content: content.to_owned(),
             is_error: false,
             duration_ms: 0,
+            structured_content: None,
         },
     );
     session
@@ -856,7 +913,7 @@ mod tests {
             response(
                 "I will inspect the project.",
                 vec![
-                    tool_call("list", "list_files", json!({"path":"."})),
+                    tool_call("list", "list_directory", json!({"path":"."})),
                     tool_call("read", "read_file", json!({"path":"README.md"})),
                 ],
             ),
@@ -998,7 +1055,7 @@ mod tests {
             receiver,
             Some(Box::new(MockProvider::new(vec![response(
                 "Inspecting.",
-                vec![tool_call("list", "list_files", json!({"path":"."}))],
+                vec![tool_call("list", "list_directory", json!({"path":"."}))],
             )]))),
             AgentRuntime::new(AgentRuntimeConfig {
                 max_tool_calls: 0,
@@ -1021,7 +1078,7 @@ mod tests {
             receiver,
             Some(Box::new(MockProvider::new(vec![response(
                 "Inspecting.",
-                vec![tool_call("list", "list_files", json!({"path":"."}))],
+                vec![tool_call("list", "list_directory", json!({"path":"."}))],
             )]))),
             AgentRuntime::new(AgentRuntimeConfig {
                 max_iterations: 1,

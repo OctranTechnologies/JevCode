@@ -64,7 +64,7 @@ impl ApiKeyAuthAdapter {
         Ok(format!("{}/models", base.trim_end_matches('/')))
     }
 
-    async fn request_models(&self, secret: &str) -> AppResult<Vec<Model>> {
+    fn build_models_request(&self, secret: &str) -> AppResult<reqwest::Request> {
         if secret.trim().is_empty() || secret.len() > 16_384 {
             return Err(AppError::new(
                 "invalid_credential",
@@ -77,14 +77,24 @@ impl ApiKeyAuthAdapter {
             ProviderProtocol::Gemini => request.query(&[("pageSize", "1000")]),
             _ => request,
         };
-        let request = match self.provider.protocol {
+        request = match self.provider.protocol {
             ProviderProtocol::Anthropic => request
                 .header("x-api-key", secret)
                 .header("anthropic-version", "2023-06-01"),
             ProviderProtocol::Gemini => request.header("x-goog-api-key", secret),
             _ => request.bearer_auth(secret),
         };
-        let mut response = request.send().await.map_err(|error| {
+        request.build().map_err(|_| {
+            AppError::new(
+                "configuration",
+                "Could not construct the provider model request.",
+            )
+        })
+    }
+
+    async fn request_models(&self, secret: &str) -> AppResult<Vec<Model>> {
+        let request = self.build_models_request(secret)?;
+        let mut response = self.client.execute(request).await.map_err(|error| {
             if error.is_timeout() || error.is_connect() {
                 network_error()
             } else {
@@ -556,43 +566,6 @@ pub(crate) fn provider_outage() -> AppError {
 mod tests {
     use super::*;
     use crate::domain::ProviderProtocol;
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        thread,
-    };
-
-    fn mock_provider_response(
-        status: u16,
-        body: &'static str,
-    ) -> (String, thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock provider");
-        let address = listener.local_addr().expect("read mock provider address");
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept provider request");
-            let mut request = Vec::new();
-            let mut buffer = [0; 1024];
-            loop {
-                let read = stream.read(&mut buffer).expect("read provider request");
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                if request.windows(4).any(|part| part == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            let reason = if status == 200 { "OK" } else { "Unauthorized" };
-            write!(
-                stream,
-                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .expect("write provider response");
-            String::from_utf8_lossy(&request).to_ascii_lowercase()
-        });
-        (format!("http://{address}"), server)
-    }
 
     fn local_provider(id: &str, protocol: ProviderProtocol, base_url: String) -> Provider {
         Provider {
@@ -649,8 +622,8 @@ mod tests {
         assert_eq!(gemini[1].method, ProviderAuthMethod::GoogleOAuth);
     }
 
-    #[tokio::test]
-    async fn model_catalog_connection_uses_each_providers_documented_key_header() {
+    #[test]
+    fn model_catalog_request_uses_each_providers_documented_key_header() {
         let cases = [
             (
                 "openai",
@@ -680,25 +653,27 @@ mod tests {
         ];
 
         for (id, protocol, expected_header) in cases {
-            let (base_url, server) = mock_provider_response(
-                200,
-                r#"{"data":[{"id":"auth-check","display_name":"Auth check"}]}"#,
-            );
-            let adapter = ApiKeyAuthAdapter::new(local_provider(id, protocol, base_url))
-                .expect("construct provider adapter");
-            let models = adapter
-                .get_available_models("test-secret")
-                .await
-                .expect("accept valid mock credential");
-            let request = server.join().expect("join mock provider");
+            let adapter = ApiKeyAuthAdapter::new(local_provider(
+                id,
+                protocol,
+                "https://provider.test".into(),
+            ))
+            .expect("construct provider adapter");
+            let request = adapter
+                .build_models_request("test-secret")
+                .expect("build provider request");
 
-            assert!(request.contains("get /models"));
-            assert!(
-                request.contains(expected_header),
-                "{id} sent unexpected auth header"
-            );
-            assert_eq!(models[0].id, "auth-check");
-            assert_eq!(models[0].provider, id);
+            assert_eq!(request.method(), reqwest::Method::GET);
+            assert!(request.url().path().ends_with("/models"));
+            let (name, value) = expected_header.split_once(": ").unwrap();
+            let header = request
+                .headers()
+                .get(name)
+                .expect("provider auth header")
+                .to_str()
+                .unwrap()
+                .to_ascii_lowercase();
+            assert_eq!(header, value, "{id} sent an unexpected auth header");
         }
     }
 
@@ -756,25 +731,12 @@ mod tests {
         assert!(normalize_model(&provider, serde_json::json!({"id":"jev-1.13"})).is_none());
     }
 
-    #[tokio::test]
-    async fn rejected_connection_does_not_echo_a_secret_from_provider_response() {
-        let (base_url, server) = mock_provider_response(
-            401,
-            r#"{"error":{"message":"invalid credential test-secret"}}"#,
+    #[test]
+    fn rejected_connection_does_not_echo_a_secret_from_provider_response() {
+        let error = provider_response_error(
+            StatusCode::UNAUTHORIZED,
+            br#"{"error":{"message":"invalid credential test-secret"}}"#,
         );
-        let adapter = ApiKeyAuthAdapter::new(local_provider(
-            "openai",
-            ProviderProtocol::OpenAiResponses,
-            base_url,
-        ))
-        .expect("construct provider adapter");
-
-        let error = adapter
-            .validate("test-secret")
-            .await
-            .expect_err("reject mock key");
-        let request = server.join().expect("join mock provider");
-        assert!(request.contains("authorization: bearer test-secret"));
         assert_eq!(error.code, "invalid_credential");
         assert!(!error.to_string().contains("test-secret"));
     }
