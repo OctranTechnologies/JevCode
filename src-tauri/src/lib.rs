@@ -5,7 +5,9 @@ mod config;
 mod credentials;
 pub mod domain;
 mod error;
+mod extensions;
 mod git;
+mod mcp;
 mod permissions;
 mod persistence;
 mod providers;
@@ -15,7 +17,7 @@ mod tools;
 mod usage;
 mod workspaces;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::Manager;
 
 pub fn run() {
@@ -41,12 +43,11 @@ pub fn run() {
                 .try_init()
                 .ok();
             app.manage(guard);
-            let state = Arc::new(state::AppState {
-                database: persistence::Database::open(&data_dir.join("jevcode.sqlite"))?,
-                config: config::AppConfig::load(&config_dir)?,
-                credentials: credentials::CredentialStore,
-                runs: Mutex::new(Default::default()),
-            });
+            let state = Arc::new(state::AppState::new(
+                persistence::Database::open(&data_dir.join("jevcode.sqlite"))?,
+                config::AppConfig::load(&config_dir)?,
+                credentials::CredentialStore,
+            ));
             // In development, opening the application source is useful and reversible.
             #[cfg(debug_assertions)]
             if state.database.projects()?.is_empty() {
@@ -110,6 +111,12 @@ pub fn run() {
             commands::set_permission_mode,
             commands::list_permission_rules,
             commands::revoke_permission_rule,
+            commands::list_mcp_servers,
+            commands::save_mcp_server,
+            commands::set_mcp_server_enabled,
+            commands::delete_mcp_server,
+            commands::connect_mcp_server,
+            commands::disconnect_mcp_server,
             commands::session_changes,
             commands::session_file_diff,
             commands::review_file_action,

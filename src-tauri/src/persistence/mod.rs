@@ -5,6 +5,13 @@ use crate::{
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
+fn mcp_scope_name(scope: &McpScope) -> &'static str {
+    match scope {
+        McpScope::User => "user",
+        McpScope::Project => "project",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionReviewBaseline {
     pub session_id: String,
@@ -42,6 +49,7 @@ impl Database {
         Self::migrate_model_management(&connection)?;
         Self::migrate_permissions(&connection)?;
         Self::migrate_code_review(&connection)?;
+        Self::migrate_mcp(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -159,6 +167,83 @@ impl Database {
         if !has_reviewed {
             connection.execute("ALTER TABLE session_file_checkpoints ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0", [])?;
         }
+        Ok(())
+    }
+
+    fn migrate_mcp(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS mcp_servers (
+                 id TEXT PRIMARY KEY, data TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS mcp_trust (
+                 scope TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '',
+                 server_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                 trusted_at TEXT NOT NULL,
+                 PRIMARY KEY(scope, project_id, server_id)
+             );
+             PRAGMA user_version = 9;",
+        )?;
+        Ok(())
+    }
+
+    pub fn mcp_servers(&self) -> AppResult<Vec<McpServerConfig>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare("SELECT data FROM mcp_servers ORDER BY id")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    pub fn save_mcp_server(&self, server: &McpServerConfig) -> AppResult<()> {
+        if server.scope != McpScope::User || server.project_id.is_some() {
+            return Err(AppError::new(
+                "invalid_mcp_scope",
+                "Only user-scoped MCP servers can be stored in application settings.",
+            ));
+        }
+        self.connection()?.execute(
+            "INSERT INTO mcp_servers(id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            params![server.id, serde_json::to_string(server)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_mcp_server(&self, id: &str) -> AppResult<()> {
+        let connection = self.connection()?;
+        connection.execute("DELETE FROM mcp_servers WHERE id = ?1", [id])?;
+        connection.execute(
+            "DELETE FROM mcp_trust WHERE scope = 'user' AND project_id = '' AND server_id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn mcp_is_trusted(&self, server: &McpServerConfig, fingerprint: &str) -> AppResult<bool> {
+        let project_id = server.project_id.as_deref().unwrap_or_default();
+        self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mcp_trust WHERE scope = ?1 AND project_id = ?2 AND server_id = ?3 AND fingerprint = ?4)",
+            params![mcp_scope_name(&server.scope), project_id, server.id, fingerprint],
+            |row| row.get(0),
+        ).map_err(Into::into)
+    }
+
+    pub fn trust_mcp_server(&self, server: &McpServerConfig, fingerprint: &str) -> AppResult<()> {
+        let project_id = server.project_id.as_deref().unwrap_or_default();
+        self.connection()?.execute(
+            "INSERT INTO mcp_trust(scope, project_id, server_id, fingerprint, trusted_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(scope, project_id, server_id) DO UPDATE SET fingerprint = excluded.fingerprint, trusted_at = excluded.trusted_at",
+            params![mcp_scope_name(&server.scope), project_id, server.id, fingerprint, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_mcp_trust(&self, server: &McpServerConfig) -> AppResult<()> {
+        self.connection()?.execute(
+            "DELETE FROM mcp_trust WHERE scope = ?1 AND project_id = ?2 AND server_id = ?3",
+            params![
+                mcp_scope_name(&server.scope),
+                server.project_id.as_deref().unwrap_or_default(),
+                server.id
+            ],
+        )?;
         Ok(())
     }
 

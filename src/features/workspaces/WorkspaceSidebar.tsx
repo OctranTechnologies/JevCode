@@ -1,6 +1,6 @@
 import {
   Archive, BarChart3, ChevronDown, ChevronsLeft, Copy, ExternalLink, Folder, FolderPlus, GitBranch,
-  GitFork, Layers3, MessageSquare, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
+  GitFork, Layers3, MessageSquare, MoreHorizontal, Pencil, Plus, Puzzle, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Brand } from '../../components/Brand';
@@ -115,6 +115,7 @@ export function WorkspaceSidebar({
       <nav className="sidebar-utilities" aria-label="Settings and reports">
         <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={view === 'providers'} onClick={() => onView('providers')} />
         <SidebarAction icon={<ShieldCheck size={16} />} label="Permissions" active={view === 'permissions'} onClick={() => onView('permissions')} />
+        <SidebarAction icon={<Puzzle size={16} />} label="MCP" active={view === 'mcp'} onClick={() => onView('mcp')} />
         <SidebarAction icon={<BarChart3 size={16} />} label="Usage" active={view === 'usage'} onClick={() => onView('usage')} />
       </nav>
       <button className="account-provider" onClick={() => onView('providers')} title={provider?.connected ? `${provider.name} · Connected` : 'Set up a provider'}>

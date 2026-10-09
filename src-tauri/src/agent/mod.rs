@@ -64,6 +64,15 @@ struct ModelTurn<'a> {
     tools: &'a [Tool],
 }
 
+#[derive(Clone)]
+struct ToolExecutionContext {
+    policy: PermissionPolicy,
+    timeout: Duration,
+    session_id: String,
+    project_id: String,
+    extensions: crate::extensions::ExtensionRegistry,
+}
+
 impl Default for AgentRuntime {
     fn default() -> Self {
         Self::new(AgentRuntimeConfig::default())
@@ -99,7 +108,9 @@ impl AgentRuntime {
         checkpoint(state, sink, session)?;
 
         let definitions = if model.supports_tools {
-            tools::definitions()
+            let mut available = tools::definitions();
+            available.extend(state.extensions.definitions(&project.id).await?);
+            available
                 .into_iter()
                 .filter(|tool| {
                     tool.permission == ToolCategory::UserInteraction
@@ -330,7 +341,7 @@ impl AgentRuntime {
                 "The task reached its tool-call limit.",
             ));
         }
-        let tool = match tools::validate_call(&call) {
+        let tool = match runtime_tool(state, &project.id, &call).await {
             Ok(tool) => tool,
             Err(error) => {
                 append_result(session, tool_error(&call, error.message));
@@ -424,7 +435,7 @@ impl AgentRuntime {
                 == PermissionDecision::Allow
         {
             while let Some(next) = session.queued_tool_calls.first() {
-                let Ok(next_tool) = tools::validate_call(next) else {
+                let Ok(next_tool) = runtime_tool(state, &project.id, next).await else {
                     break;
                 };
                 let external =
@@ -495,9 +506,13 @@ impl AgentRuntime {
             execute_batch(
                 PathBuf::from(&project.path),
                 batch.clone(),
-                session.permission_policy.clone(),
-                self.config.tool_timeout,
-                &session.id,
+                ToolExecutionContext {
+                    policy: session.permission_policy.clone(),
+                    timeout: self.config.tool_timeout,
+                    session_id: session.id.clone(),
+                    project_id: project.id.clone(),
+                    extensions: state.extensions.clone(),
+                },
                 sink,
             )
             .await
@@ -564,21 +579,19 @@ impl AgentRuntime {
 async fn execute_batch(
     root: PathBuf,
     batch: Vec<(ToolCall, Tool)>,
-    policy: PermissionPolicy,
-    timeout: Duration,
-    session_id: &str,
+    context: ToolExecutionContext,
     sink: &dyn EventSink,
 ) -> Vec<ToolResult> {
     if batch.len() == 1 && !batch[0].1.parallel_safe {
-        return vec![execute_one(&root, &batch[0].0, &policy, timeout, session_id, sink).await];
+        return vec![execute_one(&root, &batch[0].0, &context, sink).await];
     }
     let mut tasks = JoinSet::new();
     for (index, (call, _)) in batch.iter().enumerate() {
         let root = root.clone();
         let call = call.clone();
-        let policy = policy.clone();
+        let context = context.clone();
         tasks.spawn(async move {
-            let result = execute(&root, &call, &policy, timeout).await;
+            let result = execute(&root, &call, &context).await;
             (index, result)
         });
     }
@@ -599,13 +612,15 @@ async fn execute_batch(
         .collect()
 }
 
-async fn execute(
-    root: &Path,
-    call: &ToolCall,
-    policy: &PermissionPolicy,
-    timeout: Duration,
-) -> ToolResult {
-    match tokio::time::timeout(timeout, tools::execute(root, call, policy, true)).await {
+async fn execute(root: &Path, call: &ToolCall, context: &ToolExecutionContext) -> ToolResult {
+    let operation = async {
+        if let Some(result) = context.extensions.execute(&context.project_id, call).await {
+            result
+        } else {
+            tools::execute(root, call, &context.policy, true).await
+        }
+    };
+    match tokio::time::timeout(context.timeout, operation).await {
         Ok(result) => result,
         Err(_) => tool_error(call, "The tool execution timed out."),
     }
@@ -614,13 +629,23 @@ async fn execute(
 async fn execute_one(
     root: &Path,
     call: &ToolCall,
-    policy: &PermissionPolicy,
-    timeout: Duration,
-    session_id: &str,
+    context: &ToolExecutionContext,
     sink: &dyn EventSink,
 ) -> ToolResult {
+    if context.extensions.owns(&call.name) {
+        return match tokio::time::timeout(
+            context.timeout,
+            context.extensions.execute(&context.project_id, call),
+        )
+        .await
+        {
+            Ok(Some(result)) => result,
+            Ok(None) => tool_error(call, "The MCP tool disconnected before execution."),
+            Err(_) => tool_error(call, "The MCP tool execution timed out."),
+        };
+    }
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let execute = tools::execute_with_output(root, call, policy, true, sender);
+    let execute = tools::execute_with_output(root, call, &context.policy, true, sender);
     tokio::pin!(execute);
     let mut stream_open = true;
     let run = async {
@@ -628,16 +653,36 @@ async fn execute_one(
             tokio::select! {
                 result = &mut execute => break result,
                 event = receiver.recv(), if stream_open => match event {
-                    Some(event) => sink.tool_output(session_id, &call.id, &event.stream, &event.chunk),
+                    Some(event) => sink.tool_output(&context.session_id, &call.id, &event.stream, &event.chunk),
                     None => stream_open = false,
                 }
             }
         }
     };
-    match tokio::time::timeout(timeout, run).await {
+    match tokio::time::timeout(context.timeout, run).await {
         Ok(result) => result,
         Err(_) => tool_error(call, "The tool execution timed out."),
     }
+}
+
+async fn runtime_tool(state: &SharedState, project_id: &str, call: &ToolCall) -> AppResult<Tool> {
+    if !state.extensions.owns(&call.name) {
+        return tools::validate_call(call);
+    }
+    let tool = state
+        .extensions
+        .definitions(project_id)
+        .await?
+        .into_iter()
+        .find(|tool| tool.name == call.name)
+        .ok_or_else(|| {
+            AppError::new(
+                "unknown_tool",
+                "The requested MCP tool is disconnected or unavailable.",
+            )
+        })?;
+    tools::validate_external_schema(&call.arguments, &tool.input_schema)?;
+    Ok(tool)
 }
 
 fn tool_error(call: &ToolCall, message: impl Into<String>) -> ToolResult {
@@ -662,6 +707,9 @@ fn tool_summary(call: &ToolCall) -> String {
 }
 
 fn completed_tool_activity(call: &ToolCall) -> Option<AgentActivityKind> {
+    if call.name.starts_with("mcp__") {
+        return Some(AgentActivityKind::CommandExecuted);
+    }
     match call.name.as_str() {
         "read_file" | "read_files" | "list_directory" | "file_metadata" => {
             Some(AgentActivityKind::FileInspected)
@@ -1105,6 +1153,7 @@ async fn drive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::{ExtensionRegistry, ToolIntegration};
     use crate::{
         config::AppConfig, credentials::CredentialStore, persistence::Database, state::AppState,
         workspaces,
@@ -1141,6 +1190,40 @@ mod tests {
         failures_left: Mutex<u32>,
         blocked: bool,
         started: Arc<Notify>,
+    }
+
+    #[derive(Clone)]
+    struct MockExternalTool {
+        calls: Arc<Mutex<u32>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolIntegration for MockExternalTool {
+        fn owns(&self, name: &str) -> bool {
+            name == "mcp__mock__search"
+        }
+        async fn definitions(&self, _: &str) -> AppResult<Vec<Tool>> {
+            Ok(vec![Tool {
+                name: "mcp__mock__search".into(),
+                description: "Mock remote search".into(),
+                permission: ToolCategory::Shell,
+                risk_level: ToolRiskLevel::High,
+                timeout_ms: 2_000,
+                parallel_safe: false,
+                input_schema: json!({"type":"object","properties":{"query":{"type":"string","minLength":1}},"required":["query"],"additionalProperties":false}),
+            }])
+        }
+        async fn execute(&self, _: &str, call: &ToolCall) -> ToolResult {
+            *self.calls.lock().unwrap() += 1;
+            ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                content: "mock response".into(),
+                is_error: false,
+                duration_ms: 1,
+                structured_content: None,
+            }
+        }
     }
     impl MockProvider {
         fn new(responses: Vec<ProviderResponse>) -> Self {
@@ -1211,12 +1294,7 @@ mod tests {
     fn setup_session(root: &Path) -> (SharedState, Project, AgentSession) {
         let database = Database::open(&root.join("app.sqlite")).unwrap();
         let config = AppConfig::load(root).unwrap();
-        let state = Arc::new(AppState {
-            database,
-            config,
-            credentials: CredentialStore,
-            runs: std::sync::Mutex::new(Default::default()),
-        });
+        let state = Arc::new(AppState::new(database, config, CredentialStore));
         let project = workspaces::open_project(&state.database, root.to_str().unwrap()).unwrap();
         let session = AgentSession {
             id: id(),
@@ -1399,6 +1477,81 @@ mod tests {
             .messages
             .iter()
             .any(|message| message.tool_result.is_some()));
+    }
+
+    #[tokio::test]
+    async fn external_tools_use_the_agent_permission_pause_and_audited_execution_path() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut state, _, session) = setup_session(root.path());
+        let calls = Arc::new(Mutex::new(0));
+        Arc::get_mut(&mut state).unwrap().extensions =
+            ExtensionRegistry::default().with(Arc::new(MockExternalTool {
+                calls: calls.clone(),
+            }));
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "Searching the documentation.",
+                vec![tool_call(
+                    "remote-1",
+                    "mcp__mock__search",
+                    json!({"query":"permissions"}),
+                )],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let mut waiting = state.database.session(&session.id).unwrap();
+        assert_eq!(waiting.status, SessionStatus::WaitingForPermission);
+        let request = waiting.pending_permission.as_ref().unwrap();
+        assert!(request.categories.contains(&PermissionCategory::Command));
+        assert!(request.categories.contains(&PermissionCategory::Network));
+        assert!(request.categories.contains(&PermissionCategory::Dangerous));
+        assert_eq!(*calls.lock().unwrap(), 0);
+
+        let approved = waiting.pending_tool_call.take().unwrap();
+        waiting.pending_permission = None;
+        waiting
+            .one_time_permission_grants
+            .push(permissions::fingerprint(&approved).unwrap());
+        waiting.queued_tool_calls.push(approved);
+        waiting.status = SessionStatus::Queued;
+        state.database.save_session(&waiting).unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            waiting,
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "The documentation explains the permission flow.",
+                vec![],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let finished = state.database.session(&session.id).unwrap();
+        assert_eq!(finished.status, SessionStatus::Completed);
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert!(finished
+            .messages
+            .iter()
+            .any(|message| message
+                .tool_result
+                .as_ref()
+                .is_some_and(|result| result.name == "mcp__mock__search"
+                    && result.content == "mock response")));
+        assert!(finished
+            .activity_events
+            .iter()
+            .any(|event| event.kind == AgentActivityKind::CommandExecuted
+                && event.summary.contains("mcp__mock__search")));
     }
 
     #[tokio::test]

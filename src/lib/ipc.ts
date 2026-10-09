@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UsageRecord, WorkspaceMode } from '../types/domain';
-import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export const desktopAvailable = isTauri();
@@ -40,6 +40,12 @@ interface Commands {
   set_permission_mode: { args: { mode: PermissionMode }; result: PermissionMode };
   list_permission_rules: { args: undefined; result: PermissionRule[] };
   revoke_permission_rule: { args: { ruleId: string }; result: null };
+  list_mcp_servers: { args: { projectId: string | null }; result: McpServerView[] };
+  save_mcp_server: { args: { input: { config: McpServerConfig; secrets: Record<string, string> } }; result: McpServerConfig };
+  set_mcp_server_enabled: { args: { input: { scope: McpScope; projectId: string | null; serverId: string }; enabled: boolean }; result: McpServerView[] };
+  connect_mcp_server: { args: { input: { scope: McpScope; projectId: string | null; serverId: string }; trust: boolean }; result: McpServerView };
+  disconnect_mcp_server: { args: { input: { scope: McpScope; projectId: string | null; serverId: string } }; result: McpServerView[] };
+  delete_mcp_server: { args: { input: { scope: McpScope; projectId: string | null; serverId: string } }; result: null };
   cancel_session: { args: { sessionId: string }; result: null };
   session_changes: { args: { sessionId: string }; result: SessionChanges };
   session_file_diff: { args: { sessionId: string; path: string }; result: SessionFileDiff };
@@ -60,7 +66,7 @@ const responses = {
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
   reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), project_task_worktrees: z.array(taskWorktreeSchema), task_worktree_diff: z.string(), commit_task_worktree: taskWorktreeActionSchema, apply_task_worktree: taskWorktreeActionSchema, remove_task_worktree: sessionSchema, create_session: sessionSchema, send_message: sessionSchema,
   rename_session: sessionSchema, archive_session: sessionSchema, resume_session: sessionSchema, delete_session: z.null(), duplicate_session: sessionSchema, fork_session: sessionSchema,
-  resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), cancel_session: z.null(), session_changes: sessionChangesSchema, session_file_diff: sessionFileDiffSchema, review_file_action: sessionChangesSchema, review_all_action: sessionChangesSchema, connect_provider: providerAccountSchema,
+  resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), list_mcp_servers: z.array(mcpServerSchema), save_mcp_server: mcpServerConfigSchema, set_mcp_server_enabled: z.array(mcpServerSchema), connect_mcp_server: mcpServerSchema, disconnect_mcp_server: z.array(mcpServerSchema), delete_mcp_server: z.null(), cancel_session: z.null(), session_changes: sessionChangesSchema, session_file_diff: sessionFileDiffSchema, review_file_action: sessionChangesSchema, review_all_action: sessionChangesSchema, connect_provider: providerAccountSchema,
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,
   refresh_provider_auth: providerAccountSchema, get_provider_auth_status: providerAccountSchema,
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),

@@ -364,6 +364,61 @@ pub struct ToolResult {
     pub structured_content: Option<Value>,
 }
 
+/// MCP servers are configured as external tool integrations, never as model
+/// providers. Environment values are represented only by key names here; the
+/// corresponding values exist exclusively in the OS credential store.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpScope {
+    User,
+    Project,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransport {
+    Stdio { command: String, args: Vec<String> },
+    Http { url: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerConfig {
+    pub id: String,
+    pub name: String,
+    pub scope: McpScope,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    pub transport: McpTransport,
+    #[serde(default)]
+    pub env_names: Vec<String>,
+    #[serde(default)]
+    pub has_auth_token: bool,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpConnectionStatus {
+    Disabled,
+    Untrusted,
+    Disconnected,
+    Connected,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerView {
+    pub config: McpServerConfig,
+    pub status: McpConnectionStatus,
+    pub trusted: bool,
+    pub available_tools: Vec<String>,
+    pub permission_summary: String,
+    pub last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {

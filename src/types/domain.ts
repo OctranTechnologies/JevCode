@@ -144,6 +144,17 @@ export interface ToolResult {
   durationMs: number;
   structuredContent: Record<string, unknown> | unknown[] | null;
 }
+export type McpScope = 'user' | 'project';
+export type McpConnectionStatus = 'disabled' | 'untrusted' | 'disconnected' | 'connected' | 'error';
+export type McpTransport = { type: 'stdio'; command: string; args: string[] } | { type: 'http'; url: string };
+export interface McpServerConfig {
+  id: string; name: string; scope: McpScope; projectId: string | null; transport: McpTransport;
+  envNames: string[]; hasAuthToken: boolean; enabled: boolean;
+}
+export interface McpServerView {
+  config: McpServerConfig; status: McpConnectionStatus; trusted: boolean; availableTools: string[];
+  permissionSummary: string; lastError: string | null;
+}
 export interface Workspace { id: string; name: string; projects: Project[] }
 export interface Project {
   id: string;

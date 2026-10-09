@@ -229,9 +229,20 @@ pub fn validate_call(call: &ToolCall) -> AppResult<Tool> {
     Ok(tool)
 }
 
+/// MCP schemas are discovered at runtime, then validated by the same bounded
+/// schema checker used for built-in tool arguments.
+pub fn validate_external_schema(value: &Value, schema: &Value) -> AppResult<()> {
+    validate_schema(value, schema, "$")
+}
+
 /// Detect requests outside the active project before execution so the runtime
 /// can pause and obtain an explicit user approval.
 pub fn requires_external_access(root: &Path, call: &ToolCall) -> AppResult<bool> {
+    // MCP server arguments are interpreted by the remote integration and never
+    // as local workspace paths.
+    if call.name.starts_with("mcp__") {
+        return Ok(false);
+    }
     let root = std::fs::canonicalize(root)?;
     let mut paths = Vec::new();
     match call.name.as_str() {

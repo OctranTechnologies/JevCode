@@ -46,6 +46,12 @@ pub fn assess(
         reasons.push("This operation reaches outside the active workspace.".to_owned());
     }
 
+    if call.name.starts_with("mcp__") {
+        push_category(&mut categories, PermissionCategory::Network);
+        push_category(&mut categories, PermissionCategory::Dangerous);
+        reasons.push("This call invokes an external MCP tool whose side effects cannot be verified locally; approve each call individually.".to_owned());
+    }
+
     if call.name == "run_command" {
         let command = command_text(call);
         let lower = command.to_ascii_lowercase();
@@ -570,6 +576,50 @@ mod tests {
             PermissionMode::Ask,
             PermissionCategory::Dangerous
         ));
+    }
+
+    #[test]
+    fn mcp_tools_always_request_external_command_and_network_permissions() {
+        let root = tempfile::tempdir().unwrap();
+        let call = ToolCall {
+            id: "mcp-call".into(),
+            name: "mcp__u__docs-abcd__1234567890".into(),
+            arguments: json!({"query":"permissions"}),
+        };
+        let assessment = assess(
+            root.path(),
+            &call,
+            &ToolCategory::Shell,
+            &PermissionPolicy::default(),
+        )
+        .unwrap();
+        assert!(assessment
+            .request
+            .categories
+            .contains(&PermissionCategory::Command));
+        assert!(assessment
+            .request
+            .categories
+            .contains(&PermissionCategory::Network));
+        assert!(assessment
+            .request
+            .categories
+            .contains(&PermissionCategory::Dangerous));
+        assert!(!assessment.automatic);
+        assert!(!assessment.request.can_always_allow);
+        assert!(assessment.request.reason.contains("external MCP tool"));
+
+        let denied = assess(
+            root.path(),
+            &call,
+            &ToolCategory::Shell,
+            &PermissionPolicy {
+                shell: PermissionDecision::Deny,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(denied.denied.is_some());
     }
 
     #[test]

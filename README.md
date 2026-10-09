@@ -105,6 +105,7 @@ an existing local branch name and uses Git arguments without shell interpolation
 | Persistence | `src-tauri/src/persistence` | SQLite WAL, schema version, session/project/usage storage |
 | Authentication/credentials | `src-tauri/src/credentials` | Native OS keychain through `keyring` |
 | Usage tracking | `src-tauri/src/usage`, `src/features/usage` | Provider-reported tokens and request duration |
+| External tool extensions | `src-tauri/src/extensions`, `src-tauri/src/mcp.rs` | Provider-neutral integration registry; MCP stdio and Streamable HTTP clients |
 
 ```mermaid
 flowchart LR
@@ -121,6 +122,35 @@ flowchart LR
     Runtime --> Database[SQLite sessions and usage]
     Runtime -. session:updated / usage:updated / agent:tool-output .-> UI
 ```
+
+## MCP and tool extensions
+
+Tool integrations use `ToolIntegration` and `ExtensionRegistry`, separate from
+the `LlmProvider` adapters. The current MCP client supports the documented
+stdio and Streamable HTTP transports and performs initialize, tool discovery,
+and tool calls in Rust. Discovered names are namespaced and bounded; external
+schemas are checked by the same JSON-schema validator as built-in tools.
+
+User-scoped MCP configuration is stored in the local SQLite `mcp_servers`
+table. Project-scoped configuration is stored in `.jevcode/mcp.json`; it contains
+only server settings and environment variable names, never secret values. MCP
+environment values and HTTP bearer tokens are saved under opaque keys in the OS
+credential store. Local MCP commands launch as argument arrays without a shell,
+with a filtered environment and discarded stderr. HTTP requires HTTPS (loopback
+is allowed over HTTP), disables redirects, and applies connection and response
+limits.
+
+Every server is disabled by default. Adding or editing a server clears its trust;
+the user must enable it and choose **Trust & Connect** after reviewing the
+command or endpoint. Trusted servers are not started automatically on app launch.
+Configuration and trust are bound by a fingerprint, so edits require a fresh
+trust action. MCP tool calls are marked as external command/network operations,
+go through the active task permission mode and approval flow, and appear in the
+persisted task timeline. Server descriptions, tool schemas, and results are
+treated as untrusted; secret values are excluded from public schemas and redacted
+from returned content. Generic integrations can add browser, database, issue
+tracker, documentation search, or deployment tools without coupling them to a
+model provider.
 
 The provider-neutral `AgentRuntime` owns the task state machine, context budgeting,
 request retries and timeouts, tool-call limits, permission pauses, cancellation,
