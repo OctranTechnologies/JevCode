@@ -13,6 +13,7 @@ impl Database {
         connection.execute_batch(include_str!("schema.sql"))?;
         Self::migrate_projects(&connection)?;
         Self::migrate_model_management(&connection)?;
+        Self::migrate_permissions(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -56,6 +57,128 @@ impl Database {
              CREATE TABLE IF NOT EXISTS model_preferences (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL);
              PRAGMA user_version = 4;",
         )?;
+        Ok(())
+    }
+
+    fn migrate_permissions(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS app_preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS permission_rules (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, fingerprint TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(project_id, fingerprint));
+             CREATE INDEX IF NOT EXISTS permission_rules_project ON permission_rules(project_id, created_at DESC);
+             INSERT OR IGNORE INTO app_preferences(key, value) VALUES ('permission_mode', 'ask');
+             PRAGMA user_version = 6;",
+        )?;
+        let mut statement = connection.prepare("SELECT id, data FROM projects")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let projects = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        for (id, data) in projects {
+            if let Ok(mut project) = serde_json::from_str::<Project>(&data) {
+                let policy = &mut project.permissions;
+                if policy.mode == PermissionMode::Ask
+                    && policy.read_files == PermissionDecision::Allow
+                    && policy.git == PermissionDecision::Ask
+                    && policy.write_files == PermissionDecision::Deny
+                    && policy.shell == PermissionDecision::Deny
+                    && policy.external_files == PermissionDecision::Deny
+                    && policy.max_tool_rounds == 8
+                {
+                    policy.git = PermissionDecision::Allow;
+                    policy.write_files = PermissionDecision::Allow;
+                    policy.shell = PermissionDecision::Allow;
+                    policy.external_files = PermissionDecision::Ask;
+                    connection.execute(
+                        "UPDATE projects SET data = ?1 WHERE id = ?2",
+                        params![serde_json::to_string(&project)?, id],
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn permission_mode(&self) -> AppResult<PermissionMode> {
+        let value: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM app_preferences WHERE key = 'permission_mode'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value
+            .and_then(|value| serde_json::from_str(&format!("\"{value}\"")).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn set_permission_mode(&self, mode: PermissionMode) -> AppResult<()> {
+        let value = serde_json::to_value(mode)?;
+        self.connection()?.execute(
+            "INSERT INTO app_preferences(key, value) VALUES ('permission_mode', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [value.as_str().unwrap_or("ask")],
+        )?;
+        Ok(())
+    }
+
+    pub fn permission_rules(&self) -> AppResult<Vec<PermissionRule>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT fingerprint, data FROM permission_rules ORDER BY created_at DESC")?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|row| {
+            let (fingerprint, data) = row?;
+            let mut rule: PermissionRule = serde_json::from_str(&data)?;
+            rule.fingerprint = fingerprint;
+            Ok(rule)
+        })
+        .collect()
+    }
+
+    pub fn has_permission_rule(&self, project_id: &str, fingerprint: &str) -> AppResult<bool> {
+        let exists: bool = self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM permission_rules WHERE project_id = ?1 AND fingerprint = ?2)",
+            params![project_id, fingerprint],
+            |row| row.get(0),
+        )?;
+        Ok(exists)
+    }
+
+    pub fn save_permission_rule(
+        &self,
+        project_id: &str,
+        categories: Vec<PermissionCategory>,
+        summary: &str,
+        fingerprint: &str,
+    ) -> AppResult<PermissionRule> {
+        let rule = PermissionRule {
+            id: id(),
+            project_id: project_id.into(),
+            categories,
+            summary: summary.chars().take(420).collect(),
+            created_at: now(),
+            fingerprint: fingerprint.into(),
+        };
+        self.connection()?.execute(
+            "INSERT INTO permission_rules(id, project_id, fingerprint, created_at, data) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(project_id, fingerprint) DO UPDATE SET id = excluded.id, created_at = excluded.created_at, data = excluded.data",
+            params![rule.id, rule.project_id, rule.fingerprint, rule.created_at, serde_json::to_string(&rule)?],
+        )?;
+        Ok(rule)
+    }
+
+    pub fn revoke_permission_rule(&self, id: &str) -> AppResult<()> {
+        let changed = self
+            .connection()?
+            .execute("DELETE FROM permission_rules WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(AppError::new(
+                "not_found",
+                "Permission rule no longer exists.",
+            ));
+        }
         Ok(())
     }
 
@@ -299,6 +422,60 @@ mod tests {
         assert_eq!(preferences.default_model, Some(selection.clone()));
         assert_eq!(preferences.favorites, vec![selection.clone()]);
         assert_eq!(preferences.recent, vec![selection]);
+    }
+
+    #[test]
+    fn permission_modes_and_revocable_project_rules_survive_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("permissions.sqlite");
+        let fingerprint = "0f8a4d6d71a2".to_owned();
+        let rule_id;
+        {
+            let database = Database::open(&path).unwrap();
+            let project = Project {
+                id: "permission-project".into(),
+                workspace_id: "local".into(),
+                name: "Permission sample".into(),
+                path: root.path().display().to_string(),
+                repository_root: None,
+                active_branch: None,
+                last_opened_at: now(),
+                project_instructions: String::new(),
+                preferred_model: None,
+                permissions: PermissionPolicy::default(),
+                is_recent: true,
+                created_at: now(),
+            };
+            database.save_project(&project).unwrap();
+            database
+                .set_permission_mode(PermissionMode::WorkspaceWrite)
+                .unwrap();
+            let rule = database
+                .save_permission_rule(
+                    &project.id,
+                    vec![PermissionCategory::Command],
+                    "npm test",
+                    &fingerprint,
+                )
+                .unwrap();
+            rule_id = rule.id.clone();
+            assert!(!serde_json::to_string(&rule).unwrap().contains(&fingerprint));
+        }
+        let reopened = Database::open(&path).unwrap();
+        assert_eq!(
+            reopened.permission_mode().unwrap(),
+            PermissionMode::WorkspaceWrite
+        );
+        assert!(reopened
+            .has_permission_rule("permission-project", &fingerprint)
+            .unwrap());
+        let rules = reopened.permission_rules().unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].summary, "npm test");
+        reopened.revoke_permission_rule(&rule_id).unwrap();
+        assert!(!reopened
+            .has_permission_rule("permission-project", &fingerprint)
+            .unwrap());
     }
 
     #[test]

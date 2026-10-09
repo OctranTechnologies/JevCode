@@ -1,6 +1,7 @@
 use crate::{
     domain::*,
     error::{AppError, AppResult},
+    permissions,
     providers::{self, LlmProvider, ProviderRequest, ProviderResponse},
     state::SharedState,
     tools, usage,
@@ -16,6 +17,7 @@ pub trait EventSink: Send + Sync {
     fn session_updated(&self, session: &AgentSession);
     fn usage_updated(&self, record: &UsageRecord);
     fn stream_chunk(&self, _session_id: &str, _delta: &str, _reset: bool) {}
+    fn tool_output(&self, _session_id: &str, _tool_call_id: &str, _stream: &str, _chunk: &str) {}
 }
 
 #[derive(Debug, Clone)]
@@ -299,34 +301,49 @@ impl AgentRuntime {
             return Ok(true);
         }
 
-        let permission = session.permission_policy.decision(&tool.permission);
-        let external = tools::requires_external_access(Path::new(&project.path), &call)?;
-        let external_permission = if external {
-            session.permission_policy.external_files
-        } else {
-            PermissionDecision::Allow
-        };
-        if permission == PermissionDecision::Deny || external_permission == PermissionDecision::Deny
-        {
-            let result = tools::execute(
-                Path::new(&project.path),
-                &call,
-                &session.permission_policy,
-                false,
-            )
-            .await;
+        let assessment = permissions::assess(
+            Path::new(&project.path),
+            &call,
+            &tool.permission,
+            &session.permission_policy,
+        )?;
+        if let Some(reason) = assessment.denied.as_ref().cloned() {
+            append_result(session, tool_error(&call, reason));
             record_activity(
                 session,
                 AgentActivityKind::ToolCompleted,
                 format!("{} was denied by the permission policy.", call.name),
-                Some(call.id.clone()),
+                Some(call.id),
             );
-            append_result(session, result);
             checkpoint(state, sink, session)?;
             return Ok(false);
         }
-        if permission == PermissionDecision::Ask || external_permission == PermissionDecision::Ask {
+        let is_dangerous = assessment
+            .request
+            .categories
+            .contains(&PermissionCategory::Dangerous);
+        let one_time_index = session
+            .one_time_permission_grants
+            .iter()
+            .position(|grant| grant == &assessment.fingerprint);
+        let has_session_grant = !is_dangerous
+            && session
+                .session_permission_grants
+                .contains(&assessment.fingerprint);
+        let has_project_grant = if !is_dangerous {
+            state
+                .database
+                .has_permission_rule(&session.project_id, &assessment.fingerprint)?
+        } else {
+            false
+        };
+        if !assessment.automatic
+            && one_time_index.is_none()
+            && !has_session_grant
+            && !has_project_grant
+        {
             session.pending_tool_call = Some(call.clone());
+            session.pending_permission = Some(assessment.request);
             session.status = SessionStatus::WaitingForPermission;
             record_activity(
                 session,
@@ -336,6 +353,9 @@ impl AgentRuntime {
             );
             checkpoint(state, sink, session)?;
             return Ok(true);
+        }
+        if let Some(index) = one_time_index {
+            session.one_time_permission_grants.remove(index);
         }
 
         let mut batch = vec![(call, tool)];
@@ -388,6 +408,8 @@ impl AgentRuntime {
             batch.clone(),
             session.permission_policy.clone(),
             self.config.tool_timeout,
+            &session.id,
+            sink,
         )
         .await;
         for ((call, _), result) in batch.into_iter().zip(results) {
@@ -418,9 +440,11 @@ async fn execute_batch(
     batch: Vec<(ToolCall, Tool)>,
     policy: PermissionPolicy,
     timeout: Duration,
+    session_id: &str,
+    sink: &dyn EventSink,
 ) -> Vec<ToolResult> {
     if batch.len() == 1 && !batch[0].1.parallel_safe {
-        return vec![execute_one(&root, &batch[0].0, &policy, timeout).await];
+        return vec![execute_one(&root, &batch[0].0, &policy, timeout, session_id, sink).await];
     }
     let mut tasks = JoinSet::new();
     for (index, (call, _)) in batch.iter().enumerate() {
@@ -428,7 +452,7 @@ async fn execute_batch(
         let call = call.clone();
         let policy = policy.clone();
         tasks.spawn(async move {
-            let result = execute_one(&root, &call, &policy, timeout).await;
+            let result = execute(&root, &call, &policy, timeout).await;
             (index, result)
         });
     }
@@ -449,13 +473,42 @@ async fn execute_batch(
         .collect()
 }
 
-async fn execute_one(
+async fn execute(
     root: &Path,
     call: &ToolCall,
     policy: &PermissionPolicy,
     timeout: Duration,
 ) -> ToolResult {
-    match tokio::time::timeout(timeout, tools::execute(root, call, policy, false)).await {
+    match tokio::time::timeout(timeout, tools::execute(root, call, policy, true)).await {
+        Ok(result) => result,
+        Err(_) => tool_error(call, "The tool execution timed out."),
+    }
+}
+
+async fn execute_one(
+    root: &Path,
+    call: &ToolCall,
+    policy: &PermissionPolicy,
+    timeout: Duration,
+    session_id: &str,
+    sink: &dyn EventSink,
+) -> ToolResult {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let execute = tools::execute_with_output(root, call, policy, true, sender);
+    tokio::pin!(execute);
+    let mut stream_open = true;
+    let run = async {
+        loop {
+            tokio::select! {
+                result = &mut execute => break result,
+                event = receiver.recv(), if stream_open => match event {
+                    Some(event) => sink.tool_output(session_id, &call.id, &event.stream, &event.chunk),
+                    None => stream_open = false,
+                }
+            }
+        }
+    };
+    match tokio::time::timeout(timeout, run).await {
         Ok(result) => result,
         Err(_) => tool_error(call, "The tool execution timed out."),
     }
@@ -880,6 +933,9 @@ mod tests {
                 ..Default::default()
             },
             pending_tool_call: None,
+            pending_permission: None,
+            session_permission_grants: vec![],
+            one_time_permission_grants: vec![],
             pending_user_input: None,
             queued_tool_calls: vec![],
             iterations: 0,
@@ -1038,6 +1094,64 @@ mod tests {
             .messages
             .iter()
             .any(|message| message.tool_result.is_some()));
+    }
+
+    #[tokio::test]
+    async fn one_time_permission_resumes_only_the_approved_tool_call() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "Read under approval").unwrap();
+        let (state, _, mut session) = setup_session(root.path());
+        session.permission_policy.read_files = PermissionDecision::Ask;
+        state.database.save_session(&session).unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "I will inspect the README.",
+                vec![tool_call(
+                    "read-once",
+                    "read_file",
+                    json!({"path":"README.md"}),
+                )],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let mut waiting = state.database.session(&session.id).unwrap();
+        assert_eq!(waiting.status, SessionStatus::WaitingForPermission);
+        let approved = waiting.pending_tool_call.take().unwrap();
+        waiting.pending_permission = None;
+        waiting
+            .one_time_permission_grants
+            .push(permissions::fingerprint(&approved).unwrap());
+        waiting.queued_tool_calls.push(approved);
+        waiting.status = SessionStatus::Queued;
+        state.database.save_session(&waiting).unwrap();
+
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            waiting,
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "The README says Read under approval.",
+                vec![],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+        let completed = state.database.session(&session.id).unwrap();
+        assert_eq!(completed.status, SessionStatus::Completed);
+        assert!(completed.one_time_permission_grants.is_empty());
+        assert!(completed.messages.iter().any(|message| message
+            .tool_result
+            .as_ref()
+            .is_some_and(|result| result.tool_call_id == "read-once" && !result.is_error)));
     }
 
     #[tokio::test]

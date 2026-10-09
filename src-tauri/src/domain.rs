@@ -123,6 +123,14 @@ pub struct AgentSession {
     pub permission_policy: PermissionPolicy,
     #[serde(default)]
     pub pending_tool_call: Option<ToolCall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_permission: Option<PermissionRequest>,
+    /// Hashed grants live for the lifetime of this task. They never contain a
+    /// command string or credential value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_permission_grants: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub one_time_permission_grants: Vec<String>,
     #[serde(default)]
     pub pending_user_input: Option<ToolCall>,
     pub queued_tool_calls: Vec<ToolCall>,
@@ -171,6 +179,7 @@ impl AgentSession {
             self.messages.push(message);
         }
         self.pending_tool_call = None;
+        self.pending_permission = None;
         self.pending_user_input = None;
         self.queued_tool_calls.clear();
     }
@@ -207,6 +216,15 @@ pub struct AgentStreamChunk {
     pub session_id: String,
     pub delta: String,
     pub reset: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolOutputChunk {
+    pub session_id: String,
+    pub tool_call_id: String,
+    pub stream: String,
+    pub chunk: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -380,6 +398,59 @@ pub struct TerminalResult {
     pub timed_out: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
+    #[default]
+    Ask,
+    WorkspaceWrite,
+    FullAccess,
+}
+
+fn is_ask(mode: &PermissionMode) -> bool {
+    *mode == PermissionMode::Ask
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionCategory {
+    Read,
+    Write,
+    Command,
+    Network,
+    Dangerous,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRequest {
+    pub categories: Vec<PermissionCategory>,
+    pub summary: String,
+    pub reason: String,
+    pub can_always_allow: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionResolution {
+    AllowOnce,
+    AllowSession,
+    AlwaysAllowForProject,
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRule {
+    pub id: String,
+    pub project_id: String,
+    pub categories: Vec<PermissionCategory>,
+    pub summary: String,
+    pub created_at: String,
+    #[serde(skip_serializing, default)]
+    pub(crate) fingerprint: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRecord {
@@ -456,6 +527,8 @@ pub enum PermissionDecision {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionPolicy {
+    #[serde(default, skip_serializing_if = "is_ask")]
+    pub mode: PermissionMode,
     pub read_files: PermissionDecision,
     pub git: PermissionDecision,
     pub write_files: PermissionDecision,
@@ -472,11 +545,12 @@ fn deny_permission() -> PermissionDecision {
 impl Default for PermissionPolicy {
     fn default() -> Self {
         Self {
+            mode: PermissionMode::Ask,
             read_files: PermissionDecision::Allow,
-            git: PermissionDecision::Ask,
-            write_files: PermissionDecision::Deny,
-            shell: PermissionDecision::Deny,
-            external_files: PermissionDecision::Deny,
+            git: PermissionDecision::Allow,
+            write_files: PermissionDecision::Allow,
+            shell: PermissionDecision::Allow,
+            external_files: PermissionDecision::Ask,
             max_tool_rounds: 8,
         }
     }

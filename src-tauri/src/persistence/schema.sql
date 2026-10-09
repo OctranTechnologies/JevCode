@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS model_preferences (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS app_preferences (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS permission_rules (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    data TEXT NOT NULL,
+    UNIQUE(project_id, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS permission_rules_project ON permission_rules(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project_id, updated_at);
 CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id);
-PRAGMA user_version = 4;
+PRAGMA user_version = 6;

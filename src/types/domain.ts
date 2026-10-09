@@ -1,5 +1,8 @@
 export type ProviderProtocol = 'preview' | 'open_ai_responses' | 'open_ai_chat' | 'anthropic' | 'gemini';
 export type PermissionDecision = 'allow' | 'ask' | 'deny';
+export type PermissionMode = 'ask' | 'workspace_write' | 'full_access';
+export type PermissionCategory = 'read' | 'write' | 'command' | 'network' | 'dangerous';
+export type PermissionResolution = 'allow_once' | 'allow_session' | 'always_allow_for_project' | 'deny';
 export type ToolCategory = 'read_files' | 'git' | 'write_files' | 'shell' | 'user_interaction';
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type SessionStatus = 'queued' | 'planning' | 'working' | 'waiting_for_permission' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled';
@@ -67,6 +70,9 @@ export interface AgentSession {
   messages: AgentMessage[];
   permissionPolicy: PermissionPolicy;
   pendingToolCall: ToolCall | null;
+  pendingPermission: PermissionRequest | null;
+  sessionPermissionGrants: string[];
+  oneTimePermissionGrants: string[];
   pendingUserInput: ToolCall | null;
   queuedToolCalls: ToolCall[];
   iterations: number;
@@ -78,6 +84,9 @@ export interface AgentSession {
   toolRounds: number;
 }
 export interface AgentStreamChunk { sessionId: string; delta: string; reset: boolean }
+export interface ToolOutputChunk { sessionId: string; toolCallId: string; stream: 'stdout' | 'stderr'; chunk: string }
+export interface PermissionRequest { categories: PermissionCategory[]; summary: string; reason: string; canAlwaysAllow: boolean }
+export interface PermissionRule { id: string; projectId: string; categories: PermissionCategory[]; summary: string; createdAt: string }
 export interface AgentMessage {
   id: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -157,6 +166,7 @@ export interface UsageRecord {
   createdAt: string;
 }
 export interface PermissionPolicy {
+  mode: PermissionMode;
   readFiles: PermissionDecision;
   git: PermissionDecision;
   writeFiles: PermissionDecision;

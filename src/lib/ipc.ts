@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionPolicy, Project, ProviderAccount, ProviderAccountInfo, UsageRecord } from '../types/domain';
-import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionSchema, terminalResultSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, Bootstrap, Model, ModelPreferences, ModelReference, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ToolOutputChunk, UsageRecord } from '../types/domain';
+import { agentStreamChunkSchema, bootstrapSchema, modelPreferencesSchema, modelSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export const desktopAvailable = isTauri();
@@ -25,7 +25,10 @@ interface Commands {
   set_default_model: { args: { selection: ModelReference | null }; result: ModelPreferences };
   toggle_model_favorite: { args: { selection: ModelReference }; result: ModelPreferences };
   send_message: { args: { sessionId: string; content: string }; result: AgentSession };
-  resolve_permission: { args: { sessionId: string; toolCallId: string; approved: boolean }; result: AgentSession };
+  resolve_permission: { args: { sessionId: string; toolCallId: string; resolution: import('../types/domain').PermissionResolution }; result: AgentSession };
+  set_permission_mode: { args: { mode: PermissionMode }; result: PermissionMode };
+  list_permission_rules: { args: undefined; result: PermissionRule[] };
+  revoke_permission_rule: { args: { ruleId: string }; result: null };
   cancel_session: { args: { sessionId: string }; result: null };
   connect_provider: { args: { providerId: string; secret: string }; result: ProviderAccount };
   disconnect_provider: { args: { providerId: string }; result: ProviderAccount };
@@ -41,7 +44,7 @@ const responses = {
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
   reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), create_session: sessionSchema, send_message: sessionSchema,
-  resolve_permission: sessionSchema, cancel_session: z.null(), connect_provider: providerAccountSchema,
+  resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), cancel_session: z.null(), connect_provider: providerAccountSchema,
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,
   refresh_provider_auth: providerAccountSchema, get_provider_auth_status: providerAccountSchema,
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),
@@ -61,7 +64,7 @@ export async function command<K extends keyof Commands>(name: K, args: Commands[
 export async function loadBootstrap(): Promise<Bootstrap> {
   if (desktopAvailable) return command('bootstrap', undefined);
   // Browser preview displays configuration metadata only. Native actions stay disabled.
-  return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', externalFiles: 'deny', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] } });
+  return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] } });
 }
 
 export interface ProviderAuthAdapter {
@@ -87,13 +90,14 @@ export function providerAuthAdapter(providerId: string): ProviderAuthAdapter {
   };
 }
 
-export async function subscribeEvents(onSession: (session: AgentSession) => void, onUsage: (record: UsageRecord) => void, onError: () => void, onStream?: (chunk: AgentStreamChunk) => void): Promise<UnlistenFn> {
+export async function subscribeEvents(onSession: (session: AgentSession) => void, onUsage: (record: UsageRecord) => void, onError: () => void, onStream?: (chunk: AgentStreamChunk) => void, onToolOutput?: (chunk: ToolOutputChunk) => void): Promise<UnlistenFn> {
   if (!desktopAvailable) return () => {};
   const listeners: UnlistenFn[] = [];
   try {
     listeners.push(await listen<unknown>('session:updated', event => { const parsed = sessionSchema.safeParse(event.payload); if (parsed.success) onSession(parsed.data); else onError(); }));
     listeners.push(await listen<unknown>('usage:updated', event => { const parsed = usageSchema.safeParse(event.payload); if (parsed.success) onUsage(parsed.data); else onError(); }));
     if (onStream) listeners.push(await listen<unknown>('agent:stream', event => { const parsed = agentStreamChunkSchema.safeParse(event.payload); if (parsed.success) onStream(parsed.data); else onError(); }));
+    if (onToolOutput) listeners.push(await listen<unknown>('agent:tool-output', event => { const parsed = toolOutputChunkSchema.safeParse(event.payload); if (parsed.success) onToolOutput(parsed.data); else onError(); }));
     return () => listeners.forEach(unlisten => unlisten());
   } catch (error) { listeners.forEach(unlisten => unlisten()); throw normalizeError(error); }
 }

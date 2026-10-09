@@ -108,22 +108,14 @@ pub trait ToolExecutor: Send + Sync {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ToolRegistry;
 
-#[async_trait]
-impl ToolExecutor for ToolRegistry {
-    fn definitions(&self) -> Vec<Tool> {
-        builtin_definitions()
-    }
-
-    fn validate(&self, call: &ToolCall) -> AppResult<Tool> {
-        validate_call(call)
-    }
-
-    async fn execute(
+impl ToolRegistry {
+    async fn execute_with_output(
         &self,
         root: &Path,
         call: &ToolCall,
         policy: &PermissionPolicy,
         approved: bool,
+        events: Option<tokio::sync::mpsc::UnboundedSender<process::ProcessOutputChunk>>,
     ) -> ToolResult {
         let started = Instant::now();
         let descriptor = match self.validate(call) {
@@ -175,19 +167,23 @@ impl ToolExecutor for ToolRegistry {
                 root,
                 call,
                 external && (approved || policy.external_files == PermissionDecision::Allow),
+                events,
             ),
         )
         .await;
         let elapsed = started.elapsed().as_millis() as u64;
         match output {
-            Ok(Ok(output)) => ToolResult {
-                tool_call_id: call.id.clone(),
-                name: call.name.clone(),
-                content: output.content,
-                is_error: false,
-                duration_ms: elapsed,
-                structured_content: Some(output.structured),
-            },
+            Ok(Ok(output)) => {
+                let timed_out = output.structured["timedOut"].as_bool().unwrap_or(false);
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    content: output.content,
+                    is_error: timed_out,
+                    duration_ms: elapsed,
+                    structured_content: Some(output.structured),
+                }
+            }
             Ok(Err(error)) => tool_error(call, error, elapsed),
             Err(_) => tool_error(
                 call,
@@ -195,6 +191,28 @@ impl ToolExecutor for ToolRegistry {
                 elapsed,
             ),
         }
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for ToolRegistry {
+    fn definitions(&self) -> Vec<Tool> {
+        builtin_definitions()
+    }
+
+    fn validate(&self, call: &ToolCall) -> AppResult<Tool> {
+        validate_call(call)
+    }
+
+    async fn execute(
+        &self,
+        root: &Path,
+        call: &ToolCall,
+        policy: &PermissionPolicy,
+        approved: bool,
+    ) -> ToolResult {
+        self.execute_with_output(root, call, policy, approved, None)
+            .await
     }
 }
 
@@ -234,8 +252,29 @@ pub fn requires_external_access(root: &Path, call: &ToolCall) -> AppResult<bool>
                 .flatten(),
             );
         }
-        "run_command" | "inspect_project" | "git_status" | "git_branch" | "git_log"
-        | "git_diff" | "git_show" | "ask_user" => {}
+        "run_command" => {
+            paths.extend(call.arguments["path"].as_str());
+            paths.extend(
+                call.arguments["args"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .filter(|value| {
+                        let path = Path::new(value);
+                        path.is_absolute()
+                            || path.components().any(|part| {
+                                matches!(
+                                    part,
+                                    std::path::Component::ParentDir
+                                        | std::path::Component::Prefix(_)
+                                )
+                            })
+                    }),
+            );
+        }
+        "inspect_project" | "git_status" | "git_branch" | "git_log" | "git_diff" | "git_show"
+        | "ask_user" => {}
         _ => paths.extend(call.arguments["path"].as_str()),
     }
     for value in paths {
@@ -368,6 +407,18 @@ pub async fn execute(
     ToolRegistry.execute(root, call, policy, approved).await
 }
 
+pub async fn execute_with_output(
+    root: &Path,
+    call: &ToolCall,
+    policy: &PermissionPolicy,
+    approved: bool,
+    events: tokio::sync::mpsc::UnboundedSender<process::ProcessOutputChunk>,
+) -> ToolResult {
+    ToolRegistry
+        .execute_with_output(root, call, policy, approved, Some(events))
+        .await
+}
+
 fn tool_error(call: &ToolCall, error: AppError, duration_ms: u64) -> ToolResult {
     ToolResult {
         tool_call_id: call.id.clone(),
@@ -379,7 +430,12 @@ fn tool_error(call: &ToolCall, error: AppError, duration_ms: u64) -> ToolResult 
     }
 }
 
-async fn dispatch(root: &Path, call: &ToolCall, external_allowed: bool) -> AppResult<ToolOutput> {
+async fn dispatch(
+    root: &Path,
+    call: &ToolCall,
+    external_allowed: bool,
+    events: Option<tokio::sync::mpsc::UnboundedSender<process::ProcessOutputChunk>>,
+) -> AppResult<ToolOutput> {
     match call.name.as_str() {
         "read_file" => filesystem::read_file(root, &call.arguments["path"], external_allowed).await,
         "read_files" => {
@@ -400,7 +456,7 @@ async fn dispatch(root: &Path, call: &ToolCall, external_allowed: bool) -> AppRe
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_branch" => {
             repository::execute(root, call.name.as_str(), &call.arguments).await
         }
-        "run_command" => shell::run_command(root, &call.arguments).await,
+        "run_command" => shell::run_command(root, &call.arguments, external_allowed, events).await,
         "find_symbol" => filesystem::find_symbol(root, &call.arguments, external_allowed).await,
         "find_references" => {
             filesystem::find_references(root, &call.arguments, external_allowed).await

@@ -1,7 +1,7 @@
-import type { AgentSession, Bootstrap, ModelPreferences, Project, Provider, ProviderAccount, UsageRecord } from '../types/domain';
+import type { AgentSession, Bootstrap, ModelPreferences, PermissionMode, Project, Provider, ProviderAccount, UsageRecord } from '../types/domain';
 
 export interface DesktopState { data: Bootstrap | null; sessions: AgentSession[]; usage: UsageRecord[] }
-export type Action = { type: 'bootstrap'; data: Bootstrap } | { type: 'session'; session: AgentSession } | { type: 'usage'; record: UsageRecord } | { type: 'project'; project: Project } | { type: 'providers'; providers: Provider[] } | { type: 'model-preferences'; preferences: ModelPreferences } | { type: 'account'; account: ProviderAccount };
+export type Action = { type: 'bootstrap'; data: Bootstrap } | { type: 'session'; session: AgentSession } | { type: 'usage'; record: UsageRecord } | { type: 'project'; project: Project } | { type: 'providers'; providers: Provider[] } | { type: 'model-preferences'; preferences: ModelPreferences } | { type: 'account'; account: ProviderAccount } | { type: 'permission-mode'; mode: PermissionMode };
 export function mergeSession(sessions: AgentSession[], session: AgentSession): AgentSession[] {
   const existing = sessions.find(item => item.id === session.id);
   if (existing && existing.updatedAt > session.updatedAt) return sessions;
@@ -22,5 +22,6 @@ export function desktopReducer(state: DesktopState, action: Action): DesktopStat
         ? { ...provider, connected: action.account.state !== 'not_connected' }
         : provider),
     } } : state;
+    case 'permission-mode': return state.data ? { ...state, data: { ...state.data, permissionPolicy: { ...state.data.permissionPolicy, mode: action.mode } } } : state;
   }
 }

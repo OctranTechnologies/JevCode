@@ -97,8 +97,9 @@ an existing local branch name and uses Git arguments without shell interpolation
 | Typed IPC | `src/lib/ipc.ts`, `src/lib/schemas.ts` | Command map, runtime validation, normalized errors |
 | Tauri commands | `src-tauri/src/commands` | Validate input and delegate; no provider wire formats |
 | Agent runtime | `src-tauri/src/agent` | Bounded tool loop, cancellation, checkpoints, approvals |
+| Permissions | `src-tauri/src/permissions.rs` | Mode evaluation, command risk checks, one-time/session/project grants |
 | LLM adapters | `src-tauri/src/providers` | `LlmProvider` trait; protocol encoding and normalization |
-| Tool execution | `src-tauri/src/tools` | Registry, session policy checks, scoped execution |
+| Tool execution | `src-tauri/src/tools` | Registry, schema validation, scoped and bounded execution |
 | Workspace/project management | `src-tauri/src/workspaces` | Canonical folder identities, local workspace, path checks |
 | Git operations | `src-tauri/src/git` | Fixed Git CLI arguments, no shell interpolation, bounded status and local branch switching |
 | Persistence | `src-tauri/src/persistence` | SQLite WAL, schema version, session/project/usage storage |
@@ -118,7 +119,7 @@ flowchart LR
     Commands --> Credentials[OS keychain]
     Provider -. Rust retrieves key .-> Credentials
     Runtime --> Database[SQLite sessions and usage]
-    Runtime -. session:updated / usage:updated .-> UI
+    Runtime -. session:updated / usage:updated / agent:tool-output .-> UI
 ```
 
 The provider-neutral `AgentRuntime` owns the task state machine, context budgeting,
@@ -298,18 +299,30 @@ project/workspace choice. Catalogs that do not report prices leave prices null.
 Tauri resolves the OS-specific app data, config and log directories. On Windows,
 data/config live under `%APPDATA%/dev.jevcode.desktop`; logs live under
 `%LOCALAPPDATA%/dev.jevcode.desktop/logs`. `jevcode.sqlite` stores projects, complete
-session snapshots and usage records; WAL mode, foreign keys and a busy timeout
-are enabled. `schema.sql` is version 4, with in-place migrations for workspace,
-authentication metadata and cached model catalogs/preferences. Conversation and project content are local plaintext;
+session snapshots, usage records, permission mode and project permission rules;
+WAL mode, foreign keys and a busy timeout are enabled. `schema.sql` is version 6,
+with in-place migrations for workspace, authentication metadata, model catalogs,
+preferences and permissions. Conversation and project content are local plaintext;
 provider account metadata contains no secrets, and keys are separately protected
 by the OS keychain.
 
-The policy has `allow`, `ask` and `deny` decisions for file reads, Git, writes and
-shell tools. The backend enforces it, including on resumed approvals. `ask` stores
-the pending call and remaining queue, persists `awaiting_permission`, and requires
-a matching tool-call ID to resume. Approval authorizes one call and never overrides
-`deny`. Denial returns an error tool result to the model. Cancellation closes
-unresolved calls with error results so future messages keep valid provider history.
+The conservative default is **Ask**. It allows project reads and Git inspection,
+and asks before edits, terminal commands, network access, or paths outside the
+workspace. **Workspace Write** allows project edits but still asks before commands
+and network access. **Full Access** allows ordinary edits, commands and network
+requests. Destructive commands, file deletions, credential-like paths,
+outside-workspace paths and system-level operations always require fresh
+approval. Agent commands cannot elevate privileges. Project settings may ask or
+deny more narrowly than the workspace mode.
+
+Approval requests offer **Allow once**, **Allow for this session**, **Always allow
+for this project**, and **Deny**. Dangerous actions only offer per-call approval.
+Session grants last for the task; project grants are limited to the exact operation
+and appear under Settings → Permissions, where each can be revoked. Grants store a
+SHA-256 operation fingerprint and a safe display summary, not raw command arguments.
+The backend reclassifies every request when it resumes and never trusts a UI-provided
+command classification. Denial returns an error tool result to the model. Cancellation
+closes unresolved calls with error results so provider history stays valid.
 Interrupted running sessions become failed on restart; pending approvals survive.
 
 The Rust tool registry is the only route from model tool calls to project files,
@@ -328,20 +341,25 @@ File tools include `read_file`, `read_files`, `list_directory`, `search_files`,
 files and never recursively delete directories or overwrite move destinations.
 Repository context includes `git_status`, `git_diff`, `git_log`, `git_show`,
 `git_branch`, `inspect_project`, `find_symbol`, and `find_references`. `run_command`
-executes a program with an argument array and the project as its working directory;
-it does not interpolate through a shell.
+executes a program with an argument array and a validated working directory; it does
+not interpolate through a shell. Stdout and stderr stream into the task timeline
+separately and are capped before persistence or model context. Exit status and
+timeout details are returned as structured results. Cancelling a task drops the
+running child process. Agent-launched processes inherit a small allowlist of
+standard environment variables; provider credentials and authentication variables
+are filtered out. The command tool has no interactive stdin, so commands that need
+user input must run in a user-operated terminal.
 
 Filesystem tool paths are canonicalized and limited to the active project by
-default. Traversal, absolute paths and symlink/junction escapes require
-outside-project permission; that permission defaults to deny and can be set to ask
-or allow in the project tool-access controls. Edit and command actions have
-separate policies, and asked permissions pause the agent before one approved call
-is executed. `run_command` starts in the project folder but is not an OS sandbox:
-an approved child process runs with the desktop user's operating-system rights.
-Its command permission defaults to deny; use ask to review each command. A
-non-adversarial filesystem guard cannot prevent a path being replaced concurrently
-between validation and use, and custom secret filenames are not automatically
-detected.
+default. Outside paths require an explicit grant and remain a fresh-review action
+even in Full Access. Command analysis checks for recursive deletion, disk
+formatting, privilege elevation, common credential locations, network access and
+workspace escapes. Shell interpreters and inline code are classified as dangerous
+because their effects cannot be fully inspected statically. This analysis is a
+defense-in-depth prompt, not an operating-system sandbox: an approved process runs
+with the desktop user's rights. A filesystem guard also cannot prevent a path from
+being replaced between validation and use, and custom credential locations may
+not be recognized.
 Reads are UTF-8 and limited to 64 KiB per file; patches are limited to 1 MiB;
 directory pages are capped at 100 visible entries. Git and process execution use
 fixed argument arrays, bounded output and per-tool timeouts.

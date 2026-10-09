@@ -10,7 +10,7 @@ export const demoProject: Project = {
   lastOpenedAt: '2026-10-09T09:12:00.000Z',
   projectInstructions: '',
   preferredModel: null,
-  permissions: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', externalFiles: 'deny', maxToolRounds: 8 },
+  permissions: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: 8 },
   isRecent: true,
   createdAt: '2026-10-08T14:15:00.000Z',
 };
@@ -66,8 +66,8 @@ export const demoSession: AgentSession = {
       toolCalls: [], toolResult: null, createdAt: '2026-10-09T09:16:32.000Z', providerData: null,
     },
   ],
-  permissionPolicy: { readFiles: 'allow', git: 'ask', writeFiles: 'deny', shell: 'deny', externalFiles: 'deny', maxToolRounds: 8 },
-  pendingToolCall: null, pendingUserInput: null, queuedToolCalls: [],
+  permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: 8 },
+  pendingToolCall: null, pendingPermission: null, sessionPermissionGrants: [], oneTimePermissionGrants: [], pendingUserInput: null, queuedToolCalls: [],
   iterations: 0, toolCalls: 0, activityEvents: [],
   createdAt: earlier, updatedAt: '2026-10-09T09:16:32.000Z', error: null, toolRounds: 2,
 };

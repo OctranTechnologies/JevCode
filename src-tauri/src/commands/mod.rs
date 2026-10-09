@@ -39,6 +39,17 @@ impl EventSink for TauriEvents {
             tracing::warn!(%error, "Stream delivery failed");
         }
     }
+    fn tool_output(&self, session_id: &str, tool_call_id: &str, stream: &str, chunk: &str) {
+        let event = ToolOutputChunk {
+            session_id: session_id.into(),
+            tool_call_id: tool_call_id.into(),
+            stream: stream.into(),
+            chunk: chunk.into(),
+        };
+        if let Err(error) = self.0.emit("agent:tool-output", event) {
+            tracing::warn!(%error, "Command output delivery failed");
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -106,8 +117,9 @@ pub fn bootstrap(state: State<'_, SharedState>) -> AppResult<Bootstrap> {
         usage: state.database.usage()?,
         tools: tools::definitions(),
         permission_policy: PermissionPolicy {
+            mode: state.database.permission_mode()?,
             max_tool_rounds: state.config.max_tool_rounds,
-            external_files: PermissionDecision::Deny,
+            external_files: PermissionDecision::Ask,
             ..Default::default()
         },
         model_preferences: state.database.model_preferences()?,
@@ -513,6 +525,9 @@ pub fn create_session(
         messages: vec![AgentMessage::text(MessageRole::System, system_prompt)],
         permission_policy,
         pending_tool_call: None,
+        pending_permission: None,
+        session_permission_grants: vec![],
+        one_time_permission_grants: vec![],
         pending_user_input: None,
         queued_tool_calls: vec![],
         iterations: 0,
@@ -728,7 +743,7 @@ pub fn send_message(
 pub async fn resolve_permission(
     session_id: String,
     tool_call_id: String,
-    approved: bool,
+    resolution: PermissionResolution,
     app: AppHandle,
     state: State<'_, SharedState>,
 ) -> AppResult<AgentSession> {
@@ -753,25 +768,71 @@ pub async fn resolve_permission(
             })?;
         tools::validate_call(&call)?;
         let project = state.database.project(&session.project_id)?;
-        let result = if approved {
-            tools::execute(
-                Path::new(&project.path),
-                &call,
-                &session.permission_policy,
-                true,
-            )
-            .await
-        } else {
-            ToolResult {
-                tool_call_id: call.id,
-                name: call.name,
-                content: "User denied this tool call.".into(),
-                is_error: true,
-                duration_ms: 0,
-                structured_content: None,
+        let tool = tools::validate_call(&call)?;
+        let assessment = crate::permissions::assess(
+            Path::new(&project.path),
+            &call,
+            &tool.permission,
+            &session.permission_policy,
+        )?;
+        if assessment.denied.is_some() {
+            return Err(AppError::new(
+                "permission_denied",
+                assessment.denied.unwrap_or_default(),
+            ));
+        }
+        match resolution {
+            PermissionResolution::Deny => {
+                let result = ToolResult {
+                    tool_call_id: call.id,
+                    name: call.name,
+                    content: "User denied this tool call.".into(),
+                    is_error: true,
+                    duration_ms: 0,
+                    structured_content: None,
+                };
+                agent::append_result(&mut session, result);
             }
-        };
-        agent::append_result(&mut session, result);
+            PermissionResolution::AllowOnce => {
+                session
+                    .one_time_permission_grants
+                    .push(assessment.fingerprint);
+                session.queued_tool_calls.insert(0, call);
+            }
+            PermissionResolution::AllowSession => {
+                if !assessment.request.can_always_allow {
+                    return Err(AppError::new(
+                        "permission_scope_unavailable",
+                        "This action needs fresh approval each time.",
+                    ));
+                }
+                if !session
+                    .session_permission_grants
+                    .contains(&assessment.fingerprint)
+                {
+                    session
+                        .session_permission_grants
+                        .push(assessment.fingerprint);
+                }
+                session.queued_tool_calls.insert(0, call);
+            }
+            PermissionResolution::AlwaysAllowForProject => {
+                if !assessment.request.can_always_allow {
+                    return Err(AppError::new(
+                        "permission_scope_unavailable",
+                        "This action cannot be allowed for the project.",
+                    ));
+                }
+                state.database.save_permission_rule(
+                    &project.id,
+                    assessment.request.categories,
+                    &assessment.request.summary,
+                    &assessment.fingerprint,
+                )?;
+                session.queued_tool_calls.insert(0, call);
+            }
+        }
+        session.pending_permission = None;
         session.status = SessionStatus::Queued;
         session.updated_at = now();
         state.database.save_session(&session)?;
@@ -793,6 +854,25 @@ pub async fn resolve_permission(
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+pub fn set_permission_mode(
+    mode: PermissionMode,
+    state: State<'_, SharedState>,
+) -> AppResult<PermissionMode> {
+    state.database.set_permission_mode(mode)?;
+    Ok(mode)
+}
+
+#[tauri::command]
+pub fn list_permission_rules(state: State<'_, SharedState>) -> AppResult<Vec<PermissionRule>> {
+    state.database.permission_rules()
+}
+
+#[tauri::command]
+pub fn revoke_permission_rule(rule_id: String, state: State<'_, SharedState>) -> AppResult<()> {
+    state.database.revoke_permission_rule(&rule_id)
 }
 
 #[tauri::command]

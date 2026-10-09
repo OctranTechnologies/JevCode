@@ -10,6 +10,7 @@ export function useDesktop() {
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   const [streaming, setStreaming] = useState<Record<string, string>>({});
+  const [toolOutput, setToolOutput] = useState<Record<string, { stdout: string; stderr: string }>>({});
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -27,6 +28,13 @@ export function useDesktop() {
           record => dispatch({ type: 'usage', record }),
           () => { logEvent('ipc_event_invalid', 'error'); setError('An update could not be read. Reload JevCode.'); },
           chunk => setStreaming(current => ({ ...current, [chunk.sessionId]: chunk.reset ? '' : `${current[chunk.sessionId] ?? ''}${chunk.delta}` })),
+          chunk => setToolOutput(current => {
+            const previous = current[chunk.toolCallId] ?? { stdout: '', stderr: '' };
+            const key = chunk.stream;
+            const next = `${previous[key]}${chunk.chunk}`;
+            const bounded = next.length > 32_000 ? `[earlier output truncated]\n${next.slice(-31_970)}` : next;
+            return { ...current, [chunk.toolCallId]: { ...previous, [key]: bounded } };
+          }),
         );
         if (disposed) { cleanup(); return; }
         unlisten = cleanup;
@@ -37,5 +45,5 @@ export function useDesktop() {
     })();
     return () => { disposed = true; unlisten?.(); };
   }, [reload]);
-  return { ...state, dispatch, streaming, loading, error, setError, retry: () => setReload(value => value + 1) };
+  return { ...state, dispatch, streaming, toolOutput, loading, error, setError, retry: () => setReload(value => value + 1) };
 }

@@ -4,7 +4,7 @@ import {
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
-import type { AgentSession, AgentMessage } from '../../types/domain';
+import type { AgentSession, AgentMessage, PermissionResolution } from '../../types/domain';
 
 const suggestions = [
   { icon: FileCode2, label: 'Explain this project', prompt: 'Explore this project and explain its main architecture.' },
@@ -13,14 +13,15 @@ const suggestions = [
 ];
 
 export function Conversation({
-  session, projectName, demo = false, streamingText = '', onSuggestion, onPermission, onRetry, permissionBusy,
+  session, projectName, demo = false, streamingText = '', toolOutput, onSuggestion, onPermission, onRetry, permissionBusy,
 }: {
   session?: AgentSession;
   projectName?: string;
   demo?: boolean;
   streamingText?: string;
+  toolOutput?: Record<string, { stdout: string; stderr: string }>;
   onSuggestion: (prompt: string) => void;
-  onPermission: (approved: boolean) => void;
+  onPermission: (resolution: PermissionResolution) => void;
   onRetry: () => void;
   permissionBusy: boolean;
 }) {
@@ -37,13 +38,22 @@ export function Conversation({
       <p>{projectName ? 'Describe the outcome you want. JevCode will inspect the project and keep you in control.' : 'Open a local folder to give your agent a place to work.'}</p>
       {projectName ? <div className="starter-prompts" aria-label="Suggested tasks">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={15} /><span>{label}</span><ArrowUpRight size={13} className="starter-prompt-arrow" /></button>)}</div> : <div className="empty-state-note"><Shield size={15} /><span>Project files stay on this device. You approve actions that need it.</span></div>}
     </div> : <div className="task-timeline" aria-live="polite" aria-relevant="additions text">
-      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} />)}
+      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} />)}
       {session?.pendingToolCall && <div className="approval-card" role="group" aria-labelledby="approval-heading">
         <div className="approval-icon"><Shield size={17} /></div>
         <div className="approval-content"><div className="approval-title-row"><h2 id="approval-heading">Permission needed</h2><span className="approval-required">Review before continuing</span></div>
-          <p><strong>{session.pendingToolCall.name}</strong> is requesting access in <code>{projectName ?? 'this project'}</code>.</p>
-          <pre>{JSON.stringify(session.pendingToolCall.arguments, null, 2)}</pre>
-          <div className="approval-actions"><button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission(false)}>Deny</button><button className="button-primary" disabled={permissionBusy} onClick={() => onPermission(true)}>{permissionBusy ? 'Applying…' : 'Allow once'}</button></div>
+          <p><strong>{session.pendingPermission?.categories.map(category => category.replaceAll('_', ' ')).join(' · ') ?? session.pendingToolCall.name}</strong> in <code>{projectName ?? 'this project'}</code></p>
+          <pre>{session.pendingPermission?.summary ?? session.pendingToolCall.name}</pre>
+          <p className="approval-reason">{session.pendingPermission?.reason ?? 'This action needs your approval.'}</p>
+          <div className="approval-actions">
+            <button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission('deny')}>Deny</button>
+            {session.pendingPermission?.canAlwaysAllow && <>
+              <button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission('allow_session')}>Allow for this session</button>
+              <button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission('always_allow_for_project')}>Always allow for this project</button>
+            </>}
+            <button className="button-primary" disabled={permissionBusy} onClick={() => onPermission('allow_once')}>{permissionBusy ? 'Applying…' : 'Allow once'}</button>
+          </div>
+          {!session.pendingPermission?.canAlwaysAllow && <small className="approval-scrutiny-note">This action will be reviewed again if requested later.</small>}
         </div>
       </div>}
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
@@ -56,7 +66,7 @@ export function Conversation({
   </div>;
 }
 
-function TimelineMessage({ message, completedCalls }: { message: AgentMessage; completedCalls: Set<string> }) {
+function TimelineMessage({ message, completedCalls, toolOutput }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }> }) {
   if (message.role === 'tool') return <details className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
     <summary><span className="activity-result-icon">{message.toolResult?.isError ? <AlertCircle size={14} /> : <Check size={14} />}</span><span className="activity-result-name">{message.toolResult?.name ?? 'Tool activity'}</span><span className="activity-result-state">{message.toolResult?.isError ? 'Needs attention' : 'Completed'}</span><span className="activity-result-duration">{formatDuration(message.toolResult?.durationMs ?? 0)}</span><ChevronDown size={13} className="activity-chevron" /></summary>
     <pre>{message.content}</pre>
@@ -73,7 +83,10 @@ function TimelineMessage({ message, completedCalls }: { message: AgentMessage; c
       {message.content && <div className="agent-prose">{message.content}</div>}
       {hasCalls && <div className="activity-list">{message.toolCalls.map(call => {
         const done = completedCalls.has(call.id);
-        return <div className="activity-call" key={call.id}><span className={`activity-call-icon${done ? ' is-done' : ''}`}>{done ? <Check size={12} /> : <Clock3 size={12} />}</span><code>{call.name}</code><span className="activity-call-summary">{formatArguments(call.arguments)}</span><span className="activity-call-state">{done ? 'Done' : 'Queued'}</span></div>;
+        const output = call.name === 'run_command' ? toolOutput?.[call.id] : undefined;
+        return <div className="activity-call-wrap" key={call.id}><div className="activity-call"><span className={`activity-call-icon${done ? ' is-done' : ''}`}>{done ? <Check size={12} /> : <Clock3 size={12} />}</span><code>{call.name}</code><span className="activity-call-summary">{formatArguments(call.arguments)}</span><span className="activity-call-state">{done ? 'Done' : output ? 'Running' : 'Queued'}</span></div>
+          {!done && output && <div className="terminal-stream" aria-label="Streaming command output">{output.stdout && <pre><small>stdout</small>{output.stdout}</pre>}{output.stderr && <pre className="is-stderr"><small>stderr</small>{output.stderr}</pre>}</div>}
+        </div>;
       })}</div>}
     </div>
   </article>;

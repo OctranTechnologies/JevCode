@@ -2,7 +2,7 @@ import { BarChart3, ChevronRight, Folder, FolderPlus, Layers, MessageSquare, Mon
 import { Brand } from '../../components/Brand';
 import type { AgentSession, Project } from '../../types/domain';
 
-export type View = 'agent' | 'overview' | 'providers' | 'usage';
+export type View = 'agent' | 'overview' | 'providers' | 'permissions' | 'usage';
 export function Sidebar({ projects, projectId, sessions, sessionId, view, onProject, onSession, onView, onNew, onOpen, opening }: {
   projects: Project[]; projectId: string; sessions: AgentSession[]; sessionId: string | null; view: View;
   onProject: (id: string) => void; onSession: (session: AgentSession) => void; onView: (view: View) => void; onNew: () => void; onOpen: () => void; opening: boolean;

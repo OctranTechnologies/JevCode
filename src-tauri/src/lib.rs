@@ -6,6 +6,7 @@ mod credentials;
 pub mod domain;
 mod error;
 mod git;
+mod permissions;
 mod persistence;
 mod providers;
 mod state;
@@ -93,7 +94,10 @@ pub fn run() {
             commands::get_provider_auth_status,
             commands::get_provider_account_info,
             commands::get_provider_available_models,
-            commands::frontend_log
+            commands::frontend_log,
+            commands::set_permission_mode,
+            commands::list_permission_rules,
+            commands::revoke_permission_rule
         ])
         .run(tauri::generate_context!())
         .expect("JevCode could not start; check configuration and application logs");

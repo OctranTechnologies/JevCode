@@ -77,10 +77,11 @@ function ContextPanel({ project, branch, session, provider }: { project?: Projec
     <ContextRow label="Provider" value={provider?.name ?? 'No provider'} />
     <ContextRow label="Model" value={session?.modelId ?? provider?.models[0]?.displayName ?? 'Choose in the composer'} />
     <p className="inspector-section-label context-section-spaced">PERMISSIONS</p>
-    <div className="permission-summary"><Check size={13} /><span>Read project files</span><small>{session?.permissionPolicy.readFiles === 'ask' ? 'Ask first' : 'Allowed'}</small></div>
-    <div className="permission-summary"><CircleHelp size={13} /><span>Git status</span><small>{session?.permissionPolicy.git === 'allow' ? 'Allowed' : 'Ask first'}</small></div>
-    <div className="permission-summary"><CircleHelp size={13} /><span>File edits</span><small>{permissionLabel(session?.permissionPolicy.writeFiles)}</small></div>
-    <div className="permission-summary"><CircleHelp size={13} /><span>Agent commands</span><small>{permissionLabel(session?.permissionPolicy.shell)}</small></div>
+    <ContextRow label="Mode" value={session ? permissionModeLabel(session.permissionPolicy.mode) : 'Ask'} icon={<Shield size={13} />} />
+    <div className="permission-summary"><Check size={13} /><span>Read project files</span><small>{categoryLabel(session, 'read_files')}</small></div>
+    <div className="permission-summary"><CircleHelp size={13} /><span>Git status</span><small>{categoryLabel(session, 'git')}</small></div>
+    <div className="permission-summary"><CircleHelp size={13} /><span>File edits</span><small>{categoryLabel(session, 'write_files')}</small></div>
+    <div className="permission-summary"><CircleHelp size={13} /><span>Agent commands</span><small>{categoryLabel(session, 'shell')}</small></div>
     <div className="permission-summary"><Shield size={13} /><span>Outside project</span><small>{permissionLabel(session?.permissionPolicy.externalFiles)}</small></div>
   </div>;
 }
@@ -116,4 +117,17 @@ function humanStatus(status: AgentSession['status']) {
 
 function permissionLabel(value: AgentSession['permissionPolicy']['shell'] | undefined) {
   return value === 'allow' ? 'Allowed' : value === 'ask' ? 'Ask first' : 'Denied';
+}
+
+function categoryLabel(session: AgentSession | undefined, category: 'read_files' | 'git' | 'write_files' | 'shell') {
+  const value = !session ? undefined : category === 'read_files' ? session.permissionPolicy.readFiles : category === 'write_files' ? session.permissionPolicy.writeFiles : session.permissionPolicy[category];
+  if (value === 'deny') return 'Denied';
+  if (value === 'ask') return 'Ask first';
+  if (category === 'shell' && session?.permissionPolicy.mode !== 'full_access') return 'Ask first';
+  if (category === 'write_files' && session?.permissionPolicy.mode === 'ask') return 'Ask first';
+  return value === 'allow' ? 'Allowed' : 'Ask first';
+}
+
+function permissionModeLabel(mode: AgentSession['permissionPolicy']['mode']) {
+  return mode === 'ask' ? 'Ask' : mode === 'workspace_write' ? 'Workspace Write' : 'Full Access';
 }
