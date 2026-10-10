@@ -989,7 +989,9 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .project-icon-action:hover:not(:disabled) { color: var(--wb-ink); background: var(--wb-surface-quiet); border-color: var(--wb-border); }
 .project-file-tree { max-height: 430px; min-height: 216px; padding: 6px 7px 12px; overflow: auto; }
 .project-file-tree ul, .project-change-list, .project-task-list, .project-languages-section ul { margin: 0; padding: 0; list-style: none; }
-.project-file-row { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 27px; padding: 3px 8px 3px calc(8px + var(--tree-depth, 0) * 15px); color: var(--wb-muted-strong); text-align: left; background: transparent; border: 0; border-radius: 4px; }
+.project-file-tree > ul, .project-file-tree ul ul { display: block; width: 100%; }
+.project-file-tree li { display: block; width: 100%; margin: 0; padding: 0; }
+.project-file-row { box-sizing: border-box; display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 27px; padding: 3px 8px; color: var(--wb-muted-strong); text-align: left; background: transparent; border: 0; border-radius: 4px; }
 .project-file-row:hover { color: var(--wb-ink); background: var(--wb-surface-quiet); }
 .project-file-row > svg { flex: 0 0 auto; color: var(--wb-muted); }
 .project-file-row.is-directory > svg:nth-child(2) { color: var(--wb-accent); }

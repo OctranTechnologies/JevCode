@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import {
   AlertCircle, ArrowRight, ChevronDown, ChevronRight, CircleDot, ExternalLink,
   File, FileCode2, Folder, FolderOpen, GitBranch, HardDrive, LoaderCircle, Play,
@@ -272,7 +272,7 @@ function ProjectExplorer({ projectId, desktopAllowed }: { projectId: string; des
   function renderDirectory(path: string, depth: number): ReactNode {
     const entries = children[path] ?? [];
     return entries.map(entry => <li key={entry.path}>
-      <button className={`project-file-row is-${entry.kind}`} style={{ '--tree-depth': depth } as CSSProperties} onClick={() => void toggle(entry)} aria-expanded={entry.kind === 'directory' ? expanded.has(entry.path) : undefined}>
+      <button className={`project-file-row is-${entry.kind}`} style={{ paddingInlineStart: `${8 + depth * 15}px` }} onClick={() => void toggle(entry)} aria-expanded={entry.kind === 'directory' ? expanded.has(entry.path) : undefined}>
         {entry.kind === 'directory' ? expanded.has(entry.path) ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : <span className="tree-chevron-spacer" />}
         {entry.kind === 'directory' ? expanded.has(entry.path) ? <FolderOpen size={14} /> : <Folder size={14} /> : extensionIcon(entry.name)}
         <span>{entry.name}{entry.isSymlink && <small>link</small>}</span>
