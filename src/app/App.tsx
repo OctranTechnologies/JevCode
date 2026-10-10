@@ -60,8 +60,8 @@ export default function App() {
   const [selectedReviewPath, setSelectedReviewPath] = useState<string | null>(null);
   const [reviewDiff, setReviewDiff] = useState<SessionFileDiff | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(252);
-  const [inspectorWidth, setInspectorWidth] = useState(318);
+  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [inspectorWidth, setInspectorWidth] = useState(370);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0);
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -73,7 +73,7 @@ export default function App() {
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('jevcode-theme');
-    return saved ? saved === 'dark' : window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+    return saved ? saved === 'dark' : true;
   });
 
   const data = desktop.data;
@@ -150,6 +150,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', darkMode ? '#0b0b0c' : '#f7f6f3');
     localStorage.setItem('jevcode-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
 

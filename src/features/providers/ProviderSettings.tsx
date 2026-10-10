@@ -131,7 +131,7 @@ export function ProviderSettings({
   return <section className="settings-content accounts-settings">
     <div className="accounts-heading">
       <div>
-        <h1>Accounts</h1>
+        <h1>Accounts &amp; providers</h1>
         <p className="page-description">Connect the model providers you use. JevCode tests keys in the desktop service and stores them in your OS credential manager.</p>
       </div>
       <span className="accounts-security"><ShieldCheck size={14} />Local credentials</span>
