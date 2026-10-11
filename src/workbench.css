@@ -120,7 +120,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 
 .sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; min-height: 33px; margin: 0 2px 14px; }
 .sidebar-brand { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 14px; font-weight: 680; letter-spacing: -.025em; }
-.sidebar-brand .brand-mark { width: 28px; height: 29px; border-radius: 4px; font-size: 20px; background: var(--wb-accent); }
+.sidebar-brand .brand-mark { width: 28px; height: 29px; font-size: 20px; }
 .quiet-icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 29px; min-height: 29px; padding: 5px; color: var(--wb-muted-strong); background: transparent; border: 1px solid transparent; border-radius: 6px; }
 .quiet-icon-button:hover { color: var(--wb-ink); background: var(--wb-surface); border-color: var(--wb-border); }
 .collapse-sidebar { opacity: .65; }
@@ -800,7 +800,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 :root[data-theme='dark'] .permission-request pre { color: var(--wb-muted-strong); background: var(--wb-surface); border-color: var(--wb-border); }
 :root[data-theme='dark'] .error-banner { color: var(--wb-danger); background: var(--wb-danger-soft); }
 :root[data-theme='dark'] .tool-error { background: var(--wb-danger-soft); }
-:root[data-theme='dark'] .brand-mark-large { color: var(--wb-accent); background: var(--wb-accent-soft); }
+:root[data-theme='dark'] .brand-mark-large { color: var(--wb-accent); }
 :root[data-theme='dark'] .new-session,
 :root[data-theme='dark'] .primary-button,
 :root[data-theme='dark'] .send-button:not(:disabled) { color: var(--wb-accent-ink); background: var(--wb-accent); }
