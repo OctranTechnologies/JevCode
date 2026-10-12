@@ -173,6 +173,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .is-collapsed .sidebar-brand { gap: 0; }
 .is-collapsed .sidebar-brand > span:not(.brand-mark), .is-collapsed .collapse-sidebar, .is-collapsed .new-task-button > span, .is-collapsed .new-task-button kbd, .is-collapsed .sidebar-search > span, .is-collapsed .sidebar-search kbd, .is-collapsed .sidebar-section-heading, .is-collapsed .sidebar-row > span:not(.task-state):not(.row-presence), .is-collapsed .sidebar-empty, .is-collapsed .account-copy, .is-collapsed .provider-connection { display: none; }
 .is-collapsed .new-task-button, .is-collapsed .sidebar-search, .is-collapsed .sidebar-row, .is-collapsed .utility-row { justify-content: center; padding-inline: 0; }
+.is-collapsed .project-row-menu-toggle, .is-collapsed .row-presence { display: none; }
 .is-collapsed .sidebar-section { padding-top: 12px; }
 .is-collapsed .sidebar-section-items { gap: 5px; }
 .is-collapsed .sidebar-bottom { margin-top: auto; }
@@ -842,6 +843,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .workbench-sidebar.is-collapsed { width: min(282px, calc(100vw - 42px)); }
   .workbench-sidebar.is-collapsed .sidebar-brand-row { justify-content: space-between; }
   .workbench-sidebar.is-collapsed .sidebar-brand > span:not(.brand-mark), .workbench-sidebar.is-collapsed .collapse-sidebar, .workbench-sidebar.is-collapsed .new-task-button > span, .workbench-sidebar.is-collapsed .new-task-button kbd, .workbench-sidebar.is-collapsed .sidebar-search > span, .workbench-sidebar.is-collapsed .sidebar-search kbd, .workbench-sidebar.is-collapsed .sidebar-section-heading, .workbench-sidebar.is-collapsed .sidebar-row > span:not(.task-state):not(.row-presence), .workbench-sidebar.is-collapsed .sidebar-empty, .workbench-sidebar.is-collapsed .account-copy, .workbench-sidebar.is-collapsed .provider-connection { display: initial; }
+  .workbench-sidebar.is-collapsed .project-row-menu-toggle { display: grid; }
+  .workbench-sidebar.is-collapsed .row-presence { display: block; }
   .workbench-sidebar.is-collapsed .sidebar-section-heading { display: flex; }
   .workbench-sidebar.is-collapsed .new-task-button, .workbench-sidebar.is-collapsed .sidebar-search, .workbench-sidebar.is-collapsed .sidebar-row, .workbench-sidebar.is-collapsed .utility-row { justify-content: flex-start; padding-inline: 7px; }
   .workbench-sidebar.is-collapsed .account-provider { justify-content: flex-start; }
