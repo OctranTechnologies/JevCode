@@ -275,7 +275,7 @@ function ProjectExplorer({ projectId, desktopAllowed }: { projectId: string; des
       <button className={`project-file-row is-${entry.kind}`} style={{ paddingInlineStart: `${8 + depth * 15}px` }} onClick={() => void toggle(entry)} aria-expanded={entry.kind === 'directory' ? expanded.has(entry.path) : undefined}>
         {entry.kind === 'directory' ? expanded.has(entry.path) ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : <span className="tree-chevron-spacer" />}
         {entry.kind === 'directory' ? expanded.has(entry.path) ? <FolderOpen size={14} /> : <Folder size={14} /> : extensionIcon(entry.name)}
-        <span>{entry.name}{entry.isSymlink && <small>link</small>}</span>
+        <span className="project-file-name">{entry.name}{entry.isSymlink && <small>link</small>}</span>
         {entry.kind === 'file' && entry.sizeBytes > 0 && <small className="file-size">{formatBytes(entry.sizeBytes)}</small>}
         {loading.has(entry.path) && <LoaderCircle size={12} className="spin" />}
       </button>

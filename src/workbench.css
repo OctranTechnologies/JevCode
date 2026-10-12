@@ -1052,8 +1052,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .project-file-row:hover { color: var(--wb-ink); background: var(--wb-surface-quiet); }
 .project-file-row > svg { flex: 0 0 auto; color: var(--wb-muted); }
 .project-file-row.is-directory > svg:nth-child(2) { color: var(--wb-accent); }
-.project-file-row > span { display: flex; flex: 1; align-items: center; gap: 7px; min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.project-file-row > span small { padding: 1px 4px; color: var(--wb-muted); font-size: 8px; background: var(--wb-surface-quiet); border-radius: 3px; }
+.project-file-row > .project-file-name { display: flex; flex: 1; align-items: center; gap: 7px; min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.project-file-name small { padding: 1px 4px; color: var(--wb-muted); font-size: 8px; background: var(--wb-surface-quiet); border-radius: 3px; }
 .tree-chevron-spacer { flex: 0 0 13px; }
 .file-size { flex: 0 0 auto; color: var(--wb-muted); font: 9px var(--font-mono); }
 .project-tree-skeleton { display: grid; gap: 8px; padding: 12px 8px; }
