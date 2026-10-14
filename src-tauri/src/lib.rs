@@ -111,6 +111,8 @@ pub fn run() {
             commands::refresh_provider_auth,
             commands::get_provider_auth_status,
             commands::get_openai_auth_status,
+            commands::openai_auth_start,
+            commands::openai_auth_cancel,
             commands::get_provider_account_info,
             commands::get_provider_available_models,
             commands::frontend_log,

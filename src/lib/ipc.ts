@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAuthStatus, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
-import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export const desktopAvailable = isTauri();
@@ -61,6 +61,8 @@ interface Commands {
   refresh_provider_auth: { args: { providerId: string }; result: ProviderAccount };
   get_provider_auth_status: { args: { providerId: string }; result: ProviderAccount };
   get_openai_auth_status: { args: undefined; result: OpenAIAuthStatus };
+  openai_auth_start: { args: undefined; result: OpenAIAuthStart };
+  openai_auth_cancel: { args: { attemptId: string }; result: null };
   get_provider_account_info: { args: { providerId: string }; result: ProviderAccountInfo };
   get_provider_available_models: { args: { providerId: string }; result: Model[] };
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
@@ -75,6 +77,8 @@ const responses = {
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,
   refresh_provider_auth: providerAccountSchema, get_provider_auth_status: providerAccountSchema,
   get_openai_auth_status: openAIAuthStatusSchema,
+  openai_auth_start: openAIAuthStartSchema,
+  openai_auth_cancel: z.null(),
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),
   frontend_log: z.null(),
 } satisfies { [K in keyof Commands]: z.ZodType<Commands[K]['result']> };
@@ -105,9 +109,18 @@ export interface ProviderAuthAdapter {
   getAuthStatus(): Promise<ProviderAccount>;
 }
 
-/** OpenAI-only status stays typed and token-free; OAuth controls are not enabled yet. */
+/** OpenAI-only status stays typed and token-free. */
 export function getOpenAIAuthStatus(): Promise<OpenAIAuthStatus> {
   return command('get_openai_auth_status', undefined);
+}
+
+/** Starts OpenAI sign-in in the OS browser; only a safe attempt handle crosses IPC. */
+export function startOpenAIAuth(): Promise<OpenAIAuthStart> {
+  return command('openai_auth_start', undefined);
+}
+
+export function cancelOpenAIAuth(attemptId: string): Promise<null> {
+  return command('openai_auth_cancel', { attemptId });
 }
 
 /** Provider-neutral auth facade. Provider-specific protocol stays in Rust. */
@@ -123,7 +136,7 @@ export function providerAuthAdapter(providerId: string): ProviderAuthAdapter {
   };
 }
 
-export async function subscribeEvents(onSession: (session: AgentSession) => void, onUsage: (record: UsageRecord) => void, onError: () => void, onStream?: (chunk: AgentStreamChunk) => void, onToolOutput?: (chunk: ToolOutputChunk) => void, onProviderAccount?: (account: ProviderAccount) => void): Promise<UnlistenFn> {
+export async function subscribeEvents(onSession: (session: AgentSession) => void, onUsage: (record: UsageRecord) => void, onError: () => void, onStream?: (chunk: AgentStreamChunk) => void, onToolOutput?: (chunk: ToolOutputChunk) => void, onProviderAccount?: (account: ProviderAccount) => void, onOpenAIAuthAttempt?: (attempt: OpenAIAuthAttemptEvent) => void): Promise<UnlistenFn> {
   if (!desktopAvailable) return () => {};
   const listeners: UnlistenFn[] = [];
   try {
@@ -132,6 +145,7 @@ export async function subscribeEvents(onSession: (session: AgentSession) => void
     if (onStream) listeners.push(await listen<unknown>('agent:stream', event => { const parsed = agentStreamChunkSchema.safeParse(event.payload); if (parsed.success) onStream(parsed.data); else onError(); }));
     if (onToolOutput) listeners.push(await listen<unknown>('agent:tool-output', event => { const parsed = toolOutputChunkSchema.safeParse(event.payload); if (parsed.success) onToolOutput(parsed.data); else onError(); }));
     if (onProviderAccount) listeners.push(await listen<unknown>('provider:account-updated', event => { const parsed = providerAccountSchema.safeParse(event.payload); if (parsed.success) onProviderAccount(parsed.data); else onError(); }));
+    if (onOpenAIAuthAttempt) listeners.push(await listen<unknown>('openai:auth-attempt', event => { const parsed = openAIAuthAttemptEventSchema.safeParse(event.payload); if (parsed.success) onOpenAIAuthAttempt(parsed.data); else onError(); }));
     return () => listeners.forEach(unlisten => unlisten());
   } catch (error) { listeners.forEach(unlisten => unlisten()); throw normalizeError(error); }
 }

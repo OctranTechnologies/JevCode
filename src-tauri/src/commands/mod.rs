@@ -12,12 +12,16 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Command, Stdio},
     sync::Arc,
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::io::AsyncReadExt;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::watch,
+};
 
 struct TauriEvents(AppHandle);
 impl EventSink for TauriEvents {
@@ -1906,6 +1910,471 @@ pub fn get_openai_auth_status(state: State<'_, SharedState>) -> AppResult<OpenAi
     let provider = state.config.provider("openai")?;
     let stored = state.database.provider_account("openai")?;
     auth::openai_auth_status(provider, &state.credentials, &state.database, stored)
+}
+
+const OPENAI_AUTH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const OPENAI_CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_OPENAI_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
+
+#[tauri::command]
+pub async fn openai_auth_start(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<OpenAiAuthStart> {
+    // OpenAI requires a listening loopback callback before the browser opens.
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|_| {
+        AppError::new(
+            "auth_callback_unavailable",
+            "JevCode could not start the local sign-in callback listener.",
+        )
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|_| {
+            AppError::new(
+                "auth_callback_unavailable",
+                "The sign-in callback is unavailable.",
+            )
+        })?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
+
+    let provider = state.config.provider("openai")?.clone();
+    let manager = crate::auth::openai::OpenAIAuthManager::new(provider)?;
+    let host_id = state.database.openai_ext_agent_host_id()?;
+    let pending = manager.create_authentication_session(&redirect_uri, &host_id)?;
+    let result = OpenAiAuthStart {
+        attempt_id: pending.attempt_id.clone(),
+        expires_at: pending.expires_at.to_rfc3339(),
+    };
+    let attempt_id = pending.attempt_id.clone();
+    let browser_url = pending.authorization_url.clone();
+    let (cancel_sender, cancel_receiver) = watch::channel(false);
+    state.register_openai_auth_attempt(&attempt_id, cancel_sender)?;
+
+    let managed_state = Arc::clone(state.inner());
+    let event_app = app.clone();
+    tokio::spawn(async move {
+        let completion = wait_for_openai_callback(listener, &pending, cancel_receiver).await;
+        if let Some(attempt_state) = completion {
+            let event = OpenAiAuthAttemptEvent {
+                attempt_id: attempt_id.clone(),
+                state: attempt_state,
+            };
+            if let Err(error) = event_app.emit("openai:auth-attempt", event) {
+                tracing::warn!(%error, "OpenAI sign-in status delivery failed");
+            }
+        }
+        managed_state.release_openai_auth_attempt(&attempt_id);
+    });
+
+    let launch_result =
+        match tokio::task::spawn_blocking(move || open_system_browser(&browser_url)).await {
+            Ok(result) => result,
+            Err(_) => Err(AppError::new(
+                "system_browser_unavailable",
+                "JevCode could not open the system browser.",
+            )),
+        };
+    if let Err(error) = launch_result {
+        let _ = state.cancel_openai_auth_attempt(&result.attempt_id);
+        state.release_openai_auth_attempt(&result.attempt_id);
+        let event = OpenAiAuthAttemptEvent {
+            attempt_id: result.attempt_id.clone(),
+            state: OpenAiAuthAttemptState::Failed,
+        };
+        let _ = app.emit("openai:auth-attempt", event);
+        return Err(error);
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn openai_auth_cancel(
+    attempt_id: String,
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    state.cancel_openai_auth_attempt(&attempt_id)?;
+    state.release_openai_auth_attempt(&attempt_id);
+    let event = OpenAiAuthAttemptEvent {
+        attempt_id,
+        state: OpenAiAuthAttemptState::Cancelled,
+    };
+    app.emit("openai:auth-attempt", event).map_err(|_| {
+        AppError::new(
+            "event_delivery_failed",
+            "The sign-in attempt was cancelled, but its status could not be delivered.",
+        )
+    })
+}
+
+async fn wait_for_openai_callback(
+    listener: TcpListener,
+    pending: &crate::auth::openai::PendingOpenAiAuth,
+    cancellation: watch::Receiver<bool>,
+) -> Option<OpenAiAuthAttemptState> {
+    wait_for_openai_callback_until(listener, pending, cancellation, OPENAI_AUTH_TIMEOUT).await
+}
+
+async fn wait_for_openai_callback_until(
+    listener: TcpListener,
+    pending: &crate::auth::openai::PendingOpenAiAuth,
+    mut cancellation: watch::Receiver<bool>,
+    timeout_after: Duration,
+) -> Option<OpenAiAuthAttemptState> {
+    let timeout = tokio::time::sleep(timeout_after);
+    tokio::pin!(timeout);
+    loop {
+        tokio::select! {
+            _ = &mut timeout => return Some(OpenAiAuthAttemptState::TimedOut),
+            changed = cancellation.changed() => {
+                if changed.is_err() || *cancellation.borrow() {
+                    return None;
+                }
+            }
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else {
+                    return Some(OpenAiAuthAttemptState::Failed);
+                };
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
+                if let Some(result) = handle_openai_callback(stream, pending).await {
+                    return Some(result);
+                }
+            }
+        }
+    }
+}
+
+async fn handle_openai_callback(
+    mut stream: TcpStream,
+    pending: &crate::auth::openai::PendingOpenAiAuth,
+) -> Option<OpenAiAuthAttemptState> {
+    let mut request = Vec::with_capacity(2048);
+    let mut buffer = [0_u8; 2048];
+    let read_result = tokio::time::timeout(OPENAI_CALLBACK_READ_TIMEOUT, async {
+        while request.len() < MAX_OPENAI_CALLBACK_REQUEST_BYTES && !request.ends_with(b"\r\n\r\n") {
+            let remaining = MAX_OPENAI_CALLBACK_REQUEST_BYTES - request.len();
+            let limit = remaining.min(buffer.len());
+            let read = stream.read(&mut buffer[..limit]).await?;
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+        }
+        Ok::<(), std::io::Error>(())
+    })
+    .await;
+    if !matches!(read_result, Ok(Ok(()))) {
+        let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
+        return None;
+    }
+
+    let request_text = match std::str::from_utf8(&request) {
+        Ok(request) => request,
+        Err(_) => {
+            let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
+            return None;
+        }
+    };
+    let mut request_line = request_text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace();
+    let method = request_line.next().unwrap_or_default();
+    let target = request_line.next().unwrap_or_default();
+    let decision = if method != "GET" {
+        CallbackDecision::MethodNotAllowed
+    } else {
+        callback_decision(target, &pending.state)
+    };
+
+    match decision {
+        CallbackDecision::WrongPath => {
+            let _ = respond_to_openai_callback(
+                &mut stream,
+                404,
+                "This sign-in callback is not available.",
+            )
+            .await;
+            None
+        }
+        CallbackDecision::MethodNotAllowed => {
+            let _ = respond_to_openai_callback(
+                &mut stream,
+                405,
+                "This sign-in callback is not available.",
+            )
+            .await;
+            None
+        }
+        CallbackDecision::Invalid => {
+            let _ = respond_to_openai_callback(
+                &mut stream,
+                400,
+                "This sign-in response could not be verified.",
+            )
+            .await;
+            None
+        }
+        CallbackDecision::Received => {
+            let _ = respond_to_openai_callback(
+                &mut stream,
+                200,
+                "The OpenAI response reached JevCode. Account verification is not implemented in this build.",
+            )
+            .await;
+            Some(OpenAiAuthAttemptState::CallbackReceived)
+        }
+        CallbackDecision::Denied => {
+            let _ =
+                respond_to_openai_callback(&mut stream, 200, "OpenAI sign-in was cancelled.").await;
+            Some(OpenAiAuthAttemptState::Denied)
+        }
+        CallbackDecision::Failed => {
+            let _ = respond_to_openai_callback(
+                &mut stream,
+                400,
+                "OpenAI sign-in could not be completed.",
+            )
+            .await;
+            Some(OpenAiAuthAttemptState::Failed)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallbackDecision {
+    WrongPath,
+    MethodNotAllowed,
+    Invalid,
+    Received,
+    Denied,
+    Failed,
+}
+
+fn callback_decision(target: &str, expected_state: &str) -> CallbackDecision {
+    if !target.starts_with('/') || target.starts_with("//") {
+        return CallbackDecision::Invalid;
+    }
+    let Ok(url) = reqwest::Url::parse(&format!("http://127.0.0.1{target}")) else {
+        return CallbackDecision::Invalid;
+    };
+    if url.path() != "/auth/callback" {
+        return CallbackDecision::WrongPath;
+    }
+    let pairs = url.query_pairs().collect::<Vec<_>>();
+    let values = |name: &str| {
+        pairs
+            .iter()
+            .filter(|(key, _)| key == name)
+            .map(|(_, value)| value.as_ref())
+            .collect::<Vec<_>>()
+    };
+    let states = values("state");
+    if states.len() != 1 || !constant_time_equal(states[0].as_bytes(), expected_state.as_bytes()) {
+        return CallbackDecision::Invalid;
+    }
+    let errors = values("error");
+    if errors.len() > 1 {
+        return CallbackDecision::Invalid;
+    }
+    if errors
+        .first()
+        .is_some_and(|error| *error == "access_denied")
+    {
+        return CallbackDecision::Denied;
+    }
+    if !errors.is_empty() {
+        return CallbackDecision::Failed;
+    }
+    let codes = values("code");
+    if codes.len() == 1 && !codes[0].is_empty() {
+        CallbackDecision::Received
+    } else {
+        CallbackDecision::Invalid
+    }
+}
+
+fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+async fn respond_to_openai_callback(
+    stream: &mut TcpStream,
+    status: u16,
+    body: &str,
+) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "Bad Request",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nX-Content-Type-Options: nosniff\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await
+}
+
+fn open_system_browser(url: &reqwest::Url) -> AppResult<()> {
+    if url.scheme() != "https"
+        || url.host_str() != Some("auth.openai.com")
+        || url.path() != "/api/accounts/authorize"
+    {
+        return Err(AppError::new(
+            "auth_configuration",
+            "The OpenAI sign-in address is not valid.",
+        ));
+    }
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Err(AppError::new(
+        "system_browser_unavailable",
+        "Opening the system browser is not supported on this platform.",
+    ));
+
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| {
+            AppError::new(
+                "system_browser_unavailable",
+                "JevCode could not open the system browser.",
+            )
+        })
+}
+
+#[cfg(test)]
+mod openai_auth_start_tests {
+    use super::*;
+
+    fn pending_session() -> crate::auth::openai::PendingOpenAiAuth {
+        let provider = crate::domain::Provider {
+            id: "openai".into(),
+            name: "OpenAI".into(),
+            protocol: crate::domain::ProviderProtocol::OpenAiResponses,
+            base_url: Some("https://api.openai.com/v1".into()),
+            models: vec![],
+            connected: false,
+        };
+        let manager = crate::auth::openai::OpenAIAuthManager::new(provider).unwrap();
+        let host_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
+        manager
+            .create_authentication_session("http://127.0.0.1:43210/auth/callback", &host_id)
+            .unwrap()
+    }
+
+    #[test]
+    fn callback_accepts_only_matching_state_and_a_code_or_documented_denial() {
+        let state = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            callback_decision(
+                &format!("/auth/callback?code=private-code&state={state}"),
+                state
+            ),
+            CallbackDecision::Received
+        );
+        assert_eq!(
+            callback_decision(
+                &format!("/auth/callback?error=access_denied&state={state}"),
+                state
+            ),
+            CallbackDecision::Denied
+        );
+        assert_eq!(
+            callback_decision("/auth/callback?code=secret&state=wrong", state),
+            CallbackDecision::Invalid
+        );
+        assert_eq!(
+            callback_decision(
+                &format!("/auth/callback?code=one&code=two&state={state}"),
+                state
+            ),
+            CallbackDecision::Invalid
+        );
+        assert_eq!(
+            callback_decision(&format!("/other?code=secret&state={state}"), state),
+            CallbackDecision::WrongPath
+        );
+    }
+
+    #[test]
+    fn browser_launcher_accepts_only_the_official_authorization_origin() {
+        let official =
+            reqwest::Url::parse("https://auth.openai.com/api/accounts/authorize").unwrap();
+        assert!(official.query_pairs().next().is_none());
+        let hostile =
+            reqwest::Url::parse("https://example.invalid/api/accounts/authorize").unwrap();
+        assert_eq!(
+            open_system_browser(&hostile).unwrap_err().code,
+            "auth_configuration"
+        );
+    }
+
+    #[tokio::test]
+    async fn authentication_listener_handles_cancel_and_timeout() {
+        let pending = pending_session();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let (cancel_sender, cancel_receiver) = watch::channel(false);
+        cancel_sender.send(true).unwrap();
+        assert_eq!(
+            wait_for_openai_callback_until(
+                listener,
+                &pending,
+                cancel_receiver,
+                Duration::from_secs(1)
+            )
+            .await,
+            None
+        );
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let (_cancel_sender, cancel_receiver) = watch::channel(false);
+        assert_eq!(
+            wait_for_openai_callback_until(
+                listener,
+                &pending,
+                cancel_receiver,
+                Duration::from_millis(1)
+            )
+            .await,
+            Some(OpenAiAuthAttemptState::TimedOut)
+        );
+    }
 }
 
 #[tauri::command]

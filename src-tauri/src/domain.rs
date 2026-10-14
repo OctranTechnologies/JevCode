@@ -779,6 +779,32 @@ pub struct OpenAiAuthStatus {
     pub chatgpt: OpenAiChatGptAuthStatus,
 }
 
+/// Safe handle for an in-progress native sign-in attempt. OAuth values and the
+/// authorization URL intentionally never cross the IPC boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiAuthStart {
+    pub attempt_id: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiAuthAttemptState {
+    CallbackReceived,
+    Denied,
+    Cancelled,
+    TimedOut,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiAuthAttemptEvent {
+    pub attempt_id: String,
+    pub state: OpenAiAuthAttemptState,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {

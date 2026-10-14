@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 mod oauth;
-mod openai;
+pub(crate) mod openai;
 
 #[async_trait]
 pub trait ProviderAuthAdapter: Send + Sync {

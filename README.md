@@ -341,15 +341,19 @@ keychain service and UUID-scoped entries).
 Authentication is intentionally separated by product entitlement:
 
 - OpenAI API keys are supported. `get_openai_auth_status` returns the current
-  API-key state and a separate ChatGPT sign-in capability status. OpenAI's
-  current open-source sign-in flow is documented, but JevCode has not implemented
-  its login flow: the status correctly reports it as unavailable. The future
-  flow must follow OpenAI's dynamic client registration, stable installation
-  identity, loopback callback, state/nonce/PKCE, granted-scope and ID-token
-  verification requirements. Its native session record is deliberately separate
-  from the safe `OpenAiAccount` profile type; access, refresh and ID tokens can
-  only be serialized to the OS keychain by Rust and are not represented in
-  TypeScript, SQLite, localStorage, or Tauri command responses. No Codex/ChatGPT
+  API-key state and a separate ChatGPT sign-in capability status. The native
+  `openai_auth_start` command implements the beginning of OpenAI's official
+  open-source sign-in flow: it creates a fresh state, nonce, and PKCE verifier;
+  binds a short-lived listener to `127.0.0.1`; then opens the official
+  authorization URL in the OS default browser. The stable `ext_agent_host_id`
+  is stored as non-secret installation metadata in SQLite. The callback checks
+  state and reports only a safe attempt status. Authorization-code exchange,
+  issued-client registration persistence, ID-token verification, and account
+  connection are not implemented yet, so reaching the callback does not connect
+  an account. State, nonce, verifier, challenge, callback data, and the full
+  authorization URL remain in Rust memory; none are returned through Tauri IPC,
+  TypeScript, SQLite, localStorage, or logs. Access, refresh, and ID tokens remain
+  keychain-only when the later exchange flow is implemented. No Codex/ChatGPT
   credentials or browser cookies are read.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.

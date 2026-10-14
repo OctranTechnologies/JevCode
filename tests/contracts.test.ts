@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { bootstrapSchema, openAIAuthStatusSchema, sessionSchema } from '../src/lib/schemas';
+import { bootstrapSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, sessionSchema } from '../src/lib/schemas';
 import { mergeSession } from '../src/app/store';
 import { normalizeError } from '../src/lib/errors';
 import { displayPath } from '../src/lib/paths';
@@ -28,6 +28,13 @@ describe('desktop contracts', () => {
     expect(openAIAuthStatusSchema.parse(safeStatus).chatgpt.connectedAccounts).toEqual([]);
     expect(openAIAuthStatusSchema.safeParse({ ...safeStatus, accessToken: 'must-not-cross-ipc' }).success).toBe(false);
     expect(openAIAuthStatusSchema.safeParse({ ...safeStatus, apiKey: { ...safeStatus.apiKey, refreshToken: 'must-not-cross-ipc' } }).success).toBe(false);
+  });
+  it('keeps OpenAI authorization attempt material behind the native boundary', () => {
+    const safeAttempt = { attemptId: 'd8f8a8ef-4df0-4c58-b20d-61cda4482f60', expiresAt: '2026-10-14T12:00:00+00:00' };
+    expect(openAIAuthStartSchema.parse(safeAttempt)).toEqual(safeAttempt);
+    expect(openAIAuthStartSchema.safeParse({ ...safeAttempt, authorizationUrl: 'https://auth.openai.com/?state=private' }).success).toBe(false);
+    expect(openAIAuthStartSchema.safeParse({ ...safeAttempt, codeVerifier: 'private-verifier' }).success).toBe(false);
+    expect(openAIAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'callback_received' })).toEqual({ attemptId: safeAttempt.attemptId, state: 'callback_received' });
   });
   it('does not let a late command response overwrite newer events', () => {
     const parsed = sessionSchema.parse(session);

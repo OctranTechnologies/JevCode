@@ -12,6 +12,21 @@ fn mcp_scope_name(scope: &McpScope) -> &'static str {
     }
 }
 
+fn validate_openai_host_id(host_id: String) -> AppResult<String> {
+    let valid = host_id
+        .strip_prefix("urn:uuid:")
+        .and_then(|value| uuid::Uuid::parse_str(value).ok())
+        .is_some();
+    if valid {
+        Ok(host_id)
+    } else {
+        Err(AppError::new(
+            "invalid_installation_identity",
+            "The saved OpenAI installation identity is invalid.",
+        ))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionReviewBaseline {
     pub session_id: String,
@@ -51,6 +66,7 @@ impl Database {
         Self::migrate_code_review(&connection)?;
         Self::migrate_mcp(&connection)?;
         Self::migrate_openai_accounts(&connection)?;
+        Self::migrate_openai_installation(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -195,6 +211,46 @@ impl Database {
              PRAGMA user_version = 10;",
         )?;
         Ok(())
+    }
+
+    fn migrate_openai_installation(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS openai_installation (
+                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                 ext_agent_host_id TEXT NOT NULL
+             );
+             PRAGMA user_version = 11;",
+        )?;
+        Ok(())
+    }
+
+    /// Stable, non-secret identifier for this installation's OpenAI agent host.
+    /// It is persisted locally because OpenAI requires the same value on later
+    /// sign-ins from this host.
+    pub fn openai_ext_agent_host_id(&self) -> AppResult<String> {
+        let connection = self.connection()?;
+        if let Some(host_id) = connection
+            .query_row(
+                "SELECT ext_agent_host_id FROM openai_installation WHERE singleton = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+        {
+            return validate_openai_host_id(host_id);
+        }
+
+        let host_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
+        connection.execute(
+            "INSERT OR IGNORE INTO openai_installation(singleton, ext_agent_host_id) VALUES (1, ?1)",
+            [&host_id],
+        )?;
+        let stored = connection.query_row(
+            "SELECT ext_agent_host_id FROM openai_installation WHERE singleton = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )?;
+        validate_openai_host_id(stored)
     }
 
     /// Persist only the safe OpenAI account profile. Token material has a
@@ -789,6 +845,21 @@ mod tests {
         assert_eq!(preferences.default_model, Some(selection.clone()));
         assert_eq!(preferences.favorites, vec![selection.clone()]);
         assert_eq!(preferences.recent, vec![selection]);
+    }
+
+    #[test]
+    fn openai_host_identity_survives_database_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("openai-host.sqlite");
+        let first = Database::open(&path)
+            .unwrap()
+            .openai_ext_agent_host_id()
+            .unwrap();
+        assert!(first.starts_with("urn:uuid:"));
+        {
+            let reopened = Database::open(&path).unwrap();
+            assert_eq!(reopened.openai_ext_agent_host_id().unwrap(), first);
+        }
     }
 
     #[test]
