@@ -821,6 +821,13 @@ pub enum OpenAiAuthFailureReason {
     PermissionDenied,
     NetworkError,
     ProviderOutage,
+    CallbackRejected,
+    AuthorizationCodeRejected,
+    IdentityVerificationFailed,
+    AccountMismatch,
+    AccountAlreadyConnected,
+    ConfigurationError,
+    SubscriptionUnavailable,
     OauthFailure,
 }
 

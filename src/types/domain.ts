@@ -70,7 +70,7 @@ export interface OpenAIAuthStatus {
 export interface OpenAIAuthStart { attemptId: string; expiresAt: string }
 export interface OpenAILogoutResult { revocationConfirmed: boolean }
 export type OpenAIAuthAttemptState = 'callback_received' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
-export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
+export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'callback_rejected' | 'authorization_code_rejected' | 'identity_verification_failed' | 'account_mismatch' | 'account_already_connected' | 'configuration_error' | 'subscription_unavailable' | 'oauth_failure';
 export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }
 export interface Model {
   id: string;

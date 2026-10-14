@@ -284,7 +284,7 @@ impl OpenAiOAuthTransport for ReqwestOpenAiOAuthTransport {
             .send()
             .await
             .map_err(|_| auth_network_error())?;
-        read_json_response(response, "OpenAI could not complete sign-in.").await
+        read_code_exchange_response(response).await
     }
 
     async fn refresh_token(&self, request: OpenAiRefreshRequest) -> AppResult<OpenAiTokenResponse> {
@@ -509,6 +509,46 @@ async fn read_json_response<T: DeserializeOwned>(
     }
     let parsed = serde_json::from_slice(&body);
     parsed.map_err(|_| AppError::new("invalid_auth_response", rejected_message))
+}
+
+async fn read_code_exchange_response(mut response: Response) -> AppResult<OpenAiTokenResponse> {
+    if response.status().is_success() {
+        return read_json_response(response, "OpenAI returned an invalid sign-in response.").await;
+    }
+
+    const MAX_AUTH_RESPONSE_BYTES: usize = 1024 * 1024;
+    let status = response.status();
+    let mut body = Zeroizing::new(Vec::new());
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(_) => return Err(auth_network_error()),
+        };
+        if body.len().saturating_add(chunk.len()) > MAX_AUTH_RESPONSE_BYTES {
+            return Err(auth_http_error(status));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let error_code = serde_json::from_slice::<OpenAiTokenEndpointError>(&body)
+        .ok()
+        .and_then(|response| response.error)
+        .map(|code| code.to_ascii_lowercase());
+    Err(code_exchange_error(status, error_code.as_deref()))
+}
+
+fn code_exchange_error(status: StatusCode, error_code: Option<&str>) -> AppError {
+    match error_code {
+        Some("invalid_grant") => AppError::new(
+            "openai_auth_code_rejected",
+            "OpenAI rejected this sign-in code. Start a fresh sign-in attempt.",
+        ),
+        Some("invalid_client") => AppError::new(
+            "openai_client_configuration",
+            "OpenAI could not validate JevCode’s sign-in registration. Update the app or contact support.",
+        ),
+        _ => auth_http_error(status),
+    }
 }
 
 #[derive(Deserialize)]
@@ -2653,6 +2693,25 @@ mod tests {
         assert_eq!(
             refresh_response_error(StatusCode::BAD_REQUEST, Some("invalid_client")).code,
             "openai_client_configuration"
+        );
+    }
+
+    #[test]
+    fn authorization_code_exchange_errors_are_classified_without_returning_provider_text() {
+        let expired = code_exchange_error(StatusCode::BAD_REQUEST, Some("invalid_grant"));
+        assert_eq!(expired.code, "openai_auth_code_rejected");
+        assert!(!expired.message.contains("authorization-code"));
+
+        let bad_client = code_exchange_error(StatusCode::UNAUTHORIZED, Some("invalid_client"));
+        assert_eq!(bad_client.code, "openai_client_configuration");
+
+        assert_eq!(
+            code_exchange_error(StatusCode::BAD_REQUEST, Some("sensitive-provider-detail")).code,
+            "invalid_auth_response"
+        );
+        assert_eq!(
+            code_exchange_error(StatusCode::SERVICE_UNAVAILABLE, None).code,
+            "provider_outage"
         );
     }
 

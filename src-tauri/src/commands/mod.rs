@@ -2229,6 +2229,13 @@ fn openai_auth_failure_reason(error: &AppError) -> OpenAiAuthFailureReason {
         "system_browser_unavailable" | "auth_callback_unavailable" => {
             OpenAiAuthFailureReason::BrowserUnavailable
         }
+        "invalid_auth_callback" => OpenAiAuthFailureReason::CallbackRejected,
+        "openai_auth_code_rejected" => OpenAiAuthFailureReason::AuthorizationCodeRejected,
+        "invalid_identity_token" => OpenAiAuthFailureReason::IdentityVerificationFailed,
+        "account_mismatch" => OpenAiAuthFailureReason::AccountMismatch,
+        "account_already_connected" => OpenAiAuthFailureReason::AccountAlreadyConnected,
+        "openai_client_configuration" => OpenAiAuthFailureReason::ConfigurationError,
+        "subscription_unavailable" => OpenAiAuthFailureReason::SubscriptionUnavailable,
         _ => OpenAiAuthFailureReason::OauthFailure,
     }
 }
@@ -2364,10 +2371,17 @@ async fn handle_openai_callback(
             ))
         }
         Err(error) => {
+            // Only the app-owned error code is logged. Callback URLs, codes,
+            // state, token bodies, and identity claims are never logged.
+            tracing::warn!(
+                attempt_id = %pending.attempt_id,
+                error_code = %error.code,
+                "OpenAI sign-in callback failed"
+            );
             let _ = respond_to_openai_callback(
                 &mut stream,
                 400,
-                "This sign-in response could not be verified. Return to the desktop app and try again.",
+                "Sign-in could not be completed. Return to JevCode to see the next step.",
             )
             .await;
             Some(OpenAiAuthCompletion::new(
@@ -2463,6 +2477,31 @@ mod openai_auth_start_tests {
             ),
             ("network_error", OpenAiAuthFailureReason::NetworkError),
             ("provider_outage", OpenAiAuthFailureReason::ProviderOutage),
+            (
+                "invalid_auth_callback",
+                OpenAiAuthFailureReason::CallbackRejected,
+            ),
+            (
+                "openai_auth_code_rejected",
+                OpenAiAuthFailureReason::AuthorizationCodeRejected,
+            ),
+            (
+                "invalid_identity_token",
+                OpenAiAuthFailureReason::IdentityVerificationFailed,
+            ),
+            ("account_mismatch", OpenAiAuthFailureReason::AccountMismatch),
+            (
+                "account_already_connected",
+                OpenAiAuthFailureReason::AccountAlreadyConnected,
+            ),
+            (
+                "openai_client_configuration",
+                OpenAiAuthFailureReason::ConfigurationError,
+            ),
+            (
+                "subscription_unavailable",
+                OpenAiAuthFailureReason::SubscriptionUnavailable,
+            ),
             (
                 "invalid_auth_response",
                 OpenAiAuthFailureReason::OauthFailure,
@@ -2653,6 +2692,7 @@ mod openai_auth_start_tests {
         let response = String::from_utf8(response).unwrap();
 
         assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(response.contains("Return to JevCode to see the next step."));
         assert!(!response.contains("wrong"));
         assert_eq!(
             server.await.unwrap().map(|completion| completion.state),

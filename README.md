@@ -412,8 +412,13 @@ Authentication is intentionally separated by product entitlement:
   command; neither the URL nor OAuth tokens cross IPC or enter application
   logs. The copy action stops working after the attempt expires or ends. The
   page shows the waiting, cancel, reconnect, denial, timeout, network and
-  provider-outage states without exposing authorization material. Account
-  management displays only verified profile metadata and a stable short
+  provider-outage states without exposing authorization material. Callback
+  failures are logged with an app-owned error category only; JevCode never logs
+  the callback URL, authorization code, state, token response or identity claims.
+  Settings feedback distinguishes rejected callbacks, expired or reused codes,
+  identity-verification failures, account mismatches, and provider/configuration
+  errors. The browser callback page directs users back to JevCode for that
+  feedback. Account management displays only verified profile metadata and a stable short
   registration label for accounts sharing an email. Users can add, select,
   reconnect, or remove accounts; each selection loads that account's available
   models. API keys can be tested, replaced, disconnected, or explicitly selected
