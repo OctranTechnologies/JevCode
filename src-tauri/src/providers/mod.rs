@@ -61,3 +61,19 @@ pub fn adapter(provider: &Provider, state: SharedState) -> AppResult<Box<dyn Llm
         state.credentials.get(&provider.id)?,
     )?))
 }
+
+/// Resolve a provider catalog inside the native provider layer. OpenAI may use
+/// its ChatGPT OAuth session; all other adapters retain their API-key path.
+pub async fn available_models(provider: &Provider, state: SharedState) -> AppResult<Vec<Model>> {
+    if provider.id == "openai" {
+        return openai::OpenAIProvider::new(provider.clone(), state)?
+            .get_available_models()
+            .await;
+    }
+    let secret = state.credentials.get(&provider.id)?.ok_or_else(|| {
+        crate::error::AppError::new("credentials_required", "Connect this provider first.")
+    })?;
+    crate::auth::adapter(provider)?
+        .get_available_models(&secret)
+        .await
+}

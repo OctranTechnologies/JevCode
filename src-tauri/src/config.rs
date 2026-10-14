@@ -44,11 +44,11 @@ impl AppConfig {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
                 || !ids.insert(&provider.id)
-                || provider.models.is_empty()
+                || (provider.models.is_empty() && provider.id != "openai")
             {
                 return Err(AppError::new(
                     "configuration",
-                    "Provider IDs must be unique and each provider must have a model.",
+                    "Provider IDs must be unique and each provider must have a model, except OpenAI which loads its account-specific catalog.",
                 ));
             }
             let mut models = std::collections::HashSet::new();
@@ -105,6 +105,7 @@ mod tests {
         let mut config: AppConfig =
             serde_json::from_str(include_str!("providers/defaults.json")).unwrap();
         config.validate().unwrap();
+        assert!(config.providers[1].models.is_empty());
         config.providers[1].base_url = Some("http://example.com".into());
         assert!(config.validate().is_err());
     }

@@ -13,7 +13,9 @@ describe('desktop contracts', () => {
     expect(parsed.pendingToolCall?.name).toBe('git_status');
     const result = bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers, accounts: [], sessions: [parsed], usage: [], tools: [], permissionPolicy: parsed.permissionPolicy, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [] }, chatgpt: { available: true, connectedAccounts: [], unavailableReason: null } } });
     expect(result.providers.map(provider => provider.id)).toEqual(['preview', 'openai', 'anthropic', 'gemini', 'opencode-zen', 'opencode-go']);
-    expect(result.providers[1].models[0]).toMatchObject({ provider: 'openai', displayName: expect.any(String), supportsStreaming: true, status: 'available' });
+    // OpenAI models are account-scoped and loaded from the authenticated
+    // account's official model catalog instead of a guessed static list.
+    expect(result.providers[1].models).toEqual([]);
   });
   it('rejects malformed desktop payloads', () => {
     const parsed = sessionSchema.parse(session);

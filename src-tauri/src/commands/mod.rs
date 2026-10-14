@@ -5,7 +5,7 @@ use crate::{
     error::{AppError, AppResult},
     git,
     mcp::{McpServerActionInput, SaveMcpServerInput},
-    review,
+    providers, review,
     state::SharedState,
     tools, workspaces,
 };
@@ -95,8 +95,26 @@ fn catalog(state: &SharedState) -> AppResult<Vec<Provider>> {
         .map(|provider| {
             let mut descriptor = provider.clone();
             descriptor.models = models_for_provider(state, provider)?;
-            descriptor.connected = provider.protocol == ProviderProtocol::Preview
-                || state.credentials.get(&provider.id)?.is_some();
+            descriptor.connected = if provider.protocol == ProviderProtocol::Preview {
+                true
+            } else if provider.id == "openai" {
+                let oauth_accounts = state.database.openai_accounts()?;
+                if let Some(active) = oauth_accounts
+                    .into_iter()
+                    .max_by(|left, right| left.connected_at.cmp(&right.connected_at))
+                {
+                    active.connected
+                        && !active.requires_reconnect
+                        && active
+                            .granted_scopes
+                            .iter()
+                            .any(|scope| scope == "chatgpt.tokens.use.direct")
+                } else {
+                    state.credentials.get("openai")?.is_some()
+                }
+            } else {
+                state.credentials.get(&provider.id)?.is_some()
+            };
             Ok(descriptor)
         })
         .collect()
@@ -2606,14 +2624,8 @@ pub async fn get_provider_available_models(
     state: State<'_, SharedState>,
 ) -> AppResult<Vec<Model>> {
     let provider = state.config.provider(&provider_id)?;
-    let secret = state
-        .credentials
-        .get(&provider_id)?
-        .ok_or_else(|| AppError::new("credentials_required", "Connect this provider first."))?;
-    let models = auth::adapter(provider)?
-        .get_available_models(&secret)
-        .await?;
-    if !models.is_empty() {
+    let models = providers::available_models(provider, state.inner().clone()).await?;
+    if !models.is_empty() || provider.id == "openai" {
         state.database.save_model_catalog(&provider.id, &models)?;
     }
     Ok(models)

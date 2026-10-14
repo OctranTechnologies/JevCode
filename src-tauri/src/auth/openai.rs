@@ -2,8 +2,8 @@ use super::{ApiKeyAuthAdapter, ProviderAuthAdapter};
 use crate::{
     credentials::CredentialStore,
     domain::{
-        OpenAiAccount, OpenAiAuthStatus, OpenAiChatGptAuthStatus, Provider, ProviderAccount,
-        ProviderAccountInfo,
+        Model, ModelCapability, ModelStatus, OpenAiAccount, OpenAiAuthStatus,
+        OpenAiChatGptAuthStatus, Provider, ProviderAccount, ProviderAccountInfo,
     },
     error::{AppError, AppResult},
     persistence::Database,
@@ -31,6 +31,7 @@ const OPENAI_ISSUER: &str = "https://auth.openai.com";
 const OPENAI_DISCOVERY_URL: &str = "https://auth.openai.com/.well-known/openid-configuration";
 const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/api/accounts/oauth/token";
 const OPENAI_JWKS_URL: &str = "https://auth.openai.com/.well-known/jwks.json";
+const OPENAI_MODELS_URL: &str = "https://api.openai.com/v1/models";
 const OPENAI_RESOURCE: &str = "https://api.openai.com/v1";
 const OPENAI_SCOPES: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
@@ -80,16 +81,7 @@ pub(crate) enum OpenAiCallbackOutcome {
 /// and ID-token validation flow is implemented.
 pub(crate) enum OpenAiRequestCredential {
     ApiKey(String),
-    #[allow(dead_code)]
     ChatGptAccessToken(String),
-}
-
-impl OpenAiRequestCredential {
-    pub(crate) fn into_secret(self) -> String {
-        match self {
-            Self::ApiKey(secret) | Self::ChatGptAccessToken(secret) => secret,
-        }
-    }
 }
 
 /// Native-only OAuth token record. It is serialized only to a keychain item,
@@ -126,6 +118,69 @@ pub(crate) trait OpenAiOAuthTransport: Send + Sync {
     async fn exchange_code(&self, request: OpenAiTokenRequest) -> AppResult<OpenAiTokenResponse>;
     async fn refresh_token(&self, request: OpenAiRefreshRequest) -> AppResult<OpenAiTokenResponse>;
     async fn jwks(&self) -> AppResult<JwkSet>;
+}
+
+#[async_trait]
+pub(crate) trait OpenAiModelCatalogTransport: Send + Sync {
+    async fn list_models(&self, access_token: &str) -> AppResult<serde_json::Value>;
+}
+
+struct ReqwestOpenAiModelCatalogTransport {
+    client: Client,
+}
+
+impl ReqwestOpenAiModelCatalogTransport {
+    fn new() -> AppResult<Self> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .connect_timeout(std::time::Duration::from_secs(8))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| auth_network_error())?;
+        Ok(Self { client })
+    }
+
+    fn build_request(&self, access_token: &str) -> AppResult<reqwest::Request> {
+        if access_token.trim().is_empty() || access_token.len() > 65_536 {
+            return Err(openai_reconnect_error());
+        }
+        self.client
+            .get(OPENAI_MODELS_URL)
+            .bearer_auth(access_token)
+            .build()
+            .map_err(|_| {
+                AppError::new(
+                    "provider_configuration",
+                    "Could not prepare OpenAI model discovery.",
+                )
+            })
+    }
+}
+
+#[async_trait]
+impl OpenAiModelCatalogTransport for ReqwestOpenAiModelCatalogTransport {
+    async fn list_models(&self, access_token: &str) -> AppResult<serde_json::Value> {
+        let request = self.build_request(access_token)?;
+        let mut response = self.client.execute(request).await.map_err(|error| {
+            if error.is_timeout() || error.is_connect() {
+                auth_network_error()
+            } else {
+                crate::auth::provider_outage()
+            }
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = crate::auth::read_limited(&mut response, 8192).await;
+            return Err(chatgpt_response_error(status, &body));
+        }
+        let body = crate::auth::read_limited(&mut response, 2 * 1024 * 1024).await;
+        serde_json::from_slice(&body).map_err(|_| {
+            AppError::new(
+                "provider_format",
+                "OpenAI returned an unreadable account model catalog. Retry model discovery.",
+            )
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -494,6 +549,90 @@ fn auth_network_error() -> AppError {
     )
 }
 
+pub(crate) fn chatgpt_response_error(status: StatusCode, body: &[u8]) -> AppError {
+    let code = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/code")
+                .or_else(|| value.pointer("/error/type"))
+                .or_else(|| value.pointer("/code"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_ascii_lowercase)
+        })
+        .unwrap_or_default();
+    chatgpt_response_error_code(status, &code)
+}
+
+pub(crate) fn chatgpt_stream_error(
+    code: Option<&str>,
+    incomplete_reason: Option<&str>,
+) -> AppError {
+    if let Some(code) = code.filter(|code| !code.trim().is_empty()) {
+        return chatgpt_response_error_code(StatusCode::BAD_REQUEST, &code.to_ascii_lowercase());
+    }
+    let message = match incomplete_reason {
+        Some("max_output_tokens") => {
+            "OpenAI ended this response before completion. Retry with a shorter request."
+        }
+        Some("content_filter") => {
+            "OpenAI could not complete this response because of a content restriction."
+        }
+        _ => "OpenAI ended the response without completing it. Retry the request.",
+    };
+    AppError::new("openai_response_incomplete", message)
+}
+
+fn chatgpt_response_error_code(status: StatusCode, code: &str) -> AppError {
+    match code {
+        "subscription_sharing_usage_limit_exceeded" => AppError::new(
+            "chatgpt_plan_usage_limit",
+            "Your ChatGPT plan usage limit for JevCode has been reached. Review ChatGPT Settings → Usage before retrying.",
+        ),
+        "subscription_sharing_usage_unavailable" => AppError::new(
+            "provider_outage",
+            "OpenAI could not check ChatGPT plan usage right now. Your sign-in is still saved; try again later.",
+        ),
+        "subscription_sharing_user_not_eligible"
+        | "chatpass_v2_scope_not_authorized"
+        | "chatpass_v2_invalid_authorization_context" => chatgpt_plan_access_error(),
+        "subscription_sharing_unsupported_capability" => AppError::new(
+            "openai_unsupported_capability",
+            "OpenAI does not support this model or tool capability for the selected ChatGPT account. Choose another available model and retry.",
+        ),
+        "subscription_sharing_invalid_user"
+        | "invalid_refresh_token"
+        | "token_expired"
+        | "refresh_token_expired"
+        | "refresh_token_invalidated"
+        | "refresh_token_reused" => openai_reconnect_error(),
+        "subscription_sharing_route_not_supported" => AppError::new(
+            "openai_route_unsupported",
+            "OpenAI did not accept this request route for ChatGPT plan usage. JevCode will not change the billing method.",
+        ),
+        "model_not_found" | "model_unavailable" => AppError::new(
+            "openai_model_unavailable",
+            "This model is no longer available to the selected ChatGPT account. Refresh the OpenAI model list and choose another model.",
+        ),
+        _ if status == StatusCode::UNAUTHORIZED => openai_reconnect_error(),
+        _ if status == StatusCode::TOO_MANY_REQUESTS => AppError::new(
+            "chatgpt_plan_usage_limit",
+            "OpenAI temporarily limited ChatGPT plan requests. Check ChatGPT Settings → Usage and retry later.",
+        ),
+        _ if status == StatusCode::FORBIDDEN || status == StatusCode::PAYMENT_REQUIRED => {
+            chatgpt_plan_access_error()
+        }
+        _ if status.is_server_error() => AppError::new(
+            "provider_outage",
+            "OpenAI is temporarily unavailable for ChatGPT plan requests. Your sign-in is still saved; retry later.",
+        ),
+        _ => AppError::new(
+            "provider_rejected",
+            "OpenAI rejected this ChatGPT plan request. JevCode did not switch to API-key billing.",
+        ),
+    }
+}
+
 fn auth_http_error(status: StatusCode) -> AppError {
     if status == StatusCode::TOO_MANY_REQUESTS {
         AppError::new(
@@ -830,9 +969,102 @@ fn openai_reconnect_error() -> AppError {
     )
 }
 
+fn chatgpt_plan_access_error() -> AppError {
+    AppError::new(
+        "chatgpt_plan_unavailable",
+        "This ChatGPT account did not grant JevCode access to ChatGPT plan requests. Reconnect OpenAI and approve the requested model access.",
+    )
+}
+
+fn select_active_chatgpt_account(mut accounts: Vec<OpenAiAccount>) -> AppResult<OpenAiAccount> {
+    accounts.sort_by(|left, right| right.connected_at.cmp(&left.connected_at));
+    let account = accounts.into_iter().next().ok_or_else(|| {
+        AppError::new(
+            "credentials_required",
+            "Sign in with ChatGPT before using ChatGPT plan models.",
+        )
+    })?;
+    if account.requires_reconnect || !account.connected {
+        return Err(openai_reconnect_error());
+    }
+    Ok(account)
+}
+
+fn require_chatgpt_plan_scope(account: &OpenAiAccount) -> AppResult<()> {
+    if account
+        .granted_scopes
+        .iter()
+        .any(|scope| scope == "chatgpt.tokens.use.direct")
+    {
+        Ok(())
+    } else {
+        Err(chatgpt_plan_access_error())
+    }
+}
+
+fn normalize_chatgpt_models(data: serde_json::Value) -> AppResult<Vec<Model>> {
+    let models = data
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            AppError::new(
+                "provider_format",
+                "OpenAI returned an unexpected account model catalog. Retry model discovery.",
+            )
+        })?;
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized = Vec::new();
+    for model in models {
+        if model.get("visibility").and_then(serde_json::Value::as_str) != Some("list") {
+            continue;
+        }
+        let (Some(slug), Some(display_name)) = (
+            model.get("slug").and_then(serde_json::Value::as_str),
+            model
+                .get("display_name")
+                .and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        let slug = slug.trim();
+        let display_name = display_name.trim();
+        if slug.is_empty()
+            || slug.len() > 256
+            || slug.chars().any(char::is_control)
+            || display_name.is_empty()
+            || display_name.len() > 160
+            || display_name.chars().any(char::is_control)
+            || !seen.insert(slug.to_owned())
+        {
+            continue;
+        }
+        normalized.push(Model {
+            id: slug.to_owned(),
+            provider: "openai".into(),
+            display_name: display_name.to_owned(),
+            api_protocol: Some(crate::domain::ProviderProtocol::OpenAiResponses),
+            // The official ChatGPT-plan catalog guarantees the listed slug and
+            // display label, not per-model vision, context, or price metadata.
+            // Function tools and streaming are part of the documented route;
+            // OpenAI can still reject an unsupported model/tool capability.
+            capabilities: vec![ModelCapability::Tools, ModelCapability::Streaming],
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: false,
+            supports_streaming: true,
+            context_window: None,
+            input_price: None,
+            output_price: None,
+            status: ModelStatus::Available,
+        });
+    }
+    Ok(normalized)
+}
+
 pub struct OpenAIAuthManager {
     api_key: ApiKeyAuthAdapter,
     oauth: Arc<dyn OpenAiOAuthTransport>,
+    model_catalog: Arc<dyn OpenAiModelCatalogTransport>,
 }
 
 impl OpenAIAuthManager {
@@ -846,6 +1078,7 @@ impl OpenAIAuthManager {
         Ok(Self {
             api_key: ApiKeyAuthAdapter::new(provider)?,
             oauth: Arc::new(ReqwestOpenAiOAuthTransport::new()?),
+            model_catalog: Arc::new(ReqwestOpenAiModelCatalogTransport::new()?),
         })
     }
 
@@ -863,6 +1096,7 @@ impl OpenAIAuthManager {
         Ok(Self {
             api_key: ApiKeyAuthAdapter::new(provider)?,
             oauth,
+            model_catalog: Arc::new(ReqwestOpenAiModelCatalogTransport::new()?),
         })
     }
 
@@ -871,29 +1105,53 @@ impl OpenAIAuthManager {
         credentials: &CredentialStore,
         database: &Database,
     ) -> AppResult<OpenAiRequestCredential> {
+        let accounts = database.openai_accounts()?;
+        if !accounts.is_empty() {
+            let account = select_active_chatgpt_account(accounts)?;
+            require_chatgpt_plan_scope(&account)?;
+            let (access_token, _) = self
+                .session_access_token(credentials, database, &account.id, false)
+                .await?;
+            return Ok(OpenAiRequestCredential::ChatGptAccessToken(access_token));
+        }
+
         if let Some(api_key) = credentials.get("openai")? {
             return Ok(OpenAiRequestCredential::ApiKey(api_key));
         }
+        Err(AppError::new(
+            "credentials_required",
+            "Connect an OpenAI API key or sign in with ChatGPT to run agent requests.",
+        ))
+    }
 
-        let mut accounts = database.openai_accounts()?;
-        let has_saved_accounts = !accounts.is_empty();
-        accounts.sort_by(|left, right| right.connected_at.cmp(&left.connected_at));
-        let Some(account) = accounts
-            .into_iter()
-            .find(|account| !account.requires_reconnect)
-        else {
-            if has_saved_accounts {
-                return Err(openai_reconnect_error());
-            }
-            return Err(AppError::new(
-                "credentials_required",
-                "Connect an OpenAI API key or sign in with ChatGPT to run agent requests.",
-            ));
-        };
-        let (access_token, _) = self
-            .session_access_token(credentials, database, &account.id, false)
-            .await?;
-        Ok(OpenAiRequestCredential::ChatGptAccessToken(access_token))
+    pub async fn get_available_models(
+        &self,
+        credentials: &CredentialStore,
+        database: &Database,
+    ) -> AppResult<Vec<Model>> {
+        let accounts = database.openai_accounts()?;
+        if !accounts.is_empty() {
+            let account = select_active_chatgpt_account(accounts)?;
+            require_chatgpt_plan_scope(&account)?;
+            let (access_token, mut safe_account) = self
+                .session_access_token(credentials, database, &account.id, false)
+                .await?;
+            let token = Zeroizing::new(access_token);
+            let data = match self.model_catalog.list_models(&token).await {
+                Ok(data) => data,
+                Err(error) if error.code == "openai_reconnect_required" => {
+                    self.mark_needs_reconnect(credentials, database, &mut safe_account)?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+            return normalize_chatgpt_models(data);
+        }
+
+        if let Some(api_key) = credentials.get("openai")? {
+            return self.api_key.get_available_models(&api_key).await;
+        }
+        Ok(Vec::new())
     }
 
     /// Explicitly refresh one saved ChatGPT registration from the native layer.
@@ -908,6 +1166,25 @@ impl OpenAIAuthManager {
             .session_access_token(credentials, database, account_id, true)
             .await?;
         Ok(account)
+    }
+
+    pub(crate) fn mark_active_needs_reconnect(
+        &self,
+        credentials: &dyn OpenAiSessionStorage,
+        database: &Database,
+    ) -> AppResult<()> {
+        let account = select_active_chatgpt_account(database.openai_accounts()?)?;
+        let mut account = database
+            .openai_accounts()?
+            .into_iter()
+            .find(|saved| saved.id == account.id)
+            .ok_or_else(|| {
+                AppError::new(
+                    "account_not_found",
+                    "This ChatGPT account is no longer saved.",
+                )
+            })?;
+        self.mark_needs_reconnect(credentials, database, &mut account)
     }
 
     async fn session_access_token(
@@ -1235,31 +1512,27 @@ impl OpenAIAuthManager {
         )?;
 
         let account_id = openai_account_id(&authorization.client_id, &identity.subject);
-        let existing_account =
-            if let Some(expected_account_id) = pending.expected_account_id.as_deref() {
-                if account_id != expected_account_id {
-                    return Err(AppError::new(
-                        "account_mismatch",
-                        "OpenAI returned a different account. The saved account was not changed.",
-                    ));
-                }
-                let account = database
-                    .openai_accounts()?
-                    .into_iter()
-                    .find(|account| account.id == expected_account_id)
-                    .ok_or_else(|| {
-                        AppError::new(
-                            "account_not_found",
-                            "This OpenAI account is no longer saved.",
-                        )
-                    })?;
-                if account.client_id.as_deref() != Some(authorization.client_id.as_str()) {
-                    return Err(identity_verification_error());
-                }
-                Some(account)
-            } else {
-                None
-            };
+        if let Some(expected_account_id) = pending.expected_account_id.as_deref() {
+            if account_id != expected_account_id {
+                return Err(AppError::new(
+                    "account_mismatch",
+                    "OpenAI returned a different account. The saved account was not changed.",
+                ));
+            }
+            let account = database
+                .openai_accounts()?
+                .into_iter()
+                .find(|account| account.id == expected_account_id)
+                .ok_or_else(|| {
+                    AppError::new(
+                        "account_not_found",
+                        "This OpenAI account is no longer saved.",
+                    )
+                })?;
+            if account.client_id.as_deref() != Some(authorization.client_id.as_str()) {
+                return Err(identity_verification_error());
+            }
+        }
         let now = Utc::now();
         let expires_at = now
             .checked_add_signed(ChronoDuration::seconds(token_response.expires_in as i64))
@@ -1289,10 +1562,9 @@ impl OpenAIAuthManager {
             organization: None,
             client_id: Some(authorization.client_id.clone()),
             granted_scopes: scopes.clone(),
-            connected_at: existing_account
-                .as_ref()
-                .map(|account| account.connected_at.clone())
-                .unwrap_or_else(|| now.to_rfc3339()),
+            // The most recently authorized account is the active ChatGPT
+            // account for catalog discovery and inference.
+            connected_at: now.to_rfc3339(),
             expires_at: Some(expires_at.to_rfc3339()),
         };
         let session = OpenAiSession {
@@ -1638,6 +1910,82 @@ mod tests {
     const TEST_ACCESS_TOKEN: &str = "test-only-access-token";
     const TEST_REFRESH_TOKEN: &str = "test-only-refresh-token";
     const TEST_ID_TOKEN: &str = "test-only-id-token";
+
+    fn safe_account(id: &str, connected_at: &str, requires_reconnect: bool) -> OpenAiAccount {
+        OpenAiAccount {
+            id: id.into(),
+            connected: !requires_reconnect,
+            access_token_valid: !requires_reconnect,
+            requires_reconnect,
+            display_name: None,
+            email: None,
+            organization: None,
+            client_id: Some(TEST_CLIENT_ID.into()),
+            granted_scopes: vec!["chatgpt.tokens.use.direct".into()],
+            connected_at: connected_at.into(),
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn chatgpt_catalog_uses_only_documented_visible_slugs_and_labels() {
+        let models = normalize_chatgpt_models(serde_json::json!({
+            "models": [
+                { "slug": "account-model-a", "display_name": "Account Model A", "visibility": "list" },
+                { "slug": "hidden-model", "display_name": "Hidden", "visibility": "internal" },
+                { "slug": "account-model-a", "display_name": "Duplicate", "visibility": "list" },
+                { "id": "guessed-model", "name": "Guessed", "visibility": "list" },
+                { "slug": "bad\nslug", "display_name": "Invalid", "visibility": "list" }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "account-model-a");
+        assert_eq!(models[0].display_name, "Account Model A");
+        assert_eq!(models[0].provider, "openai");
+        assert_eq!(
+            models[0].api_protocol,
+            Some(crate::domain::ProviderProtocol::OpenAiResponses)
+        );
+        assert!(models[0].supports_tools);
+        assert!(models[0].supports_streaming);
+        assert_eq!(models[0].context_window, None);
+        assert_eq!(models[0].input_price, None);
+    }
+
+    #[test]
+    fn chatgpt_model_discovery_uses_official_endpoint_and_bearer_auth() {
+        let transport = ReqwestOpenAiModelCatalogTransport::new().unwrap();
+        let request = transport.build_request(TEST_ACCESS_TOKEN).unwrap();
+        assert_eq!(request.method(), reqwest::Method::GET);
+        assert_eq!(request.url().as_str(), OPENAI_MODELS_URL);
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .unwrap(),
+            &format!("Bearer {TEST_ACCESS_TOKEN}")
+        );
+        assert!(!request.url().as_str().contains(TEST_ACCESS_TOKEN));
+    }
+
+    #[test]
+    fn active_chatgpt_account_is_the_latest_authorized_and_never_skips_to_an_older_one() {
+        let older = safe_account("older", "2026-10-12T10:00:00Z", false);
+        let newest = safe_account("newest", "2026-10-13T10:00:00Z", true);
+        let error = select_active_chatgpt_account(vec![older, newest]).unwrap_err();
+        assert_eq!(error.code, "openai_reconnect_required");
+    }
+
+    #[test]
+    fn chatgpt_plan_requests_require_the_direct_usage_scope() {
+        let mut account = safe_account("account", "2026-10-13T10:00:00Z", false);
+        account.granted_scopes = vec!["openid".into(), "profile".into()];
+        let error = require_chatgpt_plan_scope(&account).unwrap_err();
+        assert_eq!(error.code, "chatgpt_plan_unavailable");
+        assert!(!error.message.contains("API key"));
+    }
 
     fn test_provider() -> Provider {
         Provider {

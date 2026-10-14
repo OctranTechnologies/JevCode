@@ -652,6 +652,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .openai-auth-feedback.success { color: var(--wb-success); background: var(--wb-success-soft); border-color: color-mix(in srgb, var(--wb-success) 28%, var(--wb-border)); }
 .openai-auth-feedback.error { color: var(--wb-danger); background: var(--wb-danger-soft); border-color: color-mix(in srgb, var(--wb-danger) 28%, var(--wb-border)); }
 .openai-auth-feedback.info { color: var(--wb-muted-strong); }
+.openai-auth-routing-note { margin: 11px 0 0 42px; padding: 8px 10px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 6px; font-size: 9px; line-height: 1.55; }
 .openai-auth-feedback > span, .openai-auth-waiting > div { min-width: 0; }
 .openai-auth-feedback > button { margin-inline-start: auto; }
 .openai-auth-waiting { justify-content: flex-start; }
@@ -670,6 +671,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .openai-apikey-action:hover:not(:disabled) { background: var(--wb-surface-quiet); border-color: var(--wb-border-strong); }
 .openai-choice-divider { color: var(--wb-muted); font-size: 9px; text-align: center; text-transform: uppercase; }
 .openai-method-list { display: grid; margin: 14px 0 0 42px; border-top: 1px solid var(--wb-border); }
+.openai-catalog-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 0; border-top: 1px solid var(--wb-border); }
+.openai-catalog-actions > span { color: var(--wb-muted); font-size: 9px; }
 .openai-method-group + .openai-method-row, .openai-method-row + .openai-method-row { border-top: 1px solid var(--wb-border); }
 .openai-method-row { display: grid; grid-template-columns: minmax(125px, .58fr) minmax(170px, 1fr) auto; align-items: center; gap: 11px; min-width: 0; padding: 12px 0; }
 .openai-method-status, .openai-method-account { display: grid; min-width: 0; gap: 5px; }
@@ -814,7 +817,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .account-connect-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .account-form-actions { flex-wrap: wrap; }
   .account-method-note, .account-model-list { margin-left: 0; }
-  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-connection-choices, .openai-method-list, .openai-key-form { margin-inline-start: 0; }
+  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-auth-routing-note, .openai-connection-choices, .openai-method-list, .openai-key-form { margin-inline-start: 0; }
+  .openai-catalog-actions { align-items: flex-start; flex-direction: column; }
   .openai-connection-choices { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .openai-choice-divider { padding: 1px 0; }
   .openai-method-row { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; }

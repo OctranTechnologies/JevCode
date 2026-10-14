@@ -63,6 +63,43 @@ pub fn encode_streaming(
     Ok((path, payload))
 }
 
+/// ChatGPT-plan requests use the documented Responses route but must expose
+/// client-side functions as one supported namespace. The caller also uses
+/// this streaming form for buffered requests so the OAuth flow always streams.
+pub fn encode_chatgpt_streaming(request: &ProviderRequest<'_>) -> AppResult<(String, Value)> {
+    if request.protocol != &ProviderProtocol::OpenAiResponses {
+        return Err(AppError::new(
+            "openai_route_unsupported",
+            "ChatGPT sign-in requires OpenAI’s Responses API.",
+        ));
+    }
+    let (path, mut payload) = encode_streaming(request.protocol, request)?;
+    if !request.tools.is_empty() {
+        let functions: Vec<_> = request
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                    "strict": true
+                })
+            })
+            .collect();
+        payload["tools"] = json!([{
+            "type": "namespace",
+            "name": "jevcode_workspace",
+            "description": "Local project and repository tools executed by JevCode after permission checks.",
+            "tools": functions
+        }]);
+    }
+    payload["store"] = json!(false);
+    payload["stream"] = json!(true);
+    Ok((path, payload))
+}
+
 pub fn stream_delta(protocol: &ProviderProtocol, value: &Value) -> String {
     match protocol {
         ProviderProtocol::OpenAiChat => value["choices"][0]["delta"]["content"]
@@ -104,28 +141,67 @@ struct PartialChatTool {
 /// buffered adapters. Only visible text deltas leave this collector.
 pub struct StreamAccumulator {
     protocol: ProviderProtocol,
+    chatgpt_plan: bool,
     chat_tools: BTreeMap<u64, PartialChatTool>,
     anthropic_blocks: BTreeMap<u64, Value>,
     anthropic_arguments: BTreeMap<u64, String>,
     visible_text: String,
     gemini_parts: Vec<Value>,
     final_response: Option<Value>,
+    response_failure: Option<String>,
+    incomplete_reason: Option<String>,
     input_tokens: u64,
     usage_available: bool,
     cached_input_tokens: Option<u64>,
     output_tokens: u64,
 }
 
+fn response_stream_error(
+    chatgpt_plan: bool,
+    code: Option<&str>,
+    incomplete_reason: Option<&str>,
+) -> AppError {
+    if chatgpt_plan {
+        return crate::auth::openai::chatgpt_stream_error(code, incomplete_reason);
+    }
+    match code.unwrap_or_default() {
+        "rate_limit_exceeded" | "insufficient_quota" => AppError::new(
+            "quota_exhausted",
+            "OpenAI reports that this account reached a request or usage limit. Check its usage and retry later.",
+        ),
+        "model_not_found" | "model_unavailable" => AppError::new(
+            "unknown_model",
+            "OpenAI no longer has this model available. Refresh the model list and choose another model.",
+        ),
+        _ if incomplete_reason.is_some() => AppError::new(
+            "openai_response_incomplete",
+            "OpenAI ended the response without completing it. Retry the request.",
+        ),
+        _ => AppError::new(
+            "provider_outage",
+            "OpenAI could not complete this response. Retry the request.",
+        ),
+    }
+}
+
 impl StreamAccumulator {
+    #[cfg(test)]
     pub fn new(protocol: ProviderProtocol) -> Self {
+        Self::new_with_chatgpt_plan(protocol, false)
+    }
+
+    pub fn new_with_chatgpt_plan(protocol: ProviderProtocol, chatgpt_plan: bool) -> Self {
         Self {
             protocol,
+            chatgpt_plan,
             chat_tools: BTreeMap::new(),
             anthropic_blocks: BTreeMap::new(),
             anthropic_arguments: BTreeMap::new(),
             visible_text: String::new(),
             gemini_parts: Vec::new(),
             final_response: None,
+            response_failure: None,
+            incomplete_reason: None,
             input_tokens: 0,
             usage_available: false,
             cached_input_tokens: None,
@@ -171,6 +247,17 @@ impl StreamAccumulator {
             ProviderProtocol::OpenAiResponses => {
                 if value["type"] == "response.completed" {
                     self.final_response = value.get("response").cloned();
+                } else if value["type"] == "response.failed" {
+                    self.response_failure = value["response"]["error"]["code"]
+                        .as_str()
+                        .or_else(|| value["error"]["code"].as_str())
+                        .filter(|code| code.len() <= 128)
+                        .map(str::to_owned);
+                } else if value["type"] == "response.incomplete" {
+                    self.incomplete_reason = value["response"]["incomplete_details"]["reason"]
+                        .as_str()
+                        .filter(|reason| reason.len() <= 128)
+                        .map(str::to_owned);
                 }
             }
             ProviderProtocol::Anthropic => match value["type"].as_str().unwrap_or_default() {
@@ -250,12 +337,15 @@ impl StreamAccumulator {
     pub fn finish(mut self) -> AppResult<ProviderResponse> {
         match self.protocol {
             ProviderProtocol::OpenAiResponses => {
-                let response = self.final_response.ok_or_else(|| {
-                    AppError::new(
-                        "provider_format",
-                        "The provider stream ended before a complete response arrived.",
-                    )
-                })?;
+                if let Some(code) = self.response_failure.as_deref() {
+                    return Err(response_stream_error(self.chatgpt_plan, Some(code), None));
+                }
+                if let Some(reason) = self.incomplete_reason.as_deref() {
+                    return Err(response_stream_error(self.chatgpt_plan, None, Some(reason)));
+                }
+                let response = self
+                    .final_response
+                    .ok_or_else(|| response_stream_error(self.chatgpt_plan, None, None))?;
                 decode(&self.protocol, response)
             }
             ProviderProtocol::OpenAiChat => {
@@ -825,6 +915,99 @@ mod tests {
         assert_eq!(response.content, "Hello world");
         assert_eq!(response.tool_calls[0].name, "list_directory");
         assert_eq!(response.tool_calls[0].arguments["path"], ".");
+    }
+
+    #[test]
+    fn chatgpt_plan_payload_uses_streaming_namespaced_local_tools_and_no_storage() {
+        let protocol = ProviderProtocol::OpenAiResponses;
+        let messages = vec![
+            AgentMessage::text(MessageRole::System, "Inspect safely."),
+            AgentMessage::text(MessageRole::User, "Read the project README."),
+        ];
+        let tools = crate::tools::definitions();
+        let (_, payload) = encode_chatgpt_streaming(&ProviderRequest {
+            model_id: "account-provided-slug",
+            protocol: &protocol,
+            messages: &messages,
+            tools: &tools,
+        })
+        .unwrap();
+
+        assert_eq!(payload["model"], "account-provided-slug");
+        assert_eq!(payload["store"], false);
+        assert_eq!(payload["stream"], true);
+        assert_eq!(payload["instructions"], "Inspect safely.");
+        assert_eq!(payload["input"][0]["role"], "user");
+        assert_eq!(payload["tools"][0]["type"], "namespace");
+        assert_eq!(payload["tools"][0]["name"], "jevcode_workspace");
+        assert_eq!(payload["tools"][0]["tools"][0]["type"], "function");
+        assert_eq!(payload["tools"][0]["tools"][0]["name"], tools[0].name);
+        assert!(payload.get("max_output_tokens").is_none());
+        assert!(payload.get("previous_response_id").is_none());
+    }
+
+    #[test]
+    fn chatgpt_plan_stream_round_trips_function_calls_and_usage() {
+        let mut stream =
+            StreamAccumulator::new_with_chatgpt_plan(ProviderProtocol::OpenAiResponses, true);
+        stream
+            .push(&json!({"type":"response.output_text.delta","delta":"I’ll inspect the files."}));
+        stream.push(&json!({"type":"response.completed","response":{"output":[
+            {"type":"message","content":[{"type":"output_text","text":"I’ll inspect the files."}]},
+            {"type":"function_call","call_id":"call_123","name":"read_file","arguments":"{\"path\":\"README.md\"}"}
+        ],"usage":{"input_tokens":21,"input_tokens_details":{"cached_tokens":5},"output_tokens":8}}}));
+        let response = stream.finish().unwrap();
+        assert_eq!(response.content, "I’ll inspect the files.");
+        assert_eq!(response.tool_calls[0].id, "call_123");
+        assert_eq!(response.tool_calls[0].name, "read_file");
+        assert_eq!(response.tool_calls[0].arguments["path"], "README.md");
+        assert_eq!(response.input_tokens, 21);
+        assert_eq!(response.cached_input_tokens, Some(5));
+        assert_eq!(response.output_tokens, 8);
+
+        let mut assistant = AgentMessage::text(MessageRole::Assistant, response.content);
+        assistant.provider_data = response.provider_data;
+        assistant.tool_calls = response.tool_calls;
+        let mut tool_result = AgentMessage::text(MessageRole::Tool, "README contents");
+        tool_result.tool_result = Some(ToolResult {
+            tool_call_id: "call_123".into(),
+            name: "read_file".into(),
+            content: "README contents".into(),
+            is_error: false,
+            duration_ms: 3,
+            structured_content: None,
+        });
+        let messages = vec![assistant, tool_result];
+        let tools = crate::tools::definitions();
+        let (_, payload) = encode_chatgpt_streaming(&ProviderRequest {
+            model_id: "account-provided-slug",
+            protocol: &ProviderProtocol::OpenAiResponses,
+            messages: &messages,
+            tools: &tools,
+        })
+        .unwrap();
+        assert_eq!(payload["input"][1]["type"], "function_call");
+        assert_eq!(payload["input"][2]["type"], "function_call_output");
+        assert_eq!(payload["input"][2]["call_id"], "call_123");
+        assert_eq!(payload["input"][2]["output"], "README contents");
+    }
+
+    #[test]
+    fn chatgpt_plan_stream_surfaces_usage_limits_and_incomplete_responses() {
+        let mut limited =
+            StreamAccumulator::new_with_chatgpt_plan(ProviderProtocol::OpenAiResponses, true);
+        limited.push(&json!({"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"do not expose provider body"}}}));
+        let error = limited.finish().unwrap_err();
+        assert_eq!(error.code, "chatgpt_plan_usage_limit");
+        assert!(!error.message.contains("provider body"));
+
+        let mut incomplete =
+            StreamAccumulator::new_with_chatgpt_plan(ProviderProtocol::OpenAiResponses, true);
+        incomplete.push(&json!({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}));
+        assert_eq!(
+            incomplete.finish().unwrap_err().code,
+            "openai_response_incomplete"
+        );
     }
 
     #[test]

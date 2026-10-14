@@ -261,15 +261,20 @@ The catalog in `src-tauri/src/providers/defaults.json` includes:
 | Provider | Protocol | Default model |
 | --- | --- | --- |
 | Local preview | In-process deterministic adapter | Workspace explorer |
-| OpenAI | Responses | `gpt-5.4-mini` |
+| OpenAI | Responses | Account-specific catalog |
 | Anthropic | Messages | `claude-sonnet-4-6` |
 | Google Gemini | GenerateContent | `gemini-2.5-flash` |
 | OpenCode Zen | OpenAI-compatible Chat Completions | `deepseek-v4-flash` |
 | OpenCode Go | OpenAI-compatible Chat Completions | `deepseek-v4-flash` |
 
 These are editable fallback entries for offline setup, not the authoritative
-entitlement catalog. When a provider is connected, JevCode retrieves its model
-list through that provider's adapter and persists the normalized catalog locally.
+entitlement catalog. OpenAI has no hardcoded model fallback: JevCode retrieves
+the selected credential's catalog and persists the normalized results locally.
+For ChatGPT OAuth, this uses OpenAI's documented `GET /v1/models` response,
+keeps only entries with `visibility: "list"`, displays `display_name`, and sends
+the returned `slug` as the Responses API model. Unknown pricing, context-window,
+vision and reasoning fields remain unset rather than being guessed. Other
+connected providers retrieve their model list through their own adapters.
 Models and provider access can change. Zen and Go are separate configured providers using
 their [documented endpoints](https://opencode.ai/docs/zen/) and
 [Go endpoints](https://opencode.ai/docs/go/). A gateway model requiring a different
@@ -327,12 +332,12 @@ catalog endpoint, so a connection check does not issue a billable model request.
 
 `src-tauri/src/auth` defines the provider-neutral `ProviderAuthAdapter` contract
 for connect, disconnect, refresh, validation, account info, model discovery and
-status. `OpenAIAuthManager` implements that contract for OpenAI API keys and
-owns the future ChatGPT-session boundary. `OpenAIProvider` is a distinct native
-transport adapter; the generic agent runtime asks the provider factory for an
-`LlmProvider` and never reads a key or token. Other API-key providers continue
-through the shared adapter. The current transports use bearer authorization for
-OpenAI and OpenCode, `x-api-key` for Anthropic, and `x-goog-api-key` for Gemini.
+status. `OpenAIAuthManager` owns OpenAI API keys, ChatGPT sessions, model discovery,
+and token refresh. `OpenAIProvider` is a distinct native transport adapter; the
+generic agent runtime asks the provider factory for an `LlmProvider` and never
+reads a key or token. Other API-key providers continue through the shared
+adapter. The current transports use bearer authorization for OpenAI and OpenCode,
+`x-api-key` for Anthropic, and `x-goog-api-key` for Gemini.
 Zen and Go model catalog URLs are taken from their official docs. Safe account
 metadata is stored in SQLite; credentials stay in the OS keychain under service
 `dev.jevcode.desktop` (OpenAI ChatGPT sessions use a separate namespaced
@@ -363,15 +368,22 @@ Authentication is intentionally separated by product entitlement:
   data stored in SQLite. The React layer receives only safe account state. On
   startup, bootstrap restores saved profiles and reports whether each access
   token is valid or due for refresh. Before each OpenAI request, the native
-  adapter uses the configured API key when present; otherwise it loads the
-  newest saved ChatGPT session from the OS credential store. It refreshes within
+  adapter uses the most recently authorized ChatGPT session when one is saved;
+  otherwise it uses the API key only if the user connected one. OAuth errors do
+  not fall through to API-key billing. To deliberately switch to API-key billing,
+  disconnect ChatGPT OAuth first. It refreshes within
   five minutes of expiry, respects OpenAI's `earliest_refresh_at` value, and
   serializes refreshes per account so only one request rotates tokens at a
   time. The documented form-encoded refresh grant uses that registration's
   issued client ID, refresh token and `resource=https://api.openai.com/v1`,
   omitting `scope`. JevCode saves the new access and replacement refresh tokens
   before continuing the model request, and only sends ChatGPT credentials to
-  the official OpenAI Responses API host. A terminal revoked or expired refresh
+  the official OpenAI Responses API host. ChatGPT-plan requests always use
+  `store: false` and `stream: true`, send complete local history through
+  `input`, and place JevCode function tools in the documented namespace form.
+  The stream must finish with `response.completed`; rate/usage-limit, unavailable,
+  unsupported-capability and incomplete-response errors remain distinct and do
+  not trigger a billing-mode switch. A terminal revoked or expired refresh
   error clears the unusable credential and leaves a safe profile marked
   **Reconnect needed**. Network and service errors preserve the saved session
   and do not start a refresh retry loop. `openai_auth_status`,
@@ -383,7 +395,11 @@ Authentication is intentionally separated by product entitlement:
   the page shows the waiting, cancel, reconnect, denial, timeout, network and
   provider-outage states without exposing authorization material. Account
   management displays only verified profile metadata. API keys can be tested,
-  replaced or disconnected independently of ChatGPT OAuth.
+  replaced or disconnected independently of ChatGPT OAuth. When both methods
+  are saved, the UI states that ChatGPT OAuth is the active OpenAI request route;
+  a connected API key is never used as a silent fallback. Successful sign-in
+  refreshes the account-specific model picker, and cached catalog metadata is
+  restored on app restart.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are supported. Google documents OAuth for Gemini with a
@@ -402,6 +418,8 @@ unavailable, network error and provider outage.
 Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
 [OpenAI Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
 [OpenAI accounts, sessions and token refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions),
+[OpenAI ChatGPT-plan models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference),
+[OpenAI ChatGPT-plan Responses limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations),
 [OpenAI token reference](https://developers.openai.com/siwc/token-sharing-open-source/token-reference),
 [OpenAI errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery),
 [OpenAI OIDC discovery and ID-token verification](https://developers.openai.com/siwc/website),
