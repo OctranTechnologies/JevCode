@@ -1137,14 +1137,9 @@ async fn drive(
                 "This model is no longer available. Choose another model from the picker.",
             )
         })?;
-    let secret = if provider_config.protocol == ProviderProtocol::Preview {
-        None
-    } else {
-        state.credentials.get(&provider_config.id)?
-    };
     let adapter = match provider_override {
         Some(provider) => provider,
-        None => providers::adapter(provider_config, secret)?,
+        None => providers::adapter(provider_config, &state.credentials)?,
     };
     runtime
         .execute(

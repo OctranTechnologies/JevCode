@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { bootstrapSchema, sessionSchema } from '../src/lib/schemas';
+import { bootstrapSchema, openAIAuthStatusSchema, sessionSchema } from '../src/lib/schemas';
 import { mergeSession } from '../src/app/store';
 import { normalizeError } from '../src/lib/errors';
 import { displayPath } from '../src/lib/paths';
@@ -19,6 +19,15 @@ describe('desktop contracts', () => {
     const parsed = sessionSchema.parse(session);
     expect(sessionSchema.safeParse({ ...parsed, status: 'made_up' }).success).toBe(false);
     expect(sessionSchema.safeParse({ ...parsed, messages: [{ role: 'user' }] }).success).toBe(false);
+  });
+  it('keeps OpenAI status token-free across the typed IPC contract', () => {
+    const safeStatus = {
+      apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [] },
+      chatgpt: { available: false, connectedAccounts: [], unavailableReason: 'Sign in is not enabled yet.' },
+    };
+    expect(openAIAuthStatusSchema.parse(safeStatus).chatgpt.connectedAccounts).toEqual([]);
+    expect(openAIAuthStatusSchema.safeParse({ ...safeStatus, accessToken: 'must-not-cross-ipc' }).success).toBe(false);
+    expect(openAIAuthStatusSchema.safeParse({ ...safeStatus, apiKey: { ...safeStatus.apiKey, refreshToken: 'must-not-cross-ipc' } }).success).toBe(false);
   });
   it('does not let a late command response overwrite newer events', () => {
     const parsed = sessionSchema.parse(session);

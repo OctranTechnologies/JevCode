@@ -50,6 +50,7 @@ impl Database {
         Self::migrate_permissions(&connection)?;
         Self::migrate_code_review(&connection)?;
         Self::migrate_mcp(&connection)?;
+        Self::migrate_openai_accounts(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -183,6 +184,41 @@ impl Database {
              );
              PRAGMA user_version = 9;",
         )?;
+        Ok(())
+    }
+
+    fn migrate_openai_accounts(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS openai_accounts (
+                 id TEXT PRIMARY KEY, data TEXT NOT NULL
+             );
+             PRAGMA user_version = 10;",
+        )?;
+        Ok(())
+    }
+
+    /// Persist only the safe OpenAI account profile. Token material has a
+    /// separate keychain-only path in the native authentication module.
+    pub fn openai_accounts(&self) -> AppResult<Vec<OpenAiAccount>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare("SELECT data FROM openai_accounts ORDER BY id")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn save_openai_account(&self, account: &OpenAiAccount) -> AppResult<()> {
+        self.connection()?.execute(
+            "INSERT INTO openai_accounts(id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            params![account.id, serde_json::to_string(account)?],
+        )?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn delete_openai_account(&self, id: &str) -> AppResult<()> {
+        self.connection()?
+            .execute("DELETE FROM openai_accounts WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -753,6 +789,35 @@ mod tests {
         assert_eq!(preferences.default_model, Some(selection.clone()));
         assert_eq!(preferences.favorites, vec![selection.clone()]);
         assert_eq!(preferences.recent, vec![selection]);
+    }
+
+    #[test]
+    fn openai_profile_metadata_survives_reopen_without_oauth_tokens() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("openai-auth.sqlite");
+        let account = OpenAiAccount {
+            id: "safe-account-id".into(),
+            display_name: Some("Example".into()),
+            email: Some("user@example.test".into()),
+            organization: None,
+            client_id: Some("issued-client-id".into()),
+            granted_scopes: vec!["openid".into(), "profile".into()],
+            connected_at: "2026-01-01T00:00:00Z".into(),
+            expires_at: None,
+        };
+        {
+            let database = Database::open(&path).unwrap();
+            database.save_openai_account(&account).unwrap();
+        }
+        let database = Database::open(&path).unwrap();
+        assert_eq!(database.openai_accounts().unwrap(), vec![account]);
+        let connection = Connection::open(&path).unwrap();
+        let persisted: String = connection
+            .query_row("SELECT data FROM openai_accounts", [], |row| row.get(0))
+            .unwrap();
+        for token_field in ["accessToken", "refreshToken", "idToken"] {
+            assert!(!persisted.contains(token_field));
+        }
     }
 
     #[test]

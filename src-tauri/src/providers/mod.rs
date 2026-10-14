@@ -1,8 +1,9 @@
 mod http;
+mod openai;
 mod preview;
 mod wire;
 
-use crate::{domain::*, error::AppResult};
+use crate::{credentials::CredentialStore, domain::*, error::AppResult};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -45,9 +46,21 @@ pub trait LlmProvider: Send + Sync {
     }
 }
 
-pub fn adapter(provider: &Provider, secret: Option<String>) -> AppResult<Box<dyn LlmProvider>> {
+pub fn adapter(
+    provider: &Provider,
+    credentials: &CredentialStore,
+) -> AppResult<Box<dyn LlmProvider>> {
     if provider.protocol == ProviderProtocol::Preview {
         return Ok(Box::new(preview::PreviewProvider));
     }
-    Ok(Box::new(http::HttpProvider::new(provider.clone(), secret)?))
+    if provider.id == "openai" {
+        return Ok(Box::new(openai::OpenAIProvider::new(
+            provider.clone(),
+            credentials,
+        )?));
+    }
+    Ok(Box::new(http::HttpProvider::new(
+        provider.clone(),
+        credentials.get(&provider.id)?,
+    )?))
 }

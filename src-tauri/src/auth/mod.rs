@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 mod oauth;
+mod openai;
 
 #[async_trait]
 pub trait ProviderAuthAdapter: Send + Sync {
@@ -470,8 +471,27 @@ impl ProviderAuthAdapter for ApiKeyAuthAdapter {
     }
 }
 
-pub fn adapter(provider: &Provider) -> AppResult<ApiKeyAuthAdapter> {
-    ApiKeyAuthAdapter::new(provider.clone())
+pub fn adapter(provider: &Provider) -> AppResult<Box<dyn ProviderAuthAdapter>> {
+    if provider.id == "openai" {
+        return Ok(Box::new(openai::OpenAIAuthManager::new(provider.clone())?));
+    }
+    Ok(Box::new(ApiKeyAuthAdapter::new(provider.clone())?))
+}
+
+pub fn openai_auth_status(
+    provider: &Provider,
+    credentials: &CredentialStore,
+    database: &crate::persistence::Database,
+    stored: Option<ProviderAccount>,
+) -> AppResult<crate::domain::OpenAiAuthStatus> {
+    openai::OpenAIAuthManager::new(provider.clone())?.status(credentials, database, stored)
+}
+
+pub(crate) fn openai_request_credential(
+    provider: &Provider,
+    credentials: &CredentialStore,
+) -> AppResult<openai::OpenAiRequestCredential> {
+    openai::OpenAIAuthManager::new(provider.clone())?.request_credential(credentials)
 }
 
 /// Metadata describes flows JevCode can show without silently enabling unregistered OAuth.

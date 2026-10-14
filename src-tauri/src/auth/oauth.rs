@@ -1,8 +1,8 @@
 use crate::domain::{ProviderAuthMethod, ProviderAuthMethodOption};
 
-/// The OpenAI open-source Sign in with ChatGPT flow is reserved for a future
-/// adapter that implements the documented PKCE, issued-client, scope and ID-token
-/// verification contract. JevCode does not currently ship that integration.
+/// OpenAI documents Sign in with ChatGPT for eligible open-source apps. JevCode
+/// has not implemented the required issued-client registration, PKCE callback,
+/// token exchange, and ID-token/scope verification contract yet.
 /// See https://developers.openai.com/siwc/token-sharing-open-source/sign-in.
 pub struct OpenAiChatGptAdapter;
 
@@ -29,7 +29,7 @@ pub(super) fn chatgpt_method() -> ProviderAuthMethodOption {
         label: "Sign in with ChatGPT".into(),
         available: false,
         unavailable_reason: Some(
-            "JevCode has not enabled OpenAI's official open-source ChatGPT sign-in flow yet. API keys remain available.".into(),
+            "The official OpenAI open-source sign-in flow is documented, but JevCode has not implemented its registration, PKCE callback, or token verification yet. API keys remain available.".into(),
         ),
     }
 }

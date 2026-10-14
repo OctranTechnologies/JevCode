@@ -1,6 +1,6 @@
 use crate::{
     agent::{self, EventSink},
-    auth::{self, ProviderAuthAdapter},
+    auth,
     domain::*,
     error::{AppError, AppResult},
     git,
@@ -1899,6 +1899,13 @@ pub fn get_provider_auth_status(
     state: State<'_, SharedState>,
 ) -> AppResult<ProviderAccount> {
     account_status(&state, state.config.provider(&provider_id)?)
+}
+
+#[tauri::command]
+pub fn get_openai_auth_status(state: State<'_, SharedState>) -> AppResult<OpenAiAuthStatus> {
+    let provider = state.config.provider("openai")?;
+    let stored = state.database.provider_account("openai")?;
+    auth::openai_auth_status(provider, &state.credentials, &state.database, stored)
 }
 
 #[tauri::command]

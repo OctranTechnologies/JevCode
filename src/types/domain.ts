@@ -41,6 +41,26 @@ export interface ProviderAccountInfo {
   authMethod: ProviderAuthMethod;
   accountLabel: string;
 }
+/** Safe OpenAI identity metadata. Session tokens remain native-only. */
+export interface OpenAIAccount {
+  id: string;
+  displayName: string | null;
+  email: string | null;
+  organization: string | null;
+  clientId: string | null;
+  grantedScopes: string[];
+  connectedAt: string;
+  expiresAt: string | null;
+}
+export interface OpenAIChatGptAuthStatus {
+  available: boolean;
+  connectedAccounts: OpenAIAccount[];
+  unavailableReason: string | null;
+}
+export interface OpenAIAuthStatus {
+  apiKey: ProviderAccount;
+  chatgpt: OpenAIChatGptAuthStatus;
+}
 export interface Model {
   id: string;
   provider: string;

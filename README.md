@@ -327,18 +327,30 @@ catalog endpoint, so a connection check does not issue a billable model request.
 
 `src-tauri/src/auth` defines the provider-neutral `ProviderAuthAdapter` contract
 for connect, disconnect, refresh, validation, account info, model discovery and
-status. The current API-key adapter uses bearer authorization for OpenAI and
-OpenCode, `x-api-key` for Anthropic, and `x-goog-api-key` for Gemini. Zen and Go
-model catalog URLs are taken from their official docs. Account labels and
-connection timestamps are safe metadata stored in SQLite; the secret remains
-in the OS keychain under service `dev.jevcode.desktop`.
+status. `OpenAIAuthManager` implements that contract for OpenAI API keys and
+owns the future ChatGPT-session boundary. `OpenAIProvider` is a distinct native
+transport adapter; the generic agent runtime asks the provider factory for an
+`LlmProvider` and never reads a key or token. Other API-key providers continue
+through the shared adapter. The current transports use bearer authorization for
+OpenAI and OpenCode, `x-api-key` for Anthropic, and `x-goog-api-key` for Gemini.
+Zen and Go model catalog URLs are taken from their official docs. Safe account
+metadata is stored in SQLite; credentials stay in the OS keychain under service
+`dev.jevcode.desktop` (OpenAI ChatGPT sessions use a separate namespaced
+keychain service and UUID-scoped entries).
 
 Authentication is intentionally separated by product entitlement:
 
-- OpenAI API keys are supported. OpenAI documents a distinct Sign in with
-  ChatGPT flow for eligible open-source clients; JevCode reports that method as
-  unavailable until its own adapter and token verification are enabled. It does
-  not read Codex credentials or use browser cookies.
+- OpenAI API keys are supported. `get_openai_auth_status` returns the current
+  API-key state and a separate ChatGPT sign-in capability status. OpenAI's
+  current open-source sign-in flow is documented, but JevCode has not implemented
+  its login flow: the status correctly reports it as unavailable. The future
+  flow must follow OpenAI's dynamic client registration, stable installation
+  identity, loopback callback, state/nonce/PKCE, granted-scope and ID-token
+  verification requirements. Its native session record is deliberately separate
+  from the safe `OpenAiAccount` profile type; access, refresh and ID tokens can
+  only be serialized to the OS keychain by Rust and are not represented in
+  TypeScript, SQLite, localStorage, or Tauri command responses. No Codex/ChatGPT
+  credentials or browser cookies are read.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are supported. Google documents OAuth for Gemini with a
@@ -355,7 +367,7 @@ invalid credential, expired authentication, quota exhausted, subscription
 unavailable, network error and provider outage.
 
 Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
-[Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
+[OpenAI Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
 [Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),
 [Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth),

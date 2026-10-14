@@ -110,6 +110,7 @@ pub fn run() {
             commands::validate_provider_auth,
             commands::refresh_provider_auth,
             commands::get_provider_auth_status,
+            commands::get_openai_auth_status,
             commands::get_provider_account_info,
             commands::get_provider_available_models,
             commands::frontend_log,

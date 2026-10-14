@@ -748,6 +748,37 @@ pub struct ProviderAccountInfo {
     pub account_label: String,
 }
 
+/// Non-secret profile information returned by the native OpenAI auth layer.
+/// OAuth tokens and session credentials deliberately have no fields here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiAccount {
+    pub id: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub organization: Option<String>,
+    /// OAuth client identifier issued to this application by OpenAI.
+    pub client_id: Option<String>,
+    pub granted_scopes: Vec<String>,
+    pub connected_at: String,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiChatGptAuthStatus {
+    pub available: bool,
+    pub connected_accounts: Vec<OpenAiAccount>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiAuthStatus {
+    pub api_key: ProviderAccount,
+    pub chatgpt: OpenAiChatGptAuthStatus,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionDecision {

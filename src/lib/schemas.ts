@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpServerView, Model, ModelPreferences, PermissionPolicy, PermissionRequest, PermissionRule, Project, Provider, ProviderAccount, ProviderAccountInfo, SessionChange, SessionChanges, SessionFileDiff, Tool, ToolCall, ToolOutputChunk, ToolResult, UpdateInfo, UsageRecord, Workspace } from '../types/domain';
+import type { AgentActivityEvent, AgentMessage, AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpServerView, Model, ModelPreferences, OpenAIAuthStatus, PermissionPolicy, PermissionRequest, PermissionRule, Project, Provider, ProviderAccount, ProviderAccountInfo, SessionChange, SessionChanges, SessionFileDiff, Tool, ToolCall, ToolOutputChunk, ToolResult, UpdateInfo, UsageRecord, Workspace } from '../types/domain';
 
 const count = z.number().int().nonnegative();
 const decision = z.enum(['allow', 'ask', 'deny']);
@@ -20,9 +20,11 @@ export const providerAccountSchema: z.ZodType<ProviderAccount> = z.object({
   authMethod: providerAuthMethodSchema.nullable(), accountLabel: z.string().nullable(), connectedAt: z.string().nullable(),
   lastValidatedAt: z.string().nullable(), lastErrorCode: z.string().nullable(), availableMethods: z.array(z.object({
     method: providerAuthMethodSchema, label: z.string(), available: z.boolean(), unavailableReason: z.string().nullable(),
-  })),
-});
+  }).strict()),
+}).strict();
 export const providerAccountInfoSchema: z.ZodType<ProviderAccountInfo> = z.object({ providerId: z.string(), providerName: z.string(), authMethod: providerAuthMethodSchema, accountLabel: z.string() });
+export const openAIAccountSchema = z.object({ id: z.string(), displayName: z.string().nullable(), email: z.string().nullable(), organization: z.string().nullable(), clientId: z.string().nullable(), grantedScopes: z.array(z.string()), connectedAt: z.string(), expiresAt: z.string().nullable() }).strict();
+export const openAIAuthStatusSchema: z.ZodType<OpenAIAuthStatus> = z.object({ apiKey: providerAccountSchema, chatgpt: z.object({ available: z.boolean(), connectedAccounts: z.array(openAIAccountSchema), unavailableReason: z.string().nullable() }).strict() }).strict();
 export const toolSchema: z.ZodType<Tool> = z.object({ name: z.string(), description: z.string(), permission: z.enum(['read_files', 'git', 'write_files', 'shell', 'user_interaction']), riskLevel: z.enum(['low', 'medium', 'high', 'critical']), timeoutMs: count, parallelSafe: z.boolean().default(false), inputSchema: z.record(z.string(), z.unknown()) });
 export const toolCallSchema: z.ZodType<ToolCall> = z.object({ id: z.string(), name: z.string(), arguments: z.record(z.string(), z.unknown()) });
 export const toolResultSchema: z.ZodType<ToolResult> = z.object({ toolCallId: z.string(), name: z.string(), content: z.string(), isError: z.boolean(), durationMs: count, structuredContent: z.record(z.string(), z.unknown()).or(z.array(z.unknown())).nullable().default(null) });
