@@ -2231,10 +2231,23 @@ fn openai_auth_failure_reason(error: &AppError) -> OpenAiAuthFailureReason {
         }
         "invalid_auth_callback" => OpenAiAuthFailureReason::CallbackRejected,
         "openai_auth_code_rejected" => OpenAiAuthFailureReason::AuthorizationCodeRejected,
+        "openai_auth_exchange_rejected" => OpenAiAuthFailureReason::AuthorizationExchangeRejected,
         "invalid_identity_token" => OpenAiAuthFailureReason::IdentityVerificationFailed,
+        "invalid_auth_response" => OpenAiAuthFailureReason::InvalidResponse,
         "account_mismatch" => OpenAiAuthFailureReason::AccountMismatch,
         "account_already_connected" => OpenAiAuthFailureReason::AccountAlreadyConnected,
         "openai_client_configuration" => OpenAiAuthFailureReason::ConfigurationError,
+        "auth_configuration" | "provider_configuration" | "provider_format" => {
+            OpenAiAuthFailureReason::ConfigurationError
+        }
+        "keychain" => OpenAiAuthFailureReason::SecureStorageUnavailable,
+        "persistence" | "internal" => OpenAiAuthFailureReason::LocalFailure,
+        "invalid_auth_session" | "invalid_redirect_uri" | "invalid_input" => {
+            OpenAiAuthFailureReason::CallbackRejected
+        }
+        "account_not_found" | "account_not_reconnectable" => {
+            OpenAiAuthFailureReason::AccountMismatch
+        }
         "subscription_unavailable" => OpenAiAuthFailureReason::SubscriptionUnavailable,
         _ => OpenAiAuthFailureReason::OauthFailure,
     }
@@ -2486,8 +2499,26 @@ mod openai_auth_start_tests {
                 OpenAiAuthFailureReason::AuthorizationCodeRejected,
             ),
             (
+                "openai_auth_exchange_rejected",
+                OpenAiAuthFailureReason::AuthorizationExchangeRejected,
+            ),
+            (
                 "invalid_identity_token",
                 OpenAiAuthFailureReason::IdentityVerificationFailed,
+            ),
+            (
+                "invalid_auth_response",
+                OpenAiAuthFailureReason::InvalidResponse,
+            ),
+            ("internal", OpenAiAuthFailureReason::LocalFailure),
+            ("persistence", OpenAiAuthFailureReason::LocalFailure),
+            (
+                "keychain",
+                OpenAiAuthFailureReason::SecureStorageUnavailable,
+            ),
+            (
+                "auth_configuration",
+                OpenAiAuthFailureReason::ConfigurationError,
             ),
             ("account_mismatch", OpenAiAuthFailureReason::AccountMismatch),
             (
@@ -2501,10 +2532,6 @@ mod openai_auth_start_tests {
             (
                 "subscription_unavailable",
                 OpenAiAuthFailureReason::SubscriptionUnavailable,
-            ),
-            (
-                "invalid_auth_response",
-                OpenAiAuthFailureReason::OauthFailure,
             ),
         ] {
             let error = AppError::new(code, "private response body must not reach the renderer");

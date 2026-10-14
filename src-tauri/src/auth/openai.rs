@@ -547,6 +547,19 @@ fn code_exchange_error(status: StatusCode, error_code: Option<&str>) -> AppError
             "openai_client_configuration",
             "OpenAI could not validate JevCode’s sign-in registration. Update the app or contact support.",
         ),
+        Some("invalid_request" | "unauthorized_client" | "unsupported_grant_type" | "invalid_scope") => {
+            AppError::new(
+                "openai_client_configuration",
+                "OpenAI rejected JevCode’s sign-in request configuration. Update the app or contact support.",
+            )
+        }
+        Some("server_error" | "temporarily_unavailable") => crate::auth::provider_outage(),
+        _ if status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED => {
+            AppError::new(
+                "openai_auth_exchange_rejected",
+                "OpenAI rejected the sign-in exchange. Start a fresh sign-in attempt.",
+            )
+        }
         _ => auth_http_error(status),
     }
 }
@@ -2707,7 +2720,19 @@ mod tests {
 
         assert_eq!(
             code_exchange_error(StatusCode::BAD_REQUEST, Some("sensitive-provider-detail")).code,
-            "invalid_auth_response"
+            "openai_auth_exchange_rejected"
+        );
+        assert_eq!(
+            code_exchange_error(StatusCode::BAD_REQUEST, Some("invalid_scope")).code,
+            "openai_client_configuration"
+        );
+        assert_eq!(
+            code_exchange_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("temporarily_unavailable")
+            )
+            .code,
+            "provider_outage"
         );
         assert_eq!(
             code_exchange_error(StatusCode::SERVICE_UNAVAILABLE, None).code,

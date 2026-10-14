@@ -416,7 +416,8 @@ Authentication is intentionally separated by product entitlement:
   failures are logged with an app-owned error category only; JevCode never logs
   the callback URL, authorization code, state, token response or identity claims.
   Settings feedback distinguishes rejected callbacks, expired or reused codes,
-  identity-verification failures, account mismatches, and provider/configuration
+  rejected exchanges, malformed responses, identity-verification failures,
+  local/secure-storage errors, account mismatches, and provider/configuration
   errors. The browser callback page directs users back to JevCode for that
   feedback. Account management displays only verified profile metadata and a stable short
   registration label for accounts sharing an email. Users can add, select,
