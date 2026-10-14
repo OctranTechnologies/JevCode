@@ -360,13 +360,23 @@ Authentication is intentionally separated by product entitlement:
   Access, refresh, and ID tokens are stored only in the OS credential manager
   under UUID-scoped entries in `dev.jevcode.desktop.openai`; account name,
   verified email, client ID, scopes, and timestamps are the only OAuth profile
-  data stored in SQLite. The React layer receives that safe profile plus an
-  expiry status. The callback server returns no authorization values, and
-  callback codes, token response bodies, and tokens are excluded from
-  application logs. Disconnect deletes the keychain item before removing its
-  SQLite profile. OpenAI OAuth currently connects the account, while model
-  requests still require an OpenAI API key; token refresh and using the
-  ChatGPT plan in agent requests are not wired into the provider runtime yet.
+  data stored in SQLite. The React layer receives only safe account state. On
+  startup, bootstrap restores saved profiles and reports whether each access
+  token is valid or due for refresh. Before each OpenAI request, the native
+  adapter uses the configured API key when present; otherwise it loads the
+  newest saved ChatGPT session from the OS credential store. It refreshes within
+  five minutes of expiry, respects OpenAI's `earliest_refresh_at` value, and
+  serializes refreshes per account so only one request rotates tokens at a
+  time. The documented form-encoded refresh grant uses that registration's
+  issued client ID, refresh token and `resource=https://api.openai.com/v1`,
+  omitting `scope`. JevCode saves the new access and replacement refresh tokens
+  before continuing the model request, and only sends ChatGPT credentials to
+  the official OpenAI Responses API host. A terminal revoked or expired refresh
+  error clears the unusable credential and leaves a safe profile marked
+  **Reconnect needed**. Network and service errors preserve the saved session
+  and do not start a refresh retry loop. `openai_auth_status`,
+  `openai_auth_refresh` and `openai_auth_logout` expose safe metadata only.
+  Disconnect deletes the keychain item before removing its SQLite profile.
   JevCode does not read Codex/ChatGPT credentials or browser cookies.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
@@ -385,7 +395,9 @@ unavailable, network error and provider outage.
 
 Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
 [OpenAI Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
+[OpenAI accounts, sessions and token refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions),
 [OpenAI token reference](https://developers.openai.com/siwc/token-sharing-open-source/token-reference),
+[OpenAI errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery),
 [OpenAI OIDC discovery and ID-token verification](https://developers.openai.com/siwc/website),
 [Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),

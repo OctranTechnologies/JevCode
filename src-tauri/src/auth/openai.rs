@@ -16,10 +16,14 @@ use jsonwebtoken::{
     jwk::{JwkSet, KeyAlgorithm, KeyOperations, PublicKeyUse},
     Algorithm, DecodingKey, Validation,
 };
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, Response, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex as StdMutex, OnceLock},
+};
+use tokio::sync::Mutex as AsyncMutex;
 use zeroize::{Zeroize, Zeroizing};
 
 const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/api/accounts/authorize";
@@ -31,6 +35,10 @@ const OPENAI_RESOURCE: &str = "https://api.openai.com/v1";
 const OPENAI_SCOPES: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const OPENAI_AGENT_NAME: &str = "JevCode";
+const OPENAI_REFRESH_SKEW: ChronoDuration = ChronoDuration::minutes(5);
+
+type RefreshLock = Arc<AsyncMutex<()>>;
+static OPENAI_REFRESH_LOCKS: OnceLock<StdMutex<HashMap<String, RefreshLock>>> = OnceLock::new();
 
 /// Native-only request material for an in-progress sign-in attempt. It is
 /// deliberately neither serializable nor debuggable and never enters Tauri IPC.
@@ -96,6 +104,8 @@ pub(crate) struct OpenAiSession {
     refresh_token: String,
     id_token: String,
     token_expires_at: String,
+    #[serde(default)]
+    earliest_refresh_at: Option<String>,
     granted_scopes: Vec<String>,
 }
 
@@ -114,6 +124,7 @@ impl Drop for OpenAiSession {
 pub(crate) trait OpenAiOAuthTransport: Send + Sync {
     async fn discovery(&self) -> AppResult<OpenAiOidcDiscovery>;
     async fn exchange_code(&self, request: OpenAiTokenRequest) -> AppResult<OpenAiTokenResponse>;
+    async fn refresh_token(&self, request: OpenAiRefreshRequest) -> AppResult<OpenAiTokenResponse>;
     async fn jwks(&self) -> AppResult<JwkSet>;
 }
 
@@ -140,21 +151,38 @@ impl Drop for OpenAiTokenRequest {
     }
 }
 
+pub(crate) struct OpenAiRefreshRequest {
+    client_id: String,
+    refresh_token: String,
+}
+
+impl Drop for OpenAiRefreshRequest {
+    fn drop(&mut self) {
+        self.refresh_token.zeroize();
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct OpenAiTokenResponse {
     access_token: String,
     refresh_token: String,
-    id_token: String,
+    #[serde(default)]
+    id_token: Option<String>,
     token_type: String,
     expires_in: u64,
-    scope: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    earliest_refresh_at: Option<serde_json::Value>,
 }
 
 impl Drop for OpenAiTokenResponse {
     fn drop(&mut self) {
         self.access_token.zeroize();
         self.refresh_token.zeroize();
-        self.id_token.zeroize();
+        if let Some(id_token) = &mut self.id_token {
+            id_token.zeroize();
+        }
     }
 }
 
@@ -186,6 +214,22 @@ impl OpenAiOAuthTransport for ReqwestOpenAiOAuthTransport {
             .await
             .map_err(|_| auth_network_error())?;
         read_json_response(response, "OpenAI could not complete sign-in.").await
+    }
+
+    async fn refresh_token(&self, request: OpenAiRefreshRequest) -> AppResult<OpenAiTokenResponse> {
+        let response = self
+            .client
+            .post(OPENAI_TOKEN_URL)
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", request.client_id.as_str()),
+                ("refresh_token", request.refresh_token.as_str()),
+                ("resource", OPENAI_RESOURCE),
+            ])
+            .send()
+            .await
+            .map_err(|_| auth_network_error())?;
+        read_refresh_response(response).await
     }
 
     async fn jwks(&self) -> AppResult<JwkSet> {
@@ -368,6 +412,81 @@ async fn read_json_response<T: DeserializeOwned>(
     parsed.map_err(|_| AppError::new("invalid_auth_response", rejected_message))
 }
 
+#[derive(Deserialize)]
+struct OpenAiTokenEndpointError {
+    error: Option<String>,
+}
+
+async fn read_refresh_response(mut response: Response) -> AppResult<OpenAiTokenResponse> {
+    const MAX_AUTH_RESPONSE_BYTES: usize = 1024 * 1024;
+    if response.status().is_success() {
+        return read_json_response(
+            response,
+            "OpenAI returned an invalid token refresh response.",
+        )
+        .await;
+    }
+
+    let status = response.status();
+    let mut body = Zeroizing::new(Vec::new());
+    loop {
+        let chunk = match response.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(_) => return Err(auth_network_error()),
+        };
+        if body.len().saturating_add(chunk.len()) > MAX_AUTH_RESPONSE_BYTES {
+            return Err(refresh_response_error(status, None));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let error_code = serde_json::from_slice::<OpenAiTokenEndpointError>(&body)
+        .ok()
+        .and_then(|response| response.error)
+        .filter(|code| code.len() <= 128)
+        .map(|code| code.to_ascii_lowercase());
+    Err(refresh_response_error(status, error_code.as_deref()))
+}
+
+fn refresh_response_error(status: StatusCode, error_code: Option<&str>) -> AppError {
+    if matches!(
+        error_code,
+        Some(
+            "invalid_grant"
+                | "invalid_refresh_token"
+                | "token_expired"
+                | "refresh_token_expired"
+                | "refresh_token_invalidated"
+                | "refresh_token_reused"
+        )
+    ) {
+        AppError::new(
+            "openai_reconnect_required",
+            "Your ChatGPT connection needs to be renewed. Reconnect OpenAI in Settings.",
+        )
+    } else if error_code == Some("invalid_client") {
+        AppError::new(
+            "openai_client_configuration",
+            "OpenAI could not validate JevCode’s sign-in registration. Update the app or contact support.",
+        )
+    } else if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+        AppError::new(
+            "provider_outage",
+            "OpenAI could not refresh this connection right now. Your saved sign-in is safe; try again later.",
+        )
+    } else if status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST {
+        AppError::new(
+            "openai_refresh_rejected",
+            "OpenAI could not refresh this connection. Your saved sign-in was kept; try again or reconnect if the problem continues.",
+        )
+    } else {
+        AppError::new(
+            "openai_refresh_failed",
+            "OpenAI could not refresh this connection. Your saved sign-in was kept; try again later.",
+        )
+    }
+}
+
 fn auth_network_error() -> AppError {
     AppError::new(
         "network_error",
@@ -419,7 +538,8 @@ fn validate_discovery(discovery: &OpenAiOidcDiscovery) -> AppResult<()> {
 struct OpenAiIdentityClaims {
     iss: String,
     sub: String,
-    nonce: String,
+    #[serde(default)]
+    nonce: Option<String>,
     iat: u64,
     aud: ClaimAudience,
     #[serde(default)]
@@ -448,7 +568,7 @@ struct VerifiedOpenAiIdentity {
 
 fn validate_id_token(
     id_token: &str,
-    expected_nonce: &str,
+    expected_nonce: Option<&str>,
     client_id: &str,
     discovery: &OpenAiOidcDiscovery,
     jwks: &JwkSet,
@@ -521,8 +641,15 @@ fn validate_id_token(
         || !authorized_party_valid
         || claims.sub.trim().is_empty()
         || claims.sub.len() > 1024
-        || claims.nonce.len() > 1024
-        || !constant_time_equal(claims.nonce.as_bytes(), expected_nonce.as_bytes())
+        || claims
+            .nonce
+            .as_deref()
+            .is_some_and(|nonce| nonce.len() > 1024)
+        || expected_nonce.is_some_and(|expected_nonce| {
+            claims.nonce.as_deref().is_none_or(|nonce| {
+                !constant_time_equal(nonce.as_bytes(), expected_nonce.as_bytes())
+            })
+        })
         || claims.iat > now.saturating_add(5)
     {
         return Err(identity_verification_error());
@@ -598,16 +725,26 @@ fn valid_scope(scope: &str) -> bool {
         })
 }
 
+fn valid_scope_list(scopes: &str) -> bool {
+    !scopes.is_empty() && scopes.len() <= 4096 && scopes.split_ascii_whitespace().all(valid_scope)
+}
+
 fn validate_token_response(response: &OpenAiTokenResponse) -> AppResult<()> {
     if response.token_type != "Bearer"
         || response.access_token.is_empty()
         || response.access_token.len() > 65_536
         || response.refresh_token.is_empty()
         || response.refresh_token.len() > 65_536
-        || response.id_token.is_empty()
-        || response.id_token.len() > 65_536
+        || response
+            .id_token
+            .as_deref()
+            .is_none_or(|id_token| id_token.is_empty() || id_token.len() > 65_536)
         || response.expires_in == 0
         || response.expires_in > 24 * 60 * 60
+        || response
+            .scope
+            .as_deref()
+            .is_none_or(|scopes| !valid_scope_list(scopes))
     {
         return Err(AppError::new(
             "invalid_auth_response",
@@ -617,9 +754,80 @@ fn validate_token_response(response: &OpenAiTokenResponse) -> AppResult<()> {
     Ok(())
 }
 
+fn validate_refresh_response(response: &OpenAiTokenResponse) -> AppResult<()> {
+    if response.token_type != "Bearer"
+        || response.access_token.is_empty()
+        || response.access_token.len() > 65_536
+        || response.refresh_token.is_empty()
+        || response.refresh_token.len() > 65_536
+        || response.expires_in == 0
+        || response.expires_in > 24 * 60 * 60
+        || response
+            .id_token
+            .as_deref()
+            .is_some_and(|token| token.is_empty() || token.len() > 65_536)
+        || response
+            .scope
+            .as_deref()
+            .is_some_and(|scopes| !valid_scope_list(scopes))
+    {
+        return Err(AppError::new(
+            "invalid_auth_response",
+            "OpenAI returned an incomplete token refresh response. Try again later.",
+        ));
+    }
+    Ok(())
+}
+
+fn refresh_timestamp(value: &serde_json::Value) -> Option<DateTime<Utc>> {
+    if let Some(value) = value.as_i64() {
+        return DateTime::from_timestamp(value, 0)
+            .or_else(|| DateTime::from_timestamp_millis(value));
+    }
+    let value = value.as_str()?;
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            value.parse::<i64>().ok().and_then(|timestamp| {
+                DateTime::from_timestamp(timestamp, 0)
+                    .or_else(|| DateTime::from_timestamp_millis(timestamp))
+            })
+        })
+}
+
+fn session_refresh_time(value: Option<&str>) -> Option<DateTime<Utc>> {
+    let value = value?;
+    DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .ok()
+        .or_else(|| {
+            value.parse::<i64>().ok().and_then(|timestamp| {
+                DateTime::from_timestamp(timestamp, 0)
+                    .or_else(|| DateTime::from_timestamp_millis(timestamp))
+            })
+        })
+}
+
 fn openai_account_id(client_id: &str, subject: &str) -> String {
     let profile_key = format!("{OPENAI_ISSUER}\0{client_id}\0{subject}");
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, profile_key.as_bytes()).to_string()
+}
+
+fn openai_refresh_lock(account_id: &str) -> AppResult<RefreshLock> {
+    let locks = OPENAI_REFRESH_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut locks = locks.lock().map_err(AppError::internal)?;
+    Ok(locks
+        .entry(account_id.to_owned())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone())
+}
+
+fn openai_reconnect_error() -> AppError {
+    AppError::new(
+        "openai_reconnect_required",
+        "Your ChatGPT connection needs to be renewed. Reconnect OpenAI in Settings.",
+    )
 }
 
 pub struct OpenAIAuthManager {
@@ -658,19 +866,200 @@ impl OpenAIAuthManager {
         })
     }
 
-    pub fn request_credential(
+    pub async fn request_credential(
         &self,
         credentials: &CredentialStore,
+        database: &Database,
     ) -> AppResult<OpenAiRequestCredential> {
-        credentials
-            .get("openai")?
-            .map(OpenAiRequestCredential::ApiKey)
+        if let Some(api_key) = credentials.get("openai")? {
+            return Ok(OpenAiRequestCredential::ApiKey(api_key));
+        }
+
+        let mut accounts = database.openai_accounts()?;
+        let has_saved_accounts = !accounts.is_empty();
+        accounts.sort_by(|left, right| right.connected_at.cmp(&left.connected_at));
+        let Some(account) = accounts
+            .into_iter()
+            .find(|account| !account.requires_reconnect)
+        else {
+            if has_saved_accounts {
+                return Err(openai_reconnect_error());
+            }
+            return Err(AppError::new(
+                "credentials_required",
+                "Connect an OpenAI API key or sign in with ChatGPT to run agent requests.",
+            ));
+        };
+        let (access_token, _) = self
+            .session_access_token(credentials, database, &account.id, false)
+            .await?;
+        Ok(OpenAiRequestCredential::ChatGptAccessToken(access_token))
+    }
+
+    /// Explicitly refresh one saved ChatGPT registration from the native layer.
+    /// The returned value contains safe profile metadata only.
+    pub(crate) async fn refresh_account(
+        &self,
+        credentials: &dyn OpenAiSessionStorage,
+        database: &Database,
+        account_id: &str,
+    ) -> AppResult<OpenAiAccount> {
+        let (_, account) = self
+            .session_access_token(credentials, database, account_id, true)
+            .await?;
+        Ok(account)
+    }
+
+    async fn session_access_token(
+        &self,
+        credentials: &dyn OpenAiSessionStorage,
+        database: &Database,
+        account_id: &str,
+        force_refresh: bool,
+    ) -> AppResult<(String, OpenAiAccount)> {
+        let account_id = uuid::Uuid::parse_str(account_id)
+            .map_err(|_| AppError::new("invalid_input", "The OpenAI account is invalid."))?
+            .to_string();
+        let lock = openai_refresh_lock(&account_id)?;
+        let _guard = lock.lock().await;
+
+        let mut account = database
+            .openai_accounts()?
+            .into_iter()
+            .find(|account| account.id == account_id)
             .ok_or_else(|| {
                 AppError::new(
-                    "credentials_required",
-                    "Connect an OpenAI API key to run agent requests. ChatGPT sign-in currently connects and stores the account securely.",
+                    "account_not_found",
+                    "This OpenAI account is no longer saved.",
                 )
+            })?;
+        if account.requires_reconnect {
+            return Err(openai_reconnect_error());
+        }
+
+        let Some(mut serialized) = credentials.get_openai_session(&account_id)? else {
+            self.mark_needs_reconnect(credentials, database, &mut account)?;
+            return Err(openai_reconnect_error());
+        };
+        let parsed = serde_json::from_str::<OpenAiSession>(&serialized);
+        serialized.zeroize();
+        let mut session = match parsed {
+            Ok(session) => session,
+            Err(_) => {
+                self.mark_needs_reconnect(credentials, database, &mut account)?;
+                return Err(openai_reconnect_error());
+            }
+        };
+        if session.account_id != account_id
+            || account.client_id.as_deref() != Some(session.issued_client_id.as_str())
+            || session.access_token.is_empty()
+            || session.refresh_token.is_empty()
+            || session.id_token.is_empty()
+        {
+            self.mark_needs_reconnect(credentials, database, &mut account)?;
+            return Err(openai_reconnect_error());
+        }
+
+        let expires_at = match DateTime::parse_from_rfc3339(&session.token_expires_at) {
+            Ok(value) => value.with_timezone(&Utc),
+            Err(_) => {
+                self.mark_needs_reconnect(credentials, database, &mut account)?;
+                return Err(openai_reconnect_error());
+            }
+        };
+        let now = Utc::now();
+        let refresh_at = session_refresh_time(session.earliest_refresh_at.as_deref());
+        let access_token_expired = expires_at <= now;
+        let refresh_due = force_refresh || expires_at <= now + OPENAI_REFRESH_SKEW;
+        if !refresh_due {
+            account.connected = true;
+            account.access_token_valid = true;
+            account.requires_reconnect = false;
+            account.expires_at = Some(session.token_expires_at.clone());
+            return Ok((session.access_token.clone(), account));
+        }
+        if refresh_at.is_some_and(|earliest| earliest > now)
+            || (session.earliest_refresh_at.is_some() && refresh_at.is_none())
+        {
+            if access_token_expired {
+                return Err(AppError::new(
+                    "openai_refresh_not_yet_available",
+                    "OpenAI has not opened the refresh window yet. Retry this request shortly.",
+                ));
+            }
+            account.connected = true;
+            account.access_token_valid = true;
+            return Ok((session.access_token.clone(), account));
+        }
+
+        let response = self
+            .oauth
+            .refresh_token(OpenAiRefreshRequest {
+                client_id: session.issued_client_id.clone(),
+                refresh_token: session.refresh_token.clone(),
             })
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) if error.code == "openai_reconnect_required" => {
+                self.mark_needs_reconnect(credentials, database, &mut account)?;
+                return Err(openai_reconnect_error());
+            }
+            Err(error) => return Err(error),
+        };
+        if validate_refresh_response(&response).is_err() {
+            self.mark_needs_reconnect(credentials, database, &mut account)?;
+            return Err(openai_reconnect_error());
+        }
+
+        let expires_at = Utc::now()
+            .checked_add_signed(ChronoDuration::seconds(response.expires_in as i64))
+            .ok_or_else(identity_verification_error)?;
+        session.access_token.zeroize();
+        session.access_token.clone_from(&response.access_token);
+        session.refresh_token.zeroize();
+        session.refresh_token.clone_from(&response.refresh_token);
+        // Retain the ID token that was verified during the original sign-in.
+        // Refresh does not require reinterpreting new identity claims.
+        session.token_expires_at = expires_at.to_rfc3339();
+        if let Some(earliest) = response
+            .earliest_refresh_at
+            .as_ref()
+            .and_then(refresh_timestamp)
+        {
+            session.earliest_refresh_at = Some(earliest.to_rfc3339());
+        }
+        if let Some(scope) = response.scope.as_deref() {
+            session.granted_scopes = scope
+                .split_ascii_whitespace()
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect();
+        }
+        self.store_chatgpt_session(credentials, &session)?;
+
+        account.connected = true;
+        account.access_token_valid = true;
+        account.requires_reconnect = false;
+        account.expires_at = Some(session.token_expires_at.clone());
+        account.granted_scopes.clone_from(&session.granted_scopes);
+        if let Err(error) = database.save_openai_account(&account) {
+            tracing::warn!(code = %error.code, "Could not update safe OpenAI account metadata after refresh");
+        }
+        Ok((session.access_token.clone(), account))
+    }
+
+    fn mark_needs_reconnect(
+        &self,
+        credentials: &dyn OpenAiSessionStorage,
+        database: &Database,
+        account: &mut OpenAiAccount,
+    ) -> AppResult<()> {
+        account.connected = false;
+        account.access_token_valid = false;
+        account.requires_reconnect = true;
+        database.save_openai_account(account)?;
+        credentials.delete_openai_session(&account.id)
     }
 
     /// Prepare one fresh first-time ChatGPT sign-in attempt using OpenAI's
@@ -835,8 +1224,11 @@ impl OpenAIAuthManager {
         validate_token_response(&token_response)?;
         let jwks = self.oauth.jwks().await?;
         let identity = validate_id_token(
-            &token_response.id_token,
-            &pending.nonce,
+            token_response
+                .id_token
+                .as_deref()
+                .ok_or_else(identity_verification_error)?,
+            Some(&pending.nonce),
             &authorization.client_id,
             &discovery,
             &jwks,
@@ -874,6 +1266,8 @@ impl OpenAIAuthManager {
             .ok_or_else(identity_verification_error)?;
         let scopes = token_response
             .scope
+            .as_deref()
+            .unwrap_or_default()
             .split_ascii_whitespace()
             .filter(|scope| !scope.is_empty())
             .map(str::to_owned)
@@ -888,6 +1282,8 @@ impl OpenAIAuthManager {
         let account = OpenAiAccount {
             id: account_id.clone(),
             connected: true,
+            access_token_valid: true,
+            requires_reconnect: false,
             display_name: identity.name,
             email: identity.email_verified.then_some(identity.email).flatten(),
             organization: None,
@@ -905,8 +1301,17 @@ impl OpenAIAuthManager {
             ext_agent_host_id: pending.ext_agent_host_id.clone(),
             access_token: token_response.access_token.clone(),
             refresh_token: token_response.refresh_token.clone(),
-            id_token: token_response.id_token.clone(),
+            id_token: token_response
+                .id_token
+                .as_deref()
+                .ok_or_else(identity_verification_error)?
+                .to_owned(),
             token_expires_at: expires_at.to_rfc3339(),
+            earliest_refresh_at: token_response
+                .earliest_refresh_at
+                .as_ref()
+                .and_then(refresh_timestamp)
+                .map(|value| value.to_rfc3339()),
             granted_scopes: scopes,
         };
 
@@ -949,22 +1354,7 @@ impl OpenAIAuthManager {
         stored: Option<ProviderAccount>,
     ) -> AppResult<OpenAiAuthStatus> {
         let api_key = self.api_key.get_auth_status(credentials, stored)?;
-        let mut connected_accounts = Vec::new();
-        for mut account in database.openai_accounts()? {
-            let session = credentials
-                .get_openai_session(&account.id)?
-                .and_then(|mut json| {
-                    let session = serde_json::from_str::<OpenAiSession>(&json).ok();
-                    json.zeroize();
-                    session
-                });
-            if let Some(session) = session.filter(|session| session.account_id == account.id) {
-                account.connected = DateTime::parse_from_rfc3339(&session.token_expires_at)
-                    .map(|expires_at| expires_at.with_timezone(&Utc) > Utc::now())
-                    .unwrap_or(false);
-                connected_accounts.push(account);
-            }
-        }
+        let connected_accounts = self.chatgpt_accounts_status(credentials, database)?;
         Ok(OpenAiAuthStatus {
             api_key,
             chatgpt: OpenAiChatGptAuthStatus {
@@ -973,6 +1363,56 @@ impl OpenAIAuthManager {
                 unavailable_reason: None,
             },
         })
+    }
+
+    fn chatgpt_accounts_status(
+        &self,
+        credentials: &dyn OpenAiSessionStorage,
+        database: &Database,
+    ) -> AppResult<Vec<OpenAiAccount>> {
+        let mut connected_accounts = Vec::new();
+        for mut account in database.openai_accounts()? {
+            if account.requires_reconnect {
+                account.connected = false;
+                account.access_token_valid = false;
+                connected_accounts.push(account);
+                continue;
+            }
+
+            let serialized = credentials.get_openai_session(&account.id)?;
+            let Some(mut serialized) = serialized else {
+                self.mark_needs_reconnect(credentials, database, &mut account)?;
+                connected_accounts.push(account);
+                continue;
+            };
+            let parsed = serde_json::from_str::<OpenAiSession>(&serialized);
+            serialized.zeroize();
+            let Ok(session) = parsed else {
+                self.mark_needs_reconnect(credentials, database, &mut account)?;
+                connected_accounts.push(account);
+                continue;
+            };
+            let expires_at = DateTime::parse_from_rfc3339(&session.token_expires_at)
+                .map(|value| value.with_timezone(&Utc));
+            let session_matches = session.account_id == account.id
+                && account.client_id.as_deref() == Some(session.issued_client_id.as_str())
+                && !session.access_token.is_empty()
+                && !session.refresh_token.is_empty()
+                && !session.id_token.is_empty();
+            if !session_matches || expires_at.is_err() {
+                self.mark_needs_reconnect(credentials, database, &mut account)?;
+                connected_accounts.push(account);
+                continue;
+            }
+            account.connected = true;
+            account.access_token_valid = expires_at.is_ok_and(|expires_at| expires_at > Utc::now());
+            account.expires_at = Some(session.token_expires_at.clone());
+            if let Err(error) = database.save_openai_account(&account) {
+                tracing::warn!(code = %error.code, "Could not update safe OpenAI account metadata during startup");
+            }
+            connected_accounts.push(account);
+        }
+        Ok(connected_accounts)
     }
 
     fn store_chatgpt_session(
@@ -1190,7 +1630,7 @@ mod tests {
     use rsa::{pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts, RsaPrivateKey, RsaPublicKey};
     use std::collections::HashMap;
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
     };
 
@@ -1251,6 +1691,8 @@ mod tests {
         id_token: String,
         expected_verifier: Mutex<Option<String>>,
         exchanged: AtomicBool,
+        refresh_calls: AtomicUsize,
+        refresh_error: Mutex<Option<String>>,
     }
 
     #[async_trait]
@@ -1274,12 +1716,43 @@ mod tests {
             Ok(OpenAiTokenResponse {
                 access_token: TEST_ACCESS_TOKEN.into(),
                 refresh_token: TEST_REFRESH_TOKEN.into(),
-                id_token: self.id_token.clone(),
+                id_token: Some(self.id_token.clone()),
                 token_type: "Bearer".into(),
                 expires_in: 3600,
-                scope:
+                scope: Some(
                     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
                         .into(),
+                ),
+                earliest_refresh_at: None,
+            })
+        }
+
+        async fn refresh_token(
+            &self,
+            request: OpenAiRefreshRequest,
+        ) -> AppResult<OpenAiTokenResponse> {
+            assert_eq!(request.client_id, TEST_CLIENT_ID);
+            assert_eq!(request.refresh_token, TEST_REFRESH_TOKEN);
+            self.refresh_calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            if let Some(error) = self.refresh_error.lock().unwrap().clone() {
+                return if error == "network" {
+                    Err(auth_network_error())
+                } else {
+                    Err(refresh_response_error(
+                        StatusCode::BAD_REQUEST,
+                        Some(&error),
+                    ))
+                };
+            }
+            Ok(OpenAiTokenResponse {
+                access_token: "rotated-access-token".into(),
+                refresh_token: "rotated-refresh-token".into(),
+                id_token: None,
+                token_type: "Bearer".into(),
+                expires_in: 3600,
+                scope: None,
+                earliest_refresh_at: None,
             })
         }
 
@@ -1373,11 +1846,254 @@ mod tests {
         .unwrap()
     }
 
+    fn refresh_manager(error: Option<&str>) -> (OpenAIAuthManager, Arc<MockOAuthTransport>) {
+        let transport = Arc::new(MockOAuthTransport {
+            jwks: Mutex::new(None),
+            id_token: String::new(),
+            expected_verifier: Mutex::new(None),
+            exchanged: AtomicBool::new(false),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_error: Mutex::new(error.map(str::to_owned)),
+        });
+        let manager =
+            OpenAIAuthManager::with_oauth_transport(test_provider(), transport.clone()).unwrap();
+        (manager, transport)
+    }
+
+    fn seed_refreshable_account(
+        database: &Database,
+        storage: &MemorySessionStorage,
+        expires_at: DateTime<Utc>,
+        earliest_refresh_at: Option<String>,
+    ) -> OpenAiAccount {
+        let account_id = uuid::Uuid::new_v4().to_string();
+        let account = OpenAiAccount {
+            id: account_id.clone(),
+            connected: true,
+            access_token_valid: expires_at > Utc::now(),
+            requires_reconnect: false,
+            display_name: Some("Saved account".into()),
+            email: Some("saved@example.test".into()),
+            organization: None,
+            client_id: Some(TEST_CLIENT_ID.into()),
+            granted_scopes: vec!["openid".into(), "offline_access".into()],
+            connected_at: Utc::now().to_rfc3339(),
+            expires_at: Some(expires_at.to_rfc3339()),
+        };
+        database.save_openai_account(&account).unwrap();
+        let session = OpenAiSession {
+            account_id,
+            issued_client_id: TEST_CLIENT_ID.into(),
+            ext_agent_host_id: format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            access_token: TEST_ACCESS_TOKEN.into(),
+            refresh_token: TEST_REFRESH_TOKEN.into(),
+            id_token: TEST_ID_TOKEN.into(),
+            token_expires_at: expires_at.to_rfc3339(),
+            earliest_refresh_at,
+            granted_scopes: account.granted_scopes.clone(),
+        };
+        let mut serialized = serde_json::to_string(&session).unwrap();
+        storage
+            .save_openai_session(&account.id, &serialized)
+            .unwrap();
+        serialized.zeroize();
+        account
+    }
+
+    #[tokio::test]
+    async fn saved_openai_account_and_session_restore_after_database_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("restart-auth.sqlite");
+        let storage = MemorySessionStorage::default();
+        let account_id;
+        {
+            let database = Database::open(&path).unwrap();
+            let account = seed_refreshable_account(
+                &database,
+                &storage,
+                Utc::now() + ChronoDuration::minutes(30),
+                None,
+            );
+            account_id = account.id;
+        }
+
+        let database = Database::open(&path).unwrap();
+        let (manager, transport) = refresh_manager(None);
+        let accounts = database.openai_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].id, account_id);
+        let restored_status = manager
+            .chatgpt_accounts_status(&storage, &database)
+            .unwrap();
+        assert_eq!(restored_status.len(), 1);
+        assert!(restored_status[0].connected);
+        assert!(restored_status[0].access_token_valid);
+        assert!(!restored_status[0].requires_reconnect);
+        let (access_token, account) = manager
+            .session_access_token(&storage, &database, &account_id, false)
+            .await
+            .unwrap();
+        assert_eq!(access_token, TEST_ACCESS_TOKEN);
+        assert!(account.connected);
+        assert!(account.access_token_valid);
+        assert!(!account.requires_reconnect);
+        assert_eq!(transport.refresh_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn expired_access_token_refreshes_and_rotates_the_saved_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("expired-auth.sqlite")).unwrap();
+        let storage = MemorySessionStorage::default();
+        let account = seed_refreshable_account(
+            &database,
+            &storage,
+            Utc::now() - ChronoDuration::seconds(1),
+            None,
+        );
+        let (manager, transport) = refresh_manager(None);
+        let status = manager
+            .chatgpt_accounts_status(&storage, &database)
+            .unwrap();
+        assert!(status[0].connected);
+        assert!(!status[0].access_token_valid);
+        assert!(!status[0].requires_reconnect);
+
+        let (access_token, refreshed) = manager
+            .session_access_token(&storage, &database, &account.id, false)
+            .await
+            .unwrap();
+        assert_eq!(access_token, "rotated-access-token");
+        assert_eq!(transport.refresh_calls.load(Ordering::SeqCst), 1);
+        assert!(refreshed.access_token_valid);
+        assert!(
+            DateTime::parse_from_rfc3339(refreshed.expires_at.as_deref().unwrap())
+                .unwrap()
+                .with_timezone(&Utc)
+                > Utc::now()
+        );
+        let saved = storage.get_openai_session(&account.id).unwrap().unwrap();
+        let saved: OpenAiSession = serde_json::from_str(&saved).unwrap();
+        assert_eq!(saved.access_token, "rotated-access-token");
+        assert_eq!(saved.refresh_token, "rotated-refresh-token");
+    }
+
+    #[tokio::test]
+    async fn network_refresh_failure_preserves_the_session_for_a_later_request() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("failed-refresh.sqlite")).unwrap();
+        let storage = MemorySessionStorage::default();
+        let account = seed_refreshable_account(
+            &database,
+            &storage,
+            Utc::now() - ChronoDuration::seconds(1),
+            None,
+        );
+        let (manager, transport) = refresh_manager(Some("network"));
+
+        let error = manager
+            .session_access_token(&storage, &database, &account.id, false)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "network_error");
+        assert!(storage.get_openai_session(&account.id).unwrap().is_some());
+        let saved_account = database.openai_accounts().unwrap().remove(0);
+        assert!(!saved_account.requires_reconnect);
+        assert_eq!(transport.refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_share_one_rotating_token_refresh() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("concurrent-refresh.sqlite")).unwrap();
+        let storage = MemorySessionStorage::default();
+        let account = seed_refreshable_account(
+            &database,
+            &storage,
+            Utc::now() - ChronoDuration::seconds(1),
+            None,
+        );
+        let (first, transport) = refresh_manager(None);
+        let second =
+            OpenAIAuthManager::with_oauth_transport(test_provider(), transport.clone()).unwrap();
+
+        let (one, two) = tokio::join!(
+            first.session_access_token(&storage, &database, &account.id, false),
+            second.session_access_token(&storage, &database, &account.id, false),
+        );
+        assert_eq!(one.unwrap().0, "rotated-access-token");
+        assert_eq!(two.unwrap().0, "rotated-access-token");
+        assert_eq!(transport.refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn revoked_refresh_marks_reconnect_and_prevents_retry_loops() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("revoked-refresh.sqlite")).unwrap();
+        let storage = MemorySessionStorage::default();
+        let account = seed_refreshable_account(
+            &database,
+            &storage,
+            Utc::now() - ChronoDuration::seconds(1),
+            None,
+        );
+        let (manager, transport) = refresh_manager(Some("invalid_grant"));
+
+        let error = manager
+            .session_access_token(&storage, &database, &account.id, false)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "openai_reconnect_required");
+        assert!(storage.get_openai_session(&account.id).unwrap().is_none());
+        let stored_account = database.openai_accounts().unwrap().remove(0);
+        assert!(!stored_account.connected);
+        assert!(!stored_account.access_token_valid);
+        assert!(stored_account.requires_reconnect);
+
+        let second_error = manager
+            .session_access_token(&storage, &database, &account.id, false)
+            .await
+            .unwrap_err();
+        assert_eq!(second_error.code, "openai_reconnect_required");
+        assert_eq!(transport.refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn refresh_failures_only_revoke_sessions_for_documented_terminal_codes() {
+        for code in [
+            "invalid_grant",
+            "invalid_refresh_token",
+            "token_expired",
+            "refresh_token_expired",
+            "refresh_token_invalidated",
+            "refresh_token_reused",
+        ] {
+            assert_eq!(
+                refresh_response_error(StatusCode::BAD_REQUEST, Some(code)).code,
+                "openai_reconnect_required"
+            );
+        }
+        assert_eq!(
+            refresh_response_error(StatusCode::BAD_REQUEST, None).code,
+            "openai_refresh_rejected"
+        );
+        assert_eq!(
+            refresh_response_error(StatusCode::SERVICE_UNAVAILABLE, None).code,
+            "provider_outage"
+        );
+        assert_eq!(
+            refresh_response_error(StatusCode::BAD_REQUEST, Some("invalid_client")).code,
+            "openai_client_configuration"
+        );
+    }
+
     #[test]
     fn openai_status_and_account_contracts_contain_only_safe_metadata() {
         let account = OpenAiAccount {
             id: "account-id".into(),
             connected: true,
+            access_token_valid: true,
+            requires_reconnect: false,
             display_name: Some("Example".into()),
             email: Some("user@example.test".into()),
             organization: None,
@@ -1409,18 +2125,21 @@ mod tests {
                 unavailable_reason: None,
             },
         };
-        let serialized = serde_json::to_string(&status).unwrap();
+        let serialized = serde_json::to_value(&status).unwrap();
+        let serialized_account = serialized["chatgpt"]["connectedAccounts"][0]
+            .as_object()
+            .unwrap();
         for sensitive_field in [
-            "accessToken",
-            "refreshToken",
-            "idToken",
-            "codeVerifier",
-            "authorizationUrl",
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "code_verifier",
+            "authorization_url",
             "nonce",
         ] {
-            assert!(!serialized.contains(sensitive_field));
+            assert!(!serialized_account.contains_key(sensitive_field));
         }
-        assert!(serialized.contains("issued-client-id"));
+        assert_eq!(serialized_account["clientId"], "issued-client-id");
     }
 
     #[test]
@@ -1434,6 +2153,8 @@ mod tests {
         let account = OpenAiAccount {
             id: account_id.clone(),
             connected: false,
+            access_token_valid: false,
+            requires_reconnect: false,
             display_name: Some("Saved account".into()),
             email: None,
             organization: None,
@@ -1451,6 +2172,7 @@ mod tests {
             refresh_token: TEST_REFRESH_TOKEN.into(),
             id_token: TEST_ID_TOKEN.into(),
             token_expires_at: Utc::now().to_rfc3339(),
+            earliest_refresh_at: None,
             granted_scopes: vec!["openid".into()],
         };
         let mut serialized = serde_json::to_string(&session).unwrap();
@@ -1522,6 +2244,8 @@ mod tests {
             id_token: id_token.clone(),
             expected_verifier: Mutex::new(None),
             exchanged: AtomicBool::new(false),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_error: Mutex::new(None),
         });
         let manager =
             OpenAIAuthManager::with_oauth_transport(test_provider(), transport.clone()).unwrap();
@@ -1606,9 +2330,14 @@ mod tests {
             serde_json::json!(TEST_CLIENT_ID),
             now + 3600,
         );
-        assert!(
-            validate_id_token(&valid, "expected-nonce", TEST_CLIENT_ID, &discovery, &jwks).is_ok()
-        );
+        assert!(validate_id_token(
+            &valid,
+            Some("expected-nonce"),
+            TEST_CLIENT_ID,
+            &discovery,
+            &jwks,
+        )
+        .is_ok());
 
         let invalid_tokens = [
             sign_test_id_token(
@@ -1650,10 +2379,16 @@ mod tests {
         ];
         for token in invalid_tokens {
             assert_eq!(
-                validate_id_token(&token, "expected-nonce", TEST_CLIENT_ID, &discovery, &jwks)
-                    .err()
-                    .unwrap()
-                    .code,
+                validate_id_token(
+                    &token,
+                    Some("expected-nonce"),
+                    TEST_CLIENT_ID,
+                    &discovery,
+                    &jwks,
+                )
+                .err()
+                .unwrap()
+                .code,
                 "invalid_identity_token"
             );
         }
@@ -1669,7 +2404,7 @@ mod tests {
         );
         assert!(validate_id_token(
             &forged_signature,
-            "expected-nonce",
+            Some("expected-nonce"),
             TEST_CLIENT_ID,
             &discovery,
             &jwks

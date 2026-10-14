@@ -45,6 +45,8 @@ export interface ProviderAccountInfo {
 export interface OpenAIAccount {
   id: string;
   connected: boolean;
+  accessTokenValid: boolean;
+  requiresReconnect: boolean;
   displayName: string | null;
   email: string | null;
   organization: string | null;
@@ -269,6 +271,7 @@ export interface Bootstrap {
   tools: Tool[];
   permissionPolicy: PermissionPolicy;
   modelPreferences: ModelPreferences;
+  openaiAuthStatus: OpenAIAuthStatus;
 }
 export interface AppDiagnostics {
   appVersion: string; operatingSystem: string; architecture: string; dataDirectory: string; logsDirectory: string;

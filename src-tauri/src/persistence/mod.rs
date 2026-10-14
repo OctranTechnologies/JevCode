@@ -869,6 +869,8 @@ mod tests {
         let account = OpenAiAccount {
             id: "safe-account-id".into(),
             connected: true,
+            access_token_valid: true,
+            requires_reconnect: false,
             display_name: Some("Example".into()),
             email: Some("user@example.test".into()),
             organization: None,
@@ -887,8 +889,10 @@ mod tests {
         let persisted: String = connection
             .query_row("SELECT data FROM openai_accounts", [], |row| row.get(0))
             .unwrap();
-        for token_field in ["accessToken", "refreshToken", "idToken"] {
-            assert!(!persisted.contains(token_field));
+        let persisted: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        let account = persisted.as_object().unwrap();
+        for token_field in ["access_token", "refresh_token", "id_token"] {
+            assert!(!account.contains_key(token_field));
         }
     }
 

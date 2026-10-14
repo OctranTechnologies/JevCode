@@ -6,10 +6,11 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 pub struct HttpProvider {
     provider: Provider,
-    secret: String,
+    secret: Zeroizing<String>,
     client: reqwest::Client,
 }
 
@@ -29,7 +30,7 @@ impl HttpProvider {
             .map_err(AppError::internal)?;
         Ok(Self {
             provider,
-            secret,
+            secret: Zeroizing::new(secret),
             client,
         })
     }
@@ -48,10 +49,10 @@ impl LlmProvider for HttpProvider {
         let builder = self.client.post(format!("{base}/{path}")).json(&payload);
         let builder = match self.provider.protocol {
             ProviderProtocol::Anthropic => builder
-                .header("x-api-key", &self.secret)
+                .header("x-api-key", self.secret.as_str())
                 .header("anthropic-version", "2023-06-01"),
-            ProviderProtocol::Gemini => builder.header("x-goog-api-key", &self.secret),
-            _ => builder.bearer_auth(&self.secret),
+            ProviderProtocol::Gemini => builder.header("x-goog-api-key", self.secret.as_str()),
+            _ => builder.bearer_auth(self.secret.as_str()),
         };
         let mut response = builder.send().await.map_err(|error| {
             if error.is_timeout() || error.is_connect() {
@@ -100,10 +101,10 @@ impl LlmProvider for HttpProvider {
         let builder = self.client.post(format!("{base}/{path}")).json(&payload);
         let builder = match self.provider.protocol {
             ProviderProtocol::Anthropic => builder
-                .header("x-api-key", &self.secret)
+                .header("x-api-key", self.secret.as_str())
                 .header("anthropic-version", "2023-06-01"),
-            ProviderProtocol::Gemini => builder.header("x-goog-api-key", &self.secret),
-            _ => builder.bearer_auth(&self.secret),
+            ProviderProtocol::Gemini => builder.header("x-goog-api-key", self.secret.as_str()),
+            _ => builder.bearer_auth(self.secret.as_str()),
         };
         let mut response = builder.send().await.map_err(|error| {
             if error.is_timeout() || error.is_connect() {

@@ -263,11 +263,13 @@ export function ProviderSettings({
                 : <button className="account-button connect" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || openAIBusy}><ShieldCheck size={13} />{openAIBusy ? 'Starting…' : 'Continue with ChatGPT'}</button>}
             </div>
             {openAIStatus?.chatgpt.connectedAccounts.map(chatgpt => <div className="openai-oauth-account" key={chatgpt.id}>
-              <span className={'account-status ' + (chatgpt.connected ? 'connected' : 'needs_attention')}>{chatgpt.connected ? <CircleCheck size={13} /> : <CircleAlert size={13} />}{chatgpt.connected ? 'Connected' : 'Expired'}</span>
+              <span className={'account-status ' + (chatgpt.requiresReconnect ? 'needs_attention' : 'connected')}>{chatgpt.requiresReconnect ? <CircleAlert size={13} /> : <CircleCheck size={13} />}{chatgpt.requiresReconnect ? 'Reconnect needed' : chatgpt.accessTokenValid ? 'Connected' : 'Refresh due'}</span>
               <span className="openai-profile">{chatgpt.displayName ?? chatgpt.email ?? 'ChatGPT account'}{chatgpt.displayName && chatgpt.email ? <small>{chatgpt.email}</small> : null}</span>
-              <span className="openai-scopes">{chatgpt.connected
-                ? (chatgpt.grantedScopes.includes('chatgpt.tokens.use.direct') ? 'Plan access enabled' : 'Identity only')
-                : <button className="account-button quiet" onClick={() => void connectOpenAIChatGPT(chatgpt.id)} disabled={openAIBusy}>Reconnect</button>}</span>
+              <span className="openai-scopes">{chatgpt.requiresReconnect
+                ? <button className="account-button quiet" onClick={() => void connectOpenAIChatGPT(chatgpt.id)} disabled={openAIBusy}>Reconnect</button>
+                : !chatgpt.accessTokenValid ? 'Will refresh before the next request'
+                : (chatgpt.grantedScopes.includes('chatgpt.tokens.use.direct') ? 'Plan access enabled' : 'Identity only')
+              }</span>
               <button className="account-button remove" onClick={() => void disconnectOpenAIAccount(chatgpt.id)} disabled={openAIBusy} aria-label={'Disconnect ' + (chatgpt.email ?? 'ChatGPT account')}><Trash2 size={13} />Disconnect</button>
             </div>)}
             {openAIStatus?.chatgpt.connectedAccounts.length === 0 && <p className="openai-oauth-empty">No ChatGPT accounts connected.</p>}

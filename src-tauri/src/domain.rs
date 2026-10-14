@@ -755,6 +755,10 @@ pub struct ProviderAccountInfo {
 pub struct OpenAiAccount {
     pub id: String,
     pub connected: bool,
+    #[serde(default)]
+    pub access_token_valid: bool,
+    #[serde(default)]
+    pub requires_reconnect: bool,
     pub display_name: Option<String>,
     pub email: Option<String>,
     pub organization: Option<String>,

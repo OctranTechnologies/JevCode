@@ -1139,7 +1139,7 @@ async fn drive(
         })?;
     let adapter = match provider_override {
         Some(provider) => provider,
-        None => providers::adapter(provider_config, &state.credentials)?,
+        None => providers::adapter(provider_config, state.clone())?,
     };
     runtime
         .execute(

@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
-import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export { openAIAuthAttemptEventSchema };
@@ -63,6 +63,8 @@ interface Commands {
   refresh_provider_auth: { args: { providerId: string }; result: ProviderAccount };
   get_provider_auth_status: { args: { providerId: string }; result: ProviderAccount };
   get_openai_auth_status: { args: undefined; result: OpenAIAuthStatus };
+  openai_auth_status: { args: undefined; result: OpenAIAuthStatus };
+  openai_auth_refresh: { args: { accountId: string }; result: OpenAIAccount };
   openai_auth_start: { args: { accountId: string | null }; result: OpenAIAuthStart };
   openai_auth_cancel: { args: { attemptId: string }; result: null };
   openai_auth_logout: { args: { accountId: string }; result: null };
@@ -80,6 +82,8 @@ const responses = {
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,
   refresh_provider_auth: providerAccountSchema, get_provider_auth_status: providerAccountSchema,
   get_openai_auth_status: openAIAuthStatusSchema,
+  openai_auth_status: openAIAuthStatusSchema,
+  openai_auth_refresh: openAIAccountSchema,
   openai_auth_start: openAIAuthStartSchema,
   openai_auth_cancel: z.null(),
   openai_auth_logout: z.null(),
@@ -100,7 +104,7 @@ export async function command<K extends keyof Commands>(name: K, args: Commands[
 export async function loadBootstrap(): Promise<Bootstrap> {
   if (desktopAvailable) return command('bootstrap', undefined);
   // Browser preview displays configuration metadata only. Native actions stay disabled.
-  return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] } });
+  return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [{ method: 'api_key', label: 'OpenAI API key', available: true, unavailableReason: null }] }, chatgpt: { available: true, connectedAccounts: [], unavailableReason: null } } });
 }
 
 export interface ProviderAuthAdapter {
@@ -115,7 +119,12 @@ export interface ProviderAuthAdapter {
 
 /** OpenAI-only status stays typed and token-free. */
 export function getOpenAIAuthStatus(): Promise<OpenAIAuthStatus> {
-  return command('get_openai_auth_status', undefined);
+  return command('openai_auth_status', undefined);
+}
+
+/** Refreshes a ChatGPT account inside Rust and returns only safe account metadata. */
+export function refreshOpenAIAuth(accountId: string): Promise<OpenAIAccount> {
+  return command('openai_auth_refresh', { accountId });
 }
 
 /** Starts OpenAI sign-in in the OS browser; only a safe attempt handle crosses IPC. */

@@ -487,13 +487,6 @@ pub fn openai_auth_status(
     openai::OpenAIAuthManager::new(provider.clone())?.status(credentials, database, stored)
 }
 
-pub(crate) fn openai_request_credential(
-    provider: &Provider,
-    credentials: &CredentialStore,
-) -> AppResult<openai::OpenAiRequestCredential> {
-    openai::OpenAIAuthManager::new(provider.clone())?.request_credential(credentials)
-}
-
 /// Metadata describes flows JevCode can show without silently enabling unregistered OAuth.
 pub fn available_methods(provider_id: &str) -> Vec<ProviderAuthMethodOption> {
     let mut methods = vec![ProviderAuthMethodOption {

@@ -75,6 +75,7 @@ pub struct Bootstrap {
     tools: Vec<Tool>,
     permission_policy: PermissionPolicy,
     model_preferences: ModelPreferences,
+    openai_auth_status: OpenAiAuthStatus,
 }
 
 fn models_for_provider(state: &SharedState, provider: &Provider) -> AppResult<Vec<Model>> {
@@ -117,6 +118,13 @@ pub fn bootstrap(state: State<'_, SharedState>) -> AppResult<Bootstrap> {
         .filter(|provider| provider.protocol != ProviderProtocol::Preview)
         .map(|provider| account_status(&state, provider))
         .collect::<AppResult<Vec<_>>>()?;
+    let openai_provider = state.config.provider("openai")?;
+    let openai_auth_status = auth::openai_auth_status(
+        openai_provider,
+        &state.credentials,
+        &state.database,
+        state.database.provider_account("openai")?,
+    )?;
     Ok(Bootstrap {
         workspace: Workspace {
             id: "local".into(),
@@ -135,6 +143,7 @@ pub fn bootstrap(state: State<'_, SharedState>) -> AppResult<Bootstrap> {
             ..Default::default()
         },
         model_preferences: state.database.model_preferences()?,
+        openai_auth_status,
     })
 }
 
@@ -1911,6 +1920,22 @@ pub fn get_openai_auth_status(state: State<'_, SharedState>) -> AppResult<OpenAi
     let provider = state.config.provider("openai")?;
     let stored = state.database.provider_account("openai")?;
     auth::openai_auth_status(provider, &state.credentials, &state.database, stored)
+}
+
+#[tauri::command]
+pub fn openai_auth_status(state: State<'_, SharedState>) -> AppResult<OpenAiAuthStatus> {
+    get_openai_auth_status(state)
+}
+
+#[tauri::command]
+pub async fn openai_auth_refresh(
+    account_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<OpenAiAccount> {
+    let provider = state.config.provider("openai")?.clone();
+    crate::auth::openai::OpenAIAuthManager::new(provider)?
+        .refresh_account(&state.credentials, &state.database, &account_id)
+        .await
 }
 
 #[tauri::command]
