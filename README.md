@@ -406,7 +406,12 @@ Authentication is intentionally separated by product entitlement:
   Codex/ChatGPT credentials or browser cookies.
 - Settings → Providers → OpenAI presents ChatGPT OAuth and an API key as
   separate authentication methods. ChatGPT sign-in opens the system browser;
-  the page shows the waiting, cancel, reconnect, denial, timeout, network and
+  while JevCode waits, users can copy the short-lived sign-in link and paste it
+  into another browser. The authorization URL is held in zeroizing native
+  memory for the active attempt and copied to the OS clipboard by a Rust
+  command; neither the URL nor OAuth tokens cross IPC or enter application
+  logs. The copy action stops working after the attempt expires or ends. The
+  page shows the waiting, cancel, reconnect, denial, timeout, network and
   provider-outage states without exposing authorization material. Account
   management displays only verified profile metadata and a stable short
   registration label for accounts sharing an email. Users can add, select,

@@ -1,8 +1,8 @@
 import { useEffect, useReducer, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { Check, CircleAlert, CircleCheck, CircleX, ExternalLink, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, CircleX, Copy, ExternalLink, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
 import type { Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
-import { cancelOpenAIAuth, desktopAvailable, getOpenAIAuthStatus, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectOpenAIAPIKey, selectOpenAIAccount, startOpenAIAuth } from '../../lib/ipc';
+import { cancelOpenAIAuth, copyOpenAIAuthLink, desktopAvailable, getOpenAIAuthStatus, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectOpenAIAPIKey, selectOpenAIAccount, startOpenAIAuth } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import { initialOpenAIAuthFlow, openAIAccountNeedsReconnect, openAIAccountStatus, openAIAuthFlowReducer, openAIAuthStartErrorMessage } from './openaiAuthUi';
 
@@ -64,6 +64,8 @@ export function ProviderSettings({
   const [openAIStatusError, setOpenAIStatusError] = useState<string | null>(null);
   const [openAIFlow, dispatchOpenAIFlow] = useReducer(openAIAuthFlowReducer, initialOpenAIAuthFlow);
   const [managedOpenAIAccountId, setManagedOpenAIAccountId] = useState<string | null>(null);
+  const [copyingAuthLink, setCopyingAuthLink] = useState(false);
+  const [authLinkCopied, setAuthLinkCopied] = useState(false);
 
   async function refreshOpenAIStatus() {
     setOpenAIStatusLoading(true);
@@ -192,12 +194,30 @@ export function ProviderSettings({
   }
 
   async function connectOpenAIChatGPT(accountId?: string) {
+    setAuthLinkCopied(false);
     dispatchOpenAIFlow({ type: 'begin' });
     try {
       const started = await startOpenAIAuth(accountId);
       dispatchOpenAIFlow({ type: 'started', attemptId: started.attemptId });
     } catch (cause) {
       dispatchOpenAIFlow({ type: 'start-failed', message: openAIAuthStartErrorMessage(normalizeError(cause).code) });
+    }
+  }
+
+  async function copyOpenAIChatGPTAuthLink() {
+    const attemptId = openAIFlow.attemptId;
+    if (!attemptId || copyingAuthLink) return;
+    setCopyingAuthLink(true);
+    setAuthLinkCopied(false);
+    resetFeedback();
+    try {
+      await copyOpenAIAuthLink(attemptId);
+      setAuthLinkCopied(true);
+      setNotice('Sign-in link copied. Paste it into the browser you want to use, and keep JevCode open until sign-in finishes.');
+    } catch (cause) {
+      setError(normalizeError(cause).message);
+    } finally {
+      setCopyingAuthLink(false);
     }
   }
 
@@ -352,6 +372,10 @@ export function ProviderSettings({
             {(openAIFlow.phase === 'waiting' || openAIFlow.phase === 'cancelling') && <div className="openai-auth-waiting" role="status">
               {openAIFlow.phase === 'cancelling' ? <LoaderCircle size={15} className="spin" /> : <ExternalLink size={15} />}
               <div><strong>{openAIFlow.phase === 'cancelling' ? 'Cancelling sign-in…' : 'Waiting for login...'}</strong><span>Your browser was opened. Complete sign-in there; JevCode will verify the result.</span></div>
+              <button className="account-button quiet" onClick={() => void copyOpenAIChatGPTAuthLink()} disabled={openAIFlow.phase === 'cancelling' || copyingAuthLink}>
+                {authLinkCopied ? <Check size={13} /> : copyingAuthLink ? <LoaderCircle size={13} className="spin" /> : <Copy size={13} />}
+                {copyingAuthLink ? 'Copying…' : authLinkCopied ? 'Copied' : 'Copy sign-in link'}
+              </button>
               <button className="account-button quiet" onClick={() => void cancelOpenAIChatGPT()} disabled={openAIFlow.phase === 'cancelling'}>
                 {openAIFlow.phase === 'cancelling' ? 'Cancelling…' : 'Cancel'}
               </button>

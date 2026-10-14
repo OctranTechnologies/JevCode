@@ -16,6 +16,18 @@ describe('typed Tauri command boundary', () => {
     const result = await command('send_message', { sessionId: 'test-session', content: 'Review Git status' });
     expect(result.status).toBe('waiting_for_permission');
   });
+  it('copies the OpenAI sign-in link through native IPC without returning its URL', async () => {
+    mockIPC((name, args) => {
+      expect(name).toBe('openai_auth_copy_link');
+      expect(args).toEqual({ attemptId: 'd8f8a8ef-4df0-4c58-b20d-61cda4482f60' });
+      return null;
+    });
+    const { copyOpenAIAuthLink } = await import('../src/lib/ipc');
+    await expect(copyOpenAIAuthLink('d8f8a8ef-4df0-4c58-b20d-61cda4482f60')).resolves.toBeNull();
+
+    mockIPC(() => 'https://auth.openai.com/authorize?state=should-not-cross-ipc');
+    await expect(copyOpenAIAuthLink('d8f8a8ef-4df0-4c58-b20d-61cda4482f60')).rejects.toMatchObject({ code: 'ipc_contract' });
+  });
   it('rejects malformed results and preserves structured backend errors', async () => {
     mockIPC(() => ({ status: 'oops' }));
     const { command } = await import('../src/lib/ipc');

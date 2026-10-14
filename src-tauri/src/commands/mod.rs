@@ -2052,7 +2052,12 @@ pub async fn openai_auth_start(
     let attempt_id = pending.attempt_id.clone();
     let browser_url = pending.authorization_url.clone();
     let (cancel_sender, cancel_receiver) = watch::channel(false);
-    state.register_openai_auth_attempt(&attempt_id, cancel_sender)?;
+    state.register_openai_auth_attempt(
+        &attempt_id,
+        cancel_sender,
+        pending.authorization_url.as_str(),
+        pending.expires_at,
+    )?;
 
     let managed_state = Arc::clone(state.inner());
     let event_app = app.clone();
@@ -2065,6 +2070,8 @@ pub async fn openai_auth_start(
             &managed_state,
         )
         .await;
+        // Drop the short-lived URL before notifying React that the attempt ended.
+        managed_state.release_openai_auth_attempt(&attempt_id);
         if let Some(completion) = completion {
             let event = OpenAiAuthAttemptEvent {
                 attempt_id: attempt_id.clone(),
@@ -2075,7 +2082,6 @@ pub async fn openai_auth_start(
                 tracing::warn!(%error, "OpenAI sign-in status delivery failed");
             }
         }
-        managed_state.release_openai_auth_attempt(&attempt_id);
     });
 
     let launch_result =
@@ -2088,7 +2094,6 @@ pub async fn openai_auth_start(
         };
     if let Err(error) = launch_result {
         let _ = state.cancel_openai_auth_attempt(&result.attempt_id);
-        state.release_openai_auth_attempt(&result.attempt_id);
         let event = OpenAiAuthAttemptEvent {
             attempt_id: result.attempt_id.clone(),
             state: OpenAiAuthAttemptState::Failed,
@@ -2102,13 +2107,30 @@ pub async fn openai_auth_start(
 }
 
 #[tauri::command]
+pub fn openai_auth_copy_link(
+    app: AppHandle,
+    attempt_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    state.copy_openai_auth_link(&attempt_id, |authorization_url| {
+        app.clipboard().write_text(authorization_url).map_err(|_| {
+            AppError::new(
+                "clipboard_unavailable",
+                "JevCode could not copy the sign-in link. Check clipboard access and try again.",
+            )
+        })
+    })
+}
+
+#[tauri::command]
 pub fn openai_auth_cancel(
     attempt_id: String,
     app: AppHandle,
     state: State<'_, SharedState>,
 ) -> AppResult<()> {
     state.cancel_openai_auth_attempt(&attempt_id)?;
-    state.release_openai_auth_attempt(&attempt_id);
     let event = OpenAiAuthAttemptEvent {
         attempt_id,
         state: OpenAiAuthAttemptState::Cancelled,
