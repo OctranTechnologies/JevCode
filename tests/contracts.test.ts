@@ -34,7 +34,8 @@ describe('desktop contracts', () => {
     expect(openAIAuthStartSchema.parse(safeAttempt)).toEqual(safeAttempt);
     expect(openAIAuthStartSchema.safeParse({ ...safeAttempt, authorizationUrl: 'https://auth.openai.com/?state=private' }).success).toBe(false);
     expect(openAIAuthStartSchema.safeParse({ ...safeAttempt, codeVerifier: 'private-verifier' }).success).toBe(false);
-    expect(openAIAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'callback_received' })).toEqual({ attemptId: safeAttempt.attemptId, state: 'callback_received' });
+    expect(openAIAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'callback_received' })).toEqual({ attemptId: safeAttempt.attemptId, state: 'callback_received', failureReason: null });
+    expect(openAIAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'failed', failureReason: 'network_error' }).failureReason).toBe('network_error');
   });
   it('does not let a late command response overwrite newer events', () => {
     const parsed = sessionSchema.parse(session);

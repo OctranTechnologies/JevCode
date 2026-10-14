@@ -378,6 +378,12 @@ Authentication is intentionally separated by product entitlement:
   `openai_auth_refresh` and `openai_auth_logout` expose safe metadata only.
   Disconnect deletes the keychain item before removing its SQLite profile.
   JevCode does not read Codex/ChatGPT credentials or browser cookies.
+- Settings → Providers → OpenAI presents ChatGPT OAuth and an API key as
+  separate authentication methods. ChatGPT sign-in opens the system browser;
+  the page shows the waiting, cancel, reconnect, denial, timeout, network and
+  provider-outage states without exposing authorization material. Account
+  management displays only verified profile metadata. API keys can be tested,
+  replaced or disconnected independently of ChatGPT OAuth.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are supported. Google documents OAuth for Gemini with a

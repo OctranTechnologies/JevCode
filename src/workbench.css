@@ -640,16 +640,49 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .account-model-list { margin: 10px 0 0 42px; padding: 9px 10px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border-radius: 6px; }
 .account-model-list > span { color: var(--wb-muted); font-size: 9px; font-weight: 590; }
 .account-model-list p { max-height: 86px; margin: 5px 0 0; overflow: auto; color: var(--wb-ink); font-size: 9px; line-height: 1.7; overflow-wrap: anywhere; }
-.openai-oauth-section { display: grid; gap: 8px; margin: 12px 0 0 42px; padding: 10px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 6px; }
-.openai-oauth-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.openai-oauth-heading > div { display: grid; gap: 4px; min-width: 0; }
-.openai-oauth-heading strong { color: var(--wb-ink); font-size: 10px; font-weight: 600; }
-.openai-oauth-heading small, .openai-oauth-empty { color: var(--wb-muted); font-size: 9px; line-height: 1.5; }
-.openai-oauth-empty { margin: 0; }
-.openai-oauth-account { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto auto; align-items: center; gap: 9px; padding-top: 8px; border-top: 1px solid var(--wb-border); }
-.openai-profile { overflow: hidden; color: var(--wb-ink); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.openai-profile small { display: block; margin-top: 3px; color: var(--wb-muted); font-size: 9px; }
-.openai-scopes { color: var(--wb-muted); font-size: 9px; white-space: nowrap; }
+.openai-provider-card { grid-column: 1 / -1; padding: 17px; }
+.openai-provider-heading { display: flex; align-items: center; gap: 11px; }
+.openai-provider-heading .account-monogram { flex: 0 0 31px; width: 31px; height: 31px; font-size: 13px; }
+.openai-provider-copy { min-width: 0; }
+.openai-provider-copy h2 { margin: 0; color: var(--wb-ink); font-size: 14px; font-weight: 630; }
+.openai-provider-copy p { margin: 5px 0 0; color: var(--wb-muted); font-size: 11px; line-height: 1.55; }
+.openai-status-loading { display: flex; align-items: center; gap: 7px; margin: 13px 0 0 42px; color: var(--wb-muted); font-size: 10px; }
+.openai-auth-feedback, .openai-auth-waiting { display: flex; align-items: center; gap: 9px; min-width: 0; margin: 14px 0 0 42px; padding: 10px 11px; color: var(--wb-muted-strong); font-size: 10px; line-height: 1.5; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 6px; }
+.openai-auth-feedback svg, .openai-auth-waiting > svg { flex: 0 0 auto; }
+.openai-auth-feedback.success { color: var(--wb-success); background: var(--wb-success-soft); border-color: color-mix(in srgb, var(--wb-success) 28%, var(--wb-border)); }
+.openai-auth-feedback.error { color: var(--wb-danger); background: var(--wb-danger-soft); border-color: color-mix(in srgb, var(--wb-danger) 28%, var(--wb-border)); }
+.openai-auth-feedback.info { color: var(--wb-muted-strong); }
+.openai-auth-feedback > span, .openai-auth-waiting > div { min-width: 0; }
+.openai-auth-feedback > button { margin-inline-start: auto; }
+.openai-auth-waiting { justify-content: flex-start; }
+.openai-auth-waiting > svg { color: var(--wb-accent); }
+.openai-auth-waiting > div { display: grid; flex: 1; gap: 3px; }
+.openai-auth-waiting strong { color: var(--wb-ink); font-size: 11px; font-weight: 620; }
+.openai-auth-waiting span { color: var(--wb-muted); }
+.openai-auth-waiting .account-button { flex: 0 0 auto; }
+.openai-connection-choices { display: grid; grid-template-columns: minmax(180px, 1fr) 35px minmax(180px, 1fr); align-items: center; gap: 12px; max-width: 650px; margin: 17px 0 2px 42px; }
+.openai-connection-choices button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 13px; font-size: 11px; font-weight: 590; border: 1px solid var(--wb-border-strong); border-radius: 6px; transition: background 130ms ease, border-color 130ms ease, color 130ms ease; }
+.openai-connection-choices button:focus-visible, .openai-method-actions button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 2px; }
+.openai-connection-choices button:disabled { cursor: not-allowed; opacity: .55; }
+.openai-chatgpt-action { color: var(--wb-accent-ink); background: var(--wb-accent); border-color: var(--wb-accent) !important; }
+.openai-chatgpt-action:hover:not(:disabled) { background: var(--wb-accent-hover); border-color: var(--wb-accent-hover) !important; }
+.openai-apikey-action { color: var(--wb-ink); background: var(--wb-surface); }
+.openai-apikey-action:hover:not(:disabled) { background: var(--wb-surface-quiet); border-color: var(--wb-border-strong); }
+.openai-choice-divider { color: var(--wb-muted); font-size: 9px; text-align: center; text-transform: uppercase; }
+.openai-method-list { display: grid; margin: 14px 0 0 42px; border-top: 1px solid var(--wb-border); }
+.openai-method-group + .openai-method-row, .openai-method-row + .openai-method-row { border-top: 1px solid var(--wb-border); }
+.openai-method-row { display: grid; grid-template-columns: minmax(125px, .58fr) minmax(170px, 1fr) auto; align-items: center; gap: 11px; min-width: 0; padding: 12px 0; }
+.openai-method-status, .openai-method-account { display: grid; min-width: 0; gap: 5px; }
+.openai-method-status > span { color: var(--wb-ink); font-size: 11px; font-weight: 600; }
+.openai-method-status > strong { width: max-content; }
+.openai-method-account > span { overflow: hidden; color: var(--wb-ink); font-size: 10px; text-overflow: ellipsis; }
+.openai-method-account > small { overflow: hidden; color: var(--wb-muted); font-size: 9px; line-height: 1.5; text-overflow: ellipsis; }
+.openai-method-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.openai-account-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 11px; padding: 10px 0 2px; border-top: 1px solid var(--wb-border); }
+.openai-account-details > span { display: grid; min-width: 0; gap: 4px; }
+.openai-account-details small { color: var(--wb-muted); font-size: 9px; }
+.openai-account-details strong { overflow: hidden; color: var(--wb-ink); font-size: 10px; font-weight: 540; text-overflow: ellipsis; }
+.openai-key-form { grid-template-columns: minmax(160px, .8fr) minmax(180px, 1fr) auto; margin: 0 0 0 42px; }
 .accounts-feedback { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 12px; padding: 9px 10px; font-size: 10px; line-height: 1.5; border: 1px solid var(--wb-border); border-radius: 6px; }
 .accounts-feedback svg { flex: 0 0 auto; margin-top: 1px; }
 .accounts-feedback.success { color: var(--wb-accent); background: var(--wb-accent-soft); border-color: var(--wb-accent-line); }
@@ -781,9 +814,14 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .account-connect-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .account-form-actions { flex-wrap: wrap; }
   .account-method-note, .account-model-list { margin-left: 0; }
-  .openai-oauth-section { margin-left: 0; }
-  .openai-oauth-account { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .openai-scopes { grid-column: 2; }
+  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-connection-choices, .openai-method-list, .openai-key-form { margin-inline-start: 0; }
+  .openai-connection-choices { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .openai-choice-divider { padding: 1px 0; }
+  .openai-method-row { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; }
+  .openai-method-actions { justify-content: flex-start; }
+  .openai-account-details { grid-template-columns: minmax(0, 1fr); }
+  .openai-auth-waiting { align-items: flex-start; flex-wrap: wrap; }
+  .openai-auth-waiting .account-button { margin-inline-start: 23px; }
   .permission-mode-control { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .permission-rule-row { grid-template-columns: 25px minmax(0, 1fr); }
   .permission-revoke-button { grid-column: 2; justify-self: start; }

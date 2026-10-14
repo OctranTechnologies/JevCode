@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { Check, CircleAlert, CircleCheck, CircleX, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, CircleX, ExternalLink, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
 import type { Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
 import { cancelOpenAIAuth, desktopAvailable, getOpenAIAuthStatus, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, startOpenAIAuth } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
+import { initialOpenAIAuthFlow, openAIAccountNeedsReconnect, openAIAccountStatus, openAIAuthFlowReducer, openAIAuthStartErrorMessage } from './openaiAuthUi';
 
 const apiKeyMethod: ProviderAuthMethod = 'api_key';
 
@@ -42,11 +43,13 @@ function attentionLabel(code: string | null): string {
 export function ProviderSettings({
   providers,
   accounts,
+  initialOpenAIStatus,
   onAccount,
   onModels,
 }: {
   providers: Provider[];
   accounts: ProviderAccount[];
+  initialOpenAIStatus?: OpenAIAuthStatus;
   onAccount: (account: ProviderAccount) => void;
   onModels: (providerId: string, models: Model[]) => void;
 }) {
@@ -56,33 +59,33 @@ export function ProviderSettings({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<Record<string, string[]>>({});
-  const [openAIStatus, setOpenAIStatus] = useState<OpenAIAuthStatus | null>(null);
-  const [openAIAttemptId, setOpenAIAttemptId] = useState<string | null>(null);
-  const [openAIBusy, setOpenAIBusy] = useState(false);
+  const [openAIStatus, setOpenAIStatus] = useState<OpenAIAuthStatus | null>(initialOpenAIStatus ?? null);
+  const [openAIStatusLoading, setOpenAIStatusLoading] = useState(initialOpenAIStatus === undefined && desktopAvailable);
+  const [openAIStatusError, setOpenAIStatusError] = useState<string | null>(null);
+  const [openAIFlow, dispatchOpenAIFlow] = useReducer(openAIAuthFlowReducer, initialOpenAIAuthFlow);
+  const [managedOpenAIAccountId, setManagedOpenAIAccountId] = useState<string | null>(null);
 
   async function refreshOpenAIStatus() {
+    setOpenAIStatusLoading(true);
+    setOpenAIStatusError(null);
     try { setOpenAIStatus(await getOpenAIAuthStatus()); }
-    catch (cause) { setError(normalizeError(cause).message); }
+    catch { setOpenAIStatusError('OpenAI account status could not be loaded. Check your connection and retry.'); }
+    finally { setOpenAIStatusLoading(false); }
   }
 
   useEffect(() => {
     if (!desktopAvailable) return;
     let active = true;
-    void getOpenAIAuthStatus().then(status => { if (active) setOpenAIStatus(status); }).catch(cause => { if (active) setError(normalizeError(cause).message); });
+    void getOpenAIAuthStatus().then(status => { if (active) { setOpenAIStatus(status); setOpenAIStatusError(null); } }).catch(() => { if (active) setOpenAIStatusError('OpenAI account status could not be loaded. Check your connection and retry.'); }).finally(() => { if (active) setOpenAIStatusLoading(false); });
     let unlisten: (() => void) | undefined;
     void listen<unknown>('openai:auth-attempt', event => {
       const parsed = openAIAuthAttemptEventSchema.safeParse(event.payload);
       if (!parsed.success || !active) return;
       const attempt = parsed.data as OpenAIAuthAttemptEvent;
-      setOpenAIAttemptId(current => current === attempt.attemptId ? null : current);
-      setOpenAIBusy(false);
+      dispatchOpenAIFlow({ type: 'attempt-finished', event: attempt });
       if (attempt.state === 'callback_received') {
-        void getOpenAIAuthStatus().then(status => { if (active) setOpenAIStatus(status); });
-        setNotice('ChatGPT account connected. Credentials are stored in your OS credential manager.');
-      } else if (attempt.state === 'denied') setError('OpenAI sign-in was cancelled before access was granted.');
-      else if (attempt.state === 'timed_out') setError('OpenAI sign-in timed out. Start again when you’re ready.');
-      else if (attempt.state === 'failed') setError('OpenAI sign-in could not be verified. Start a new attempt.');
-      else if (attempt.state === 'cancelled') setNotice('OpenAI sign-in cancelled.');
+        void getOpenAIAuthStatus().then(status => { if (active) { setOpenAIStatus(status); setOpenAIStatusError(null); } }).catch(() => { if (active) setOpenAIStatusError('OpenAI connected, but the account details could not be refreshed. Retry status below.'); });
+      }
     }).then(stop => { if (active) unlisten = stop; else stop(); });
     return () => { active = false; unlisten?.(); };
   }, []);
@@ -158,36 +161,34 @@ export function ProviderSettings({
   }
 
   async function connectOpenAIChatGPT(accountId?: string) {
-    setOpenAIBusy(true);
-    resetFeedback();
+    dispatchOpenAIFlow({ type: 'begin' });
     try {
       const started = await startOpenAIAuth(accountId);
-      setOpenAIAttemptId(started.attemptId);
-      setNotice(accountId
-        ? 'Continue sign-in in your browser to reconnect this ChatGPT account.'
-        : 'Continue sign-in in your browser. JevCode will verify your account before connecting it.');
+      dispatchOpenAIFlow({ type: 'started', attemptId: started.attemptId });
     } catch (cause) {
-      setOpenAIBusy(false);
-      setError(normalizeError(cause).message);
+      dispatchOpenAIFlow({ type: 'start-failed', message: openAIAuthStartErrorMessage(normalizeError(cause).code) });
     }
   }
 
   async function cancelOpenAIChatGPT() {
-    if (!openAIAttemptId) return;
-    setOpenAIBusy(true);
-    try { await cancelOpenAIAuth(openAIAttemptId); setOpenAIAttemptId(null); setOpenAIBusy(false); }
-    catch (cause) { setOpenAIBusy(false); setError(normalizeError(cause).message); }
+    const attemptId = openAIFlow.attemptId;
+    if (!attemptId) return;
+    dispatchOpenAIFlow({ type: 'begin-cancel' });
+    try {
+      await cancelOpenAIAuth(attemptId);
+      dispatchOpenAIFlow({ type: 'attempt-finished', event: { attemptId, state: 'cancelled', failureReason: null } });
+    } catch (cause) {
+      dispatchOpenAIFlow({ type: 'cancel-failed', message: openAIAuthStartErrorMessage(normalizeError(cause).code) });
+    }
   }
 
   async function disconnectOpenAIAccount(accountId: string) {
-    setOpenAIBusy(true);
     resetFeedback();
     try {
       await logoutOpenAIAuth(accountId);
       await refreshOpenAIStatus();
       setNotice('ChatGPT credentials removed from your OS credential manager.');
     } catch (cause) { setError(normalizeError(cause).message); }
-    finally { setOpenAIBusy(false); }
   }
 
   const remoteProviders = providers.filter(provider => provider.protocol !== 'preview');
@@ -207,12 +208,140 @@ export function ProviderSettings({
     <div className="account-list" aria-label="Model provider accounts">
       {remoteProviders.map(provider => {
         const account = accountFor(provider, accounts);
-        const connected = account.state !== 'not_connected';
         const editing = editingId === provider.id;
         const busy = busyId === provider.id;
         const keyOption = account.availableMethods.find(method => method.method === apiKeyMethod);
         const oauthOptions = account.availableMethods.filter(method => method.method !== apiKeyMethod);
         const connectedLabel = account.authMethod === 'api_key' ? 'API key' : account.accountLabel;
+
+        if (provider.id === 'openai') {
+          const chatgptAccounts = openAIStatus?.chatgpt.connectedAccounts ?? [];
+          const chatgptConnected = chatgptAccounts.some(chatgpt => !openAIAccountNeedsReconnect(chatgpt));
+          const chatgptNeedsReconnect = chatgptAccounts.some(openAIAccountNeedsReconnect);
+          const keyConnected = account.state === 'connected';
+          const keyNeedsAttention = account.state === 'needs_attention';
+          const connected = keyConnected || chatgptConnected;
+          const needsAttention = !connected && (keyNeedsAttention || chatgptNeedsReconnect);
+          const aggregateState = connected ? 'connected' : needsAttention ? 'needs_attention' : 'not_connected';
+          const chatGPTAvailable = openAIStatus?.chatgpt.available ?? desktopAvailable;
+          const showConnectionChoices = !openAIStatusLoading && !openAIStatusError && chatgptAccounts.length === 0 && !keyConnected && !keyNeedsAttention && !editing;
+          const flowActive = openAIFlow.phase !== 'idle';
+
+          return <article className={`account-row openai-provider-card${editing ? ' is-editing' : ''}`} key={provider.id}>
+            <div className="openai-provider-heading">
+              <span className="account-monogram" aria-hidden="true">O</span>
+              <div className="openai-provider-copy">
+                <div className="account-title-line">
+                  <h2>OpenAI</h2>
+                  <span className={`account-status ${aggregateState}`}>
+                    {aggregateState === 'connected' ? <CircleCheck size={13} /> : aggregateState === 'needs_attention' ? <CircleAlert size={13} /> : <CircleX size={13} />}
+                    {connected ? 'Connected' : needsAttention ? 'Reconnect needed' : 'Not connected'}
+                  </span>
+                </div>
+                <p>{showConnectionChoices ? 'Use your ChatGPT/OpenAI account to connect OpenAI models.' : 'Choose how JevCode authenticates OpenAI model requests.'}</p>
+              </div>
+            </div>
+
+            {openAIStatusLoading && <div className="openai-status-loading" role="status"><LoaderCircle size={14} className="spin" />Loading OpenAI account status…</div>}
+            {openAIStatusError && <div className="openai-auth-feedback error" role="alert"><CircleAlert size={14} /><span>{openAIStatusError}</span><button className="account-button quiet" onClick={() => void refreshOpenAIStatus()} disabled={openAIStatusLoading}>Retry</button></div>}
+            {openAIStatus?.chatgpt.unavailableReason && <div className="openai-auth-feedback error" role="alert"><CircleAlert size={14} /><span>{openAIStatus.chatgpt.unavailableReason}</span></div>}
+
+            {openAIFlow.feedback && openAIFlow.phase === 'idle' && <div className={`openai-auth-feedback ${openAIFlow.feedback.tone}`} role={openAIFlow.feedback.tone === 'error' ? 'alert' : 'status'}>
+              {openAIFlow.feedback.tone === 'success' ? <CircleCheck size={14} /> : openAIFlow.feedback.tone === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}
+              <span>{openAIFlow.feedback.message}</span>
+            </div>}
+
+            {openAIFlow.phase === 'starting' && <div className="openai-auth-waiting" role="status">
+              <LoaderCircle size={15} className="spin" /><span>Opening your browser…</span>
+            </div>}
+            {(openAIFlow.phase === 'waiting' || openAIFlow.phase === 'cancelling') && <div className="openai-auth-waiting" role="status">
+              {openAIFlow.phase === 'cancelling' ? <LoaderCircle size={15} className="spin" /> : <ExternalLink size={15} />}
+              <div><strong>{openAIFlow.phase === 'cancelling' ? 'Cancelling sign-in…' : 'Waiting for login...'}</strong><span>Your browser was opened. Complete sign-in there; JevCode will verify the result.</span></div>
+              <button className="account-button quiet" onClick={() => void cancelOpenAIChatGPT()} disabled={openAIFlow.phase === 'cancelling'}>
+                {openAIFlow.phase === 'cancelling' ? 'Cancelling…' : 'Cancel'}
+              </button>
+            </div>}
+
+            {showConnectionChoices && <div className="openai-connection-choices">
+              <button className="openai-chatgpt-action" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || !chatGPTAvailable || flowActive}>
+                {openAIFlow.phase === 'starting' ? <LoaderCircle size={15} className="spin" /> : <ShieldCheck size={15} />}
+                Continue with ChatGPT
+              </button>
+              <span className="openai-choice-divider" aria-hidden="true">or</span>
+              <button className="openai-apikey-action" onClick={() => { setEditingId(provider.id); setSecret(''); resetFeedback(); }} disabled={!desktopAvailable || flowActive}>
+                <KeyRound size={15} />Use API Key
+              </button>
+            </div>}
+
+            {!openAIStatusLoading && openAIStatus && !showConnectionChoices && <div className="openai-method-list" aria-label="OpenAI authentication methods">
+              {chatgptAccounts.length > 0 ? chatgptAccounts.map(chatgpt => {
+                const accountStatus = openAIAccountStatus(chatgpt);
+                const reconnect = accountStatus.tone === 'needs_attention';
+                const isManaged = managedOpenAIAccountId === chatgpt.id;
+                return <div className="openai-method-group" key={chatgpt.id}>
+                  <div className="openai-method-row">
+                    <div className="openai-method-status">
+                      <span>ChatGPT OAuth</span>
+                      <strong className={`account-status ${accountStatus.tone}`}>
+                        {reconnect ? <CircleAlert size={13} /> : <CircleCheck size={13} />}{accountStatus.label}
+                      </strong>
+                    </div>
+                    <div className="openai-method-account">
+                      <span>{chatgpt.displayName ?? 'ChatGPT account'}</span>
+                      {chatgpt.email && <small>{chatgpt.email}</small>}
+                      {accountStatus.detail && <small>{accountStatus.detail}</small>}
+                    </div>
+                    <div className="openai-method-actions">
+                      {reconnect && <button className="account-button connect" onClick={() => void connectOpenAIChatGPT(chatgpt.id)} disabled={!desktopAvailable || flowActive}>Reconnect</button>}
+                      <button className="account-button quiet" onClick={() => setManagedOpenAIAccountId(isManaged ? null : chatgpt.id)} aria-expanded={isManaged}>
+                        {isManaged ? 'Hide account' : 'Manage Account'}
+                      </button>
+                      <button className="account-button remove" onClick={() => void disconnectOpenAIAccount(chatgpt.id)} disabled={!desktopAvailable || flowActive} aria-label={'Disconnect ' + (chatgpt.email ?? 'ChatGPT account')}>
+                        <Trash2 size={13} />Disconnect
+                      </button>
+                    </div>
+                  </div>
+                  {isManaged && <div className="openai-account-details" aria-label="ChatGPT OAuth account details">
+                    <span><small>Method</small><strong>ChatGPT OAuth</strong></span>
+                    <span><small>Account</small><strong>{chatgpt.email ?? chatgpt.displayName ?? 'ChatGPT account'}</strong></span>
+                    <span><small>Session</small><strong>{reconnect ? 'Needs reconnection' : 'Stored securely on this device'}</strong></span>
+                  </div>}
+                </div>;
+              }) : <div className="openai-method-row">
+                <div className="openai-method-status"><span>ChatGPT OAuth</span><strong className="account-status">Not connected</strong></div>
+                <div className="openai-method-account"><span>Sign in using your ChatGPT account in a browser.</span></div>
+                <div className="openai-method-actions"><button className="account-button connect" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || !chatGPTAvailable || flowActive}>Continue with ChatGPT</button></div>
+              </div>}
+
+              <div className="openai-method-row">
+                <div className="openai-method-status"><span>API Key</span><strong className={`account-status ${keyConnected ? 'connected' : keyNeedsAttention ? 'needs_attention' : ''}`}>
+                  {keyConnected ? <><CircleCheck size={13} />Connected</> : keyNeedsAttention ? <><CircleAlert size={13} />{attentionLabel(account.lastErrorCode)}</> : 'Not connected'}
+                </strong></div>
+                <div className="openai-method-account"><span>{keyConnected ? 'Key stored in your OS credential manager.' : keyNeedsAttention ? 'Check or replace the saved key to restore access.' : 'Use an OpenAI API key from your developer account.'}</span></div>
+                <div className="openai-method-actions">
+                  {keyConnected && <>
+                    <button className="account-button quiet" onClick={() => void validate(provider)} disabled={!desktopAvailable || busy}>{busy ? <LoaderCircle size={13} className="spin" /> : <RotateCw size={13} />}Test</button>
+                    <button className="account-button quiet" onClick={() => { setEditingId(provider.id); setSecret(''); resetFeedback(); }} disabled={!desktopAvailable || busy}><KeyRound size={13} />Change key</button>
+                    <button className="account-button remove" onClick={() => void disconnect(provider)} disabled={!desktopAvailable || busy}><Trash2 size={13} />Disconnect</button>
+                  </>}
+                  {!keyConnected && !editing && <button className="account-button quiet" onClick={() => { setEditingId(provider.id); setSecret(''); resetFeedback(); }} disabled={!desktopAvailable || busy}><KeyRound size={13} />{keyNeedsAttention ? 'Replace key' : 'Use API Key'}</button>}
+                </div>
+              </div>
+            </div>}
+
+            {editing && <form className="account-connect-form openai-key-form" onSubmit={event => { event.preventDefault(); void connect(provider); }}>
+              <div className="account-form-copy"><strong>{keyConnected ? 'Replace OpenAI API key' : keyNeedsAttention ? 'Update OpenAI API key' : 'Use an OpenAI API key'}</strong><span>The key is tested before it is saved to your OS credential manager.</span></div>
+              <label className="sr-only" htmlFor="api-key-openai">OpenAI API key</label>
+              <input id="api-key-openai" type="password" autoComplete="off" spellCheck={false} value={secret} onChange={event => setSecret(event.target.value)} placeholder="Paste an API key" disabled={busy} autoFocus />
+              <div className="account-form-actions">
+                <button type="submit" className="account-button connect" disabled={!desktopAvailable || busy || !secret.trim()}>{busy ? <LoaderCircle size={13} className="spin" /> : <ShieldCheck size={13} />}{busy ? 'Testing…' : 'Test and connect'}</button>
+                <button type="button" className="account-button quiet" onClick={() => { setEditingId(null); setSecret(''); resetFeedback(); }} disabled={busy}>Cancel</button>
+              </div>
+            </form>}
+          </article>;
+        }
+
+        const connected = account.state !== 'not_connected';
 
         return <article className={`account-row${editing ? ' is-editing' : ''}`} key={provider.id}>
           <div className="account-main">
@@ -256,26 +385,7 @@ export function ProviderSettings({
             </div>
           </form>}
 
-          {provider.id === 'openai' && <div className="openai-oauth-section">
-            <div className="openai-oauth-heading"><div><strong>Sign in with ChatGPT</strong><small>Official browser sign-in · tokens stay in native secure storage</small></div>
-              {openAIAttemptId
-                ? <button className="account-button quiet" onClick={() => void cancelOpenAIChatGPT()} disabled={openAIBusy}><CircleX size={13} />Cancel sign-in</button>
-                : <button className="account-button connect" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || openAIBusy}><ShieldCheck size={13} />{openAIBusy ? 'Starting…' : 'Continue with ChatGPT'}</button>}
-            </div>
-            {openAIStatus?.chatgpt.connectedAccounts.map(chatgpt => <div className="openai-oauth-account" key={chatgpt.id}>
-              <span className={'account-status ' + (chatgpt.requiresReconnect ? 'needs_attention' : 'connected')}>{chatgpt.requiresReconnect ? <CircleAlert size={13} /> : <CircleCheck size={13} />}{chatgpt.requiresReconnect ? 'Reconnect needed' : chatgpt.accessTokenValid ? 'Connected' : 'Refresh due'}</span>
-              <span className="openai-profile">{chatgpt.displayName ?? chatgpt.email ?? 'ChatGPT account'}{chatgpt.displayName && chatgpt.email ? <small>{chatgpt.email}</small> : null}</span>
-              <span className="openai-scopes">{chatgpt.requiresReconnect
-                ? <button className="account-button quiet" onClick={() => void connectOpenAIChatGPT(chatgpt.id)} disabled={openAIBusy}>Reconnect</button>
-                : !chatgpt.accessTokenValid ? 'Will refresh before the next request'
-                : (chatgpt.grantedScopes.includes('chatgpt.tokens.use.direct') ? 'Plan access enabled' : 'Identity only')
-              }</span>
-              <button className="account-button remove" onClick={() => void disconnectOpenAIAccount(chatgpt.id)} disabled={openAIBusy} aria-label={'Disconnect ' + (chatgpt.email ?? 'ChatGPT account')}><Trash2 size={13} />Disconnect</button>
-            </div>)}
-            {openAIStatus?.chatgpt.connectedAccounts.length === 0 && <p className="openai-oauth-empty">No ChatGPT accounts connected.</p>}
-            {openAIStatus?.chatgpt.unavailableReason && <p className="openai-oauth-empty">{openAIStatus.chatgpt.unavailableReason}</p>}
-          </div>}
-          {provider.id !== 'openai' && oauthOptions.map(option => <div className="account-method-note" key={option.method}>
+          {oauthOptions.map(option => <div className="account-method-note" key={option.method}>
             <span>{option.label}</span><small>{option.available ? 'Available' : option.unavailableReason}</small>
           </div>)}
 

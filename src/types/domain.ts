@@ -67,7 +67,8 @@ export interface OpenAIAuthStatus {
 /** Safe handle for the native browser flow; no OAuth URL or protocol secret is exposed. */
 export interface OpenAIAuthStart { attemptId: string; expiresAt: string }
 export type OpenAIAuthAttemptState = 'callback_received' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
-export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState }
+export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
+export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }
 export interface Model {
   id: string;
   provider: string;

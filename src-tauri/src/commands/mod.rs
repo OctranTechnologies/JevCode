@@ -2010,10 +2010,11 @@ pub async fn openai_auth_start(
             &managed_state,
         )
         .await;
-        if let Some(attempt_state) = completion {
+        if let Some(completion) = completion {
             let event = OpenAiAuthAttemptEvent {
                 attempt_id: attempt_id.clone(),
-                state: attempt_state,
+                state: completion.state,
+                failure_reason: completion.failure_reason,
             };
             if let Err(error) = event_app.emit("openai:auth-attempt", event) {
                 tracing::warn!(%error, "OpenAI sign-in status delivery failed");
@@ -2036,6 +2037,7 @@ pub async fn openai_auth_start(
         let event = OpenAiAuthAttemptEvent {
             attempt_id: result.attempt_id.clone(),
             state: OpenAiAuthAttemptState::Failed,
+            failure_reason: Some(OpenAiAuthFailureReason::BrowserUnavailable),
         };
         let _ = app.emit("openai:auth-attempt", event);
         return Err(error);
@@ -2055,6 +2057,7 @@ pub fn openai_auth_cancel(
     let event = OpenAiAuthAttemptEvent {
         attempt_id,
         state: OpenAiAuthAttemptState::Cancelled,
+        failure_reason: None,
     };
     app.emit("openai:auth-attempt", event).map_err(|_| {
         AppError::new(
@@ -2070,7 +2073,7 @@ async fn wait_for_openai_callback(
     pending: &crate::auth::openai::PendingOpenAiAuth,
     cancellation: watch::Receiver<bool>,
     state: &SharedState,
-) -> Option<OpenAiAuthAttemptState> {
+) -> Option<OpenAiAuthCompletion> {
     wait_for_openai_callback_until(
         listener,
         manager,
@@ -2091,12 +2094,12 @@ async fn wait_for_openai_callback_until(
     timeout_after: Duration,
     credentials: &dyn crate::auth::openai::OpenAiSessionStorage,
     database: &crate::persistence::Database,
-) -> Option<OpenAiAuthAttemptState> {
+) -> Option<OpenAiAuthCompletion> {
     let timeout = tokio::time::sleep(timeout_after);
     tokio::pin!(timeout);
     loop {
         tokio::select! {
-            _ = &mut timeout => return Some(OpenAiAuthAttemptState::TimedOut),
+            _ = &mut timeout => return Some(OpenAiAuthCompletion::new(OpenAiAuthAttemptState::TimedOut, None)),
             changed = cancellation.changed() => {
                 if changed.is_err() || *cancellation.borrow() {
                     return None;
@@ -2104,14 +2107,14 @@ async fn wait_for_openai_callback_until(
             }
             accepted = listener.accept() => {
                 let Ok((stream, peer)) = accepted else {
-                    return Some(OpenAiAuthAttemptState::Failed);
+                    return Some(OpenAiAuthCompletion::new(OpenAiAuthAttemptState::Failed, Some(OpenAiAuthFailureReason::OauthFailure)));
                 };
                 if !peer.ip().is_loopback() {
                     continue;
                 }
                 let result = tokio::select! {
                     result = handle_openai_callback(stream, manager, pending, credentials, database) => result,
-                    _ = &mut timeout => return Some(OpenAiAuthAttemptState::TimedOut),
+                    _ = &mut timeout => return Some(OpenAiAuthCompletion::new(OpenAiAuthAttemptState::TimedOut, None)),
                     changed = cancellation.changed() => {
                         if changed.is_err() || *cancellation.borrow() {
                             return None;
@@ -2127,13 +2130,39 @@ async fn wait_for_openai_callback_until(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenAiAuthCompletion {
+    state: OpenAiAuthAttemptState,
+    failure_reason: Option<OpenAiAuthFailureReason>,
+}
+
+impl OpenAiAuthCompletion {
+    fn new(state: OpenAiAuthAttemptState, failure_reason: Option<OpenAiAuthFailureReason>) -> Self {
+        Self {
+            state,
+            failure_reason,
+        }
+    }
+}
+
+fn openai_auth_failure_reason(error: &AppError) -> OpenAiAuthFailureReason {
+    match error.code.as_str() {
+        "network_error" => OpenAiAuthFailureReason::NetworkError,
+        "provider_outage" => OpenAiAuthFailureReason::ProviderOutage,
+        "system_browser_unavailable" | "auth_callback_unavailable" => {
+            OpenAiAuthFailureReason::BrowserUnavailable
+        }
+        _ => OpenAiAuthFailureReason::OauthFailure,
+    }
+}
+
 async fn handle_openai_callback(
     mut stream: TcpStream,
     manager: &crate::auth::openai::OpenAIAuthManager,
     pending: &crate::auth::openai::PendingOpenAiAuth,
     credentials: &dyn crate::auth::openai::OpenAiSessionStorage,
     database: &crate::persistence::Database,
-) -> Option<OpenAiAuthAttemptState> {
+) -> Option<OpenAiAuthCompletion> {
     let mut request = Zeroizing::new(Vec::with_capacity(2048));
     let mut buffer = Zeroizing::new([0_u8; 2048]);
     let read_result = tokio::time::timeout(OPENAI_CALLBACK_READ_TIMEOUT, async {
@@ -2151,14 +2180,20 @@ async fn handle_openai_callback(
     .await;
     if !matches!(read_result, Ok(Ok(true))) {
         let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
-        return Some(OpenAiAuthAttemptState::Failed);
+        return Some(OpenAiAuthCompletion::new(
+            OpenAiAuthAttemptState::Failed,
+            Some(OpenAiAuthFailureReason::OauthFailure),
+        ));
     }
 
     let request_text = match std::str::from_utf8(&request) {
         Ok(request) => request,
         Err(_) => {
             let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
-            return Some(OpenAiAuthAttemptState::Failed);
+            return Some(OpenAiAuthCompletion::new(
+                OpenAiAuthAttemptState::Failed,
+                Some(OpenAiAuthFailureReason::OauthFailure),
+            ));
         }
     };
     let mut lines = request_text.lines();
@@ -2168,7 +2203,10 @@ async fn handle_openai_callback(
     let version = request_line.next().unwrap_or_default();
     if request_line.next().is_some() || method.is_empty() || target.is_empty() {
         let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
-        return Some(OpenAiAuthAttemptState::Failed);
+        return Some(OpenAiAuthCompletion::new(
+            OpenAiAuthAttemptState::Failed,
+            Some(OpenAiAuthFailureReason::OauthFailure),
+        ));
     }
     if target.split('?').next() != Some("/auth/callback") {
         let _ =
@@ -2180,7 +2218,10 @@ async fn handle_openai_callback(
         let _ =
             respond_to_openai_callback(&mut stream, 405, "This sign-in callback is not available.")
                 .await;
-        return Some(OpenAiAuthAttemptState::Failed);
+        return Some(OpenAiAuthCompletion::new(
+            OpenAiAuthAttemptState::Failed,
+            Some(OpenAiAuthFailureReason::OauthFailure),
+        ));
     }
     let target = Zeroizing::new(target.to_owned());
 
@@ -2201,7 +2242,10 @@ async fn handle_openai_callback(
     }
     if malformed_header || host_values.len() != 1 {
         let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
-        return Some(OpenAiAuthAttemptState::Failed);
+        return Some(OpenAiAuthCompletion::new(
+            OpenAiAuthAttemptState::Failed,
+            Some(OpenAiAuthFailureReason::OauthFailure),
+        ));
     }
     let host_header = Zeroizing::new(host_values[0].to_owned());
     drop(host_values);
@@ -2225,7 +2269,10 @@ async fn handle_openai_callback(
                 "Sign-in response received. You can return to the desktop app.",
             )
             .await;
-            Some(OpenAiAuthAttemptState::CallbackReceived)
+            Some(OpenAiAuthCompletion::new(
+                OpenAiAuthAttemptState::CallbackReceived,
+                None,
+            ))
         }
         Ok(crate::auth::openai::OpenAiCallbackOutcome::AccessDenied) => {
             let _ = respond_to_openai_callback(
@@ -2234,16 +2281,22 @@ async fn handle_openai_callback(
                 "OpenAI sign-in was cancelled. You can return to the desktop app.",
             )
             .await;
-            Some(OpenAiAuthAttemptState::Denied)
+            Some(OpenAiAuthCompletion::new(
+                OpenAiAuthAttemptState::Denied,
+                Some(OpenAiAuthFailureReason::PermissionDenied),
+            ))
         }
-        Err(_) => {
+        Err(error) => {
             let _ = respond_to_openai_callback(
                 &mut stream,
                 400,
                 "This sign-in response could not be verified. Return to the desktop app and try again.",
             )
             .await;
-            Some(OpenAiAuthAttemptState::Failed)
+            Some(OpenAiAuthCompletion::new(
+                OpenAiAuthAttemptState::Failed,
+                Some(openai_auth_failure_reason(&error)),
+            ))
         }
     }
 }
@@ -2320,6 +2373,36 @@ fn open_system_browser(url: &reqwest::Url) -> AppResult<()> {
 mod openai_auth_start_tests {
     use super::*;
 
+    #[test]
+    fn auth_failure_events_expose_only_safe_failure_categories() {
+        for (code, expected) in [
+            (
+                "system_browser_unavailable",
+                OpenAiAuthFailureReason::BrowserUnavailable,
+            ),
+            (
+                "auth_callback_unavailable",
+                OpenAiAuthFailureReason::BrowserUnavailable,
+            ),
+            ("network_error", OpenAiAuthFailureReason::NetworkError),
+            ("provider_outage", OpenAiAuthFailureReason::ProviderOutage),
+            (
+                "invalid_auth_response",
+                OpenAiAuthFailureReason::OauthFailure,
+            ),
+        ] {
+            let error = AppError::new(code, "private response body must not reach the renderer");
+            assert_eq!(openai_auth_failure_reason(&error), expected);
+            let event = OpenAiAuthAttemptEvent {
+                attempt_id: "attempt-id".into(),
+                state: OpenAiAuthAttemptState::Failed,
+                failure_reason: Some(openai_auth_failure_reason(&error)),
+            };
+            let serialized = serde_json::to_string(&event).unwrap();
+            assert!(!serialized.contains("private response body"));
+        }
+    }
+
     fn manager() -> crate::auth::openai::OpenAIAuthManager {
         crate::auth::openai::OpenAIAuthManager::new(crate::domain::Provider {
             id: "openai".into(),
@@ -2394,7 +2477,10 @@ mod openai_auth_start_tests {
                 database.as_ref(),
             )
             .await,
-            Some(OpenAiAuthAttemptState::TimedOut)
+            Some(OpenAiAuthCompletion::new(
+                OpenAiAuthAttemptState::TimedOut,
+                None
+            ))
         );
         assert!(TcpListener::bind(timeout_addr).await.is_ok());
     }
@@ -2441,7 +2527,13 @@ mod openai_auth_start_tests {
         assert!(
             response.contains("OpenAI sign-in was cancelled. You can return to the desktop app.")
         );
-        assert_eq!(server.await.unwrap(), Some(OpenAiAuthAttemptState::Denied));
+        assert_eq!(
+            server.await.unwrap(),
+            Some(OpenAiAuthCompletion::new(
+                OpenAiAuthAttemptState::Denied,
+                Some(OpenAiAuthFailureReason::PermissionDenied),
+            ))
+        );
         assert!(TcpListener::bind(addr).await.is_ok());
     }
 
@@ -2485,7 +2577,10 @@ mod openai_auth_start_tests {
 
         assert!(response.starts_with("HTTP/1.1 400"));
         assert!(!response.contains("wrong"));
-        assert_eq!(server.await.unwrap(), Some(OpenAiAuthAttemptState::Failed));
+        assert_eq!(
+            server.await.unwrap().map(|completion| completion.state),
+            Some(OpenAiAuthAttemptState::Failed)
+        );
         assert!(TcpListener::bind(addr).await.is_ok());
     }
 }

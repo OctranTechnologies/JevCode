@@ -804,10 +804,22 @@ pub enum OpenAiAuthAttemptState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiAuthFailureReason {
+    BrowserUnavailable,
+    PermissionDenied,
+    NetworkError,
+    ProviderOutage,
+    OauthFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiAuthAttemptEvent {
     pub attempt_id: String,
     pub state: OpenAiAuthAttemptState,
+    #[serde(default)]
+    pub failure_reason: Option<OpenAiAuthFailureReason>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
