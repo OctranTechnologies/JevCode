@@ -340,26 +340,34 @@ keychain service and UUID-scoped entries).
 
 Authentication is intentionally separated by product entitlement:
 
-- OpenAI API keys are supported. `get_openai_auth_status` returns the current
-  API-key state and a separate ChatGPT sign-in capability status. The native
-  `openai_auth_start` command implements the beginning of OpenAI's official
-  open-source sign-in flow: it creates a fresh state, nonce, and PKCE verifier;
-  binds a short-lived listener to `127.0.0.1`; then opens the official
-  authorization URL in the OS default browser. The callback uses OpenAI's
-  documented exact path, `/auth/callback`, and the stable `ext_agent_host_id`
-  is stored as non-secret installation metadata in SQLite. The native
-  `OpenAIAuthManager` validates the loopback host, state, authorization code,
-  and issued client ID, then returns only a safe attempt outcome to the command
-  layer. The listener closes on callback success or failure, cancellation, and
-  timeout; the browser receives a short page with no authorization values.
-  Authorization-code exchange, issued-client registration persistence,
-  ID-token verification, and account connection are not implemented yet, so a
-  validated callback does not connect an account. State, nonce, verifier,
-  challenge, callback data, and the full authorization URL remain in Rust
-  memory; none are returned through Tauri IPC, TypeScript, SQLite, localStorage,
-  or logs. Access, refresh, and ID tokens remain keychain-only when the later
-  exchange flow is implemented. No Codex/ChatGPT credentials or browser cookies
-  are read.
+- OpenAI API keys and official Sign in with ChatGPT are supported separately.
+  `get_openai_auth_status` returns safe account metadata and never returns
+  tokens. `openai_auth_start` creates fresh state, nonce, and PKCE values,
+  binds a short-lived listener to `127.0.0.1`, and opens OpenAI's documented
+  authorization URL in the system browser. First-time sign-in uses OpenAI's
+  documented dynamic client registration and the identity plus plan-usage
+  scopes. Reauthorization reuses the saved issued client ID and ID-token hint.
+  After validating the exact `/auth/callback` loopback host and state, the
+  native `OpenAIAuthManager` exchanges the code with the issued client ID,
+  verifier, exact redirect URI, and `https://api.openai.com/v1` resource at
+  OpenAI's documented token endpoint. It loads OpenID metadata and JWKS only from the official
+  `auth.openai.com` endpoints, checks the advertised signing algorithm, and
+  verifies the ID-token signature, issuer, audience, expiry, not-before time,
+  issued-at time, nonce, and subject. Email is shown only when the signed token
+  marks it verified. The stable local profile key derives from the verified
+  subject and issued client ID.
+
+  Access, refresh, and ID tokens are stored only in the OS credential manager
+  under UUID-scoped entries in `dev.jevcode.desktop.openai`; account name,
+  verified email, client ID, scopes, and timestamps are the only OAuth profile
+  data stored in SQLite. The React layer receives that safe profile plus an
+  expiry status. The callback server returns no authorization values, and
+  callback codes, token response bodies, and tokens are excluded from
+  application logs. Disconnect deletes the keychain item before removing its
+  SQLite profile. OpenAI OAuth currently connects the account, while model
+  requests still require an OpenAI API key; token refresh and using the
+  ChatGPT plan in agent requests are not wired into the provider runtime yet.
+  JevCode does not read Codex/ChatGPT credentials or browser cookies.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are supported. Google documents OAuth for Gemini with a
@@ -377,6 +385,8 @@ unavailable, network error and provider outage.
 
 Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
 [OpenAI Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
+[OpenAI token reference](https://developers.openai.com/siwc/token-sharing-open-source/token-reference),
+[OpenAI OIDC discovery and ID-token verification](https://developers.openai.com/siwc/website),
 [Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),
 [Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth),

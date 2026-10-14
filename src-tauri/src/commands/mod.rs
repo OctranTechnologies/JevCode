@@ -22,6 +22,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::watch,
 };
+use zeroize::{Zeroize, Zeroizing};
 
 struct TauriEvents(AppHandle);
 impl EventSink for TauriEvents {
@@ -1912,6 +1913,16 @@ pub fn get_openai_auth_status(state: State<'_, SharedState>) -> AppResult<OpenAi
     auth::openai_auth_status(provider, &state.credentials, &state.database, stored)
 }
 
+#[tauri::command]
+pub fn openai_auth_logout(account_id: String, state: State<'_, SharedState>) -> AppResult<()> {
+    let provider = state.config.provider("openai")?.clone();
+    crate::auth::openai::OpenAIAuthManager::new(provider)?.logout(
+        &state.credentials,
+        &state.database,
+        &account_id,
+    )
+}
+
 const OPENAI_AUTH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const OPENAI_CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_OPENAI_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
@@ -1919,6 +1930,7 @@ const MAX_OPENAI_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
 #[tauri::command]
 pub async fn openai_auth_start(
     app: AppHandle,
+    account_id: Option<String>,
     state: State<'_, SharedState>,
 ) -> AppResult<OpenAiAuthStart> {
     // OpenAI requires a listening loopback callback before the browser opens.
@@ -1942,7 +1954,17 @@ pub async fn openai_auth_start(
     let provider = state.config.provider("openai")?.clone();
     let manager = crate::auth::openai::OpenAIAuthManager::new(provider)?;
     let host_id = state.database.openai_ext_agent_host_id()?;
-    let pending = manager.create_authentication_session(&redirect_uri, &host_id)?;
+    let pending = if let Some(account_id) = account_id.as_deref() {
+        manager.create_reauthentication_session(
+            &redirect_uri,
+            &host_id,
+            account_id,
+            &state.credentials,
+            &state.database,
+        )?
+    } else {
+        manager.create_authentication_session(&redirect_uri, &host_id)?
+    };
     let result = OpenAiAuthStart {
         attempt_id: pending.attempt_id.clone(),
         expires_at: pending.expires_at.to_rfc3339(),
@@ -1955,8 +1977,14 @@ pub async fn openai_auth_start(
     let managed_state = Arc::clone(state.inner());
     let event_app = app.clone();
     tokio::spawn(async move {
-        let completion =
-            wait_for_openai_callback(listener, &manager, &pending, cancel_receiver).await;
+        let completion = wait_for_openai_callback(
+            listener,
+            &manager,
+            &pending,
+            cancel_receiver,
+            &managed_state,
+        )
+        .await;
         if let Some(attempt_state) = completion {
             let event = OpenAiAuthAttemptEvent {
                 attempt_id: attempt_id.clone(),
@@ -2016,6 +2044,7 @@ async fn wait_for_openai_callback(
     manager: &crate::auth::openai::OpenAIAuthManager,
     pending: &crate::auth::openai::PendingOpenAiAuth,
     cancellation: watch::Receiver<bool>,
+    state: &SharedState,
 ) -> Option<OpenAiAuthAttemptState> {
     wait_for_openai_callback_until(
         listener,
@@ -2023,6 +2052,8 @@ async fn wait_for_openai_callback(
         pending,
         cancellation,
         OPENAI_AUTH_TIMEOUT,
+        &state.credentials,
+        &state.database,
     )
     .await
 }
@@ -2033,6 +2064,8 @@ async fn wait_for_openai_callback_until(
     pending: &crate::auth::openai::PendingOpenAiAuth,
     mut cancellation: watch::Receiver<bool>,
     timeout_after: Duration,
+    credentials: &dyn crate::auth::openai::OpenAiSessionStorage,
+    database: &crate::persistence::Database,
 ) -> Option<OpenAiAuthAttemptState> {
     let timeout = tokio::time::sleep(timeout_after);
     tokio::pin!(timeout);
@@ -2051,7 +2084,17 @@ async fn wait_for_openai_callback_until(
                 if !peer.ip().is_loopback() {
                     continue;
                 }
-                if let Some(result) = handle_openai_callback(stream, manager, pending).await {
+                let result = tokio::select! {
+                    result = handle_openai_callback(stream, manager, pending, credentials, database) => result,
+                    _ = &mut timeout => return Some(OpenAiAuthAttemptState::TimedOut),
+                    changed = cancellation.changed() => {
+                        if changed.is_err() || *cancellation.borrow() {
+                            return None;
+                        }
+                        continue;
+                    }
+                };
+                if let Some(result) = result {
                     return Some(result);
                 }
             }
@@ -2063,9 +2106,11 @@ async fn handle_openai_callback(
     mut stream: TcpStream,
     manager: &crate::auth::openai::OpenAIAuthManager,
     pending: &crate::auth::openai::PendingOpenAiAuth,
+    credentials: &dyn crate::auth::openai::OpenAiSessionStorage,
+    database: &crate::persistence::Database,
 ) -> Option<OpenAiAuthAttemptState> {
-    let mut request = Vec::with_capacity(2048);
-    let mut buffer = [0_u8; 2048];
+    let mut request = Zeroizing::new(Vec::with_capacity(2048));
+    let mut buffer = Zeroizing::new([0_u8; 2048]);
     let read_result = tokio::time::timeout(OPENAI_CALLBACK_READ_TIMEOUT, async {
         while request.len() < MAX_OPENAI_CALLBACK_REQUEST_BYTES && !request.ends_with(b"\r\n\r\n") {
             let remaining = MAX_OPENAI_CALLBACK_REQUEST_BYTES - request.len();
@@ -2112,6 +2157,7 @@ async fn handle_openai_callback(
                 .await;
         return Some(OpenAiAuthAttemptState::Failed);
     }
+    let target = Zeroizing::new(target.to_owned());
 
     let mut host_values = Vec::new();
     let mut malformed_header = false;
@@ -2132,8 +2178,21 @@ async fn handle_openai_callback(
         let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
         return Some(OpenAiAuthAttemptState::Failed);
     }
+    let host_header = Zeroizing::new(host_values[0].to_owned());
+    drop(host_values);
+    request.zeroize();
+    buffer.zeroize();
 
-    match manager.receive_authorization_callback(pending, target, host_values[0]) {
+    match manager
+        .receive_authorization_callback(
+            pending,
+            target.as_str(),
+            host_header.as_str(),
+            credentials,
+            database,
+        )
+        .await
+    {
         Ok(crate::auth::openai::OpenAiCallbackOutcome::AuthorizationReceived) => {
             let _ = respond_to_openai_callback(
                 &mut stream,
@@ -2271,6 +2330,10 @@ mod openai_auth_start_tests {
 
     #[tokio::test]
     async fn authentication_listener_shuts_down_on_cancel_and_timeout() {
+        let root = tempfile::tempdir().unwrap();
+        let database =
+            Arc::new(crate::persistence::Database::open(&root.path().join("test.sqlite")).unwrap());
+        let credentials = Arc::new(crate::credentials::CredentialStore);
         let manager = manager();
         let pending = pending_session();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -2283,7 +2346,9 @@ mod openai_auth_start_tests {
                 &manager,
                 &pending,
                 cancel_receiver,
-                Duration::from_secs(1)
+                Duration::from_secs(1),
+                credentials.as_ref(),
+                database.as_ref(),
             )
             .await,
             None
@@ -2299,7 +2364,9 @@ mod openai_auth_start_tests {
                 &manager,
                 &pending,
                 cancel_receiver,
-                Duration::from_millis(1)
+                Duration::from_millis(1),
+                credentials.as_ref(),
+                database.as_ref(),
             )
             .await,
             Some(OpenAiAuthAttemptState::TimedOut)
@@ -2308,7 +2375,11 @@ mod openai_auth_start_tests {
     }
 
     #[tokio::test]
-    async fn valid_callback_returns_a_safe_page_and_closes_the_listener() {
+    async fn denied_callback_returns_a_safe_page_and_closes_the_listener() {
+        let root = tempfile::tempdir().unwrap();
+        let database =
+            Arc::new(crate::persistence::Database::open(&root.path().join("test.sqlite")).unwrap());
+        let credentials = Arc::new(crate::credentials::CredentialStore);
         let manager = manager();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2318,10 +2389,7 @@ mod openai_auth_start_tests {
                 &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
             )
             .unwrap();
-        let request_target = format!(
-            "/auth/callback?code=do-not-display-this&state={}&client_id=issued-client",
-            pending.state
-        );
+        let request_target = format!("/auth/callback?error=access_denied&state={}", pending.state);
         let (_cancel_sender, cancel_receiver) = watch::channel(false);
         let server = tokio::spawn(async move {
             wait_for_openai_callback_until(
@@ -2330,6 +2398,8 @@ mod openai_auth_start_tests {
                 &pending,
                 cancel_receiver,
                 Duration::from_secs(5),
+                credentials.as_ref(),
+                database.as_ref(),
             )
             .await
         });
@@ -2343,18 +2413,19 @@ mod openai_auth_start_tests {
         client.read_to_end(&mut response).await.unwrap();
         let response = String::from_utf8(response).unwrap();
 
-        assert!(response.contains("Sign-in response received. You can return to the desktop app."));
-        assert!(!response.contains("do-not-display-this"));
-        assert!(!response.contains("issued-client"));
-        assert_eq!(
-            server.await.unwrap(),
-            Some(OpenAiAuthAttemptState::CallbackReceived)
+        assert!(
+            response.contains("OpenAI sign-in was cancelled. You can return to the desktop app.")
         );
+        assert_eq!(server.await.unwrap(), Some(OpenAiAuthAttemptState::Denied));
         assert!(TcpListener::bind(addr).await.is_ok());
     }
 
     #[tokio::test]
     async fn malformed_callback_is_rejected_and_closes_the_listener() {
+        let root = tempfile::tempdir().unwrap();
+        let database =
+            Arc::new(crate::persistence::Database::open(&root.path().join("test.sqlite")).unwrap());
+        let credentials = Arc::new(crate::credentials::CredentialStore);
         let manager = manager();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2372,6 +2443,8 @@ mod openai_auth_start_tests {
                 &pending,
                 cancel_receiver,
                 Duration::from_secs(5),
+                credentials.as_ref(),
+                database.as_ref(),
             )
             .await
         });

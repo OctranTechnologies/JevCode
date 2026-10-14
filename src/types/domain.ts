@@ -44,6 +44,7 @@ export interface ProviderAccountInfo {
 /** Safe OpenAI identity metadata. Session tokens remain native-only. */
 export interface OpenAIAccount {
   id: string;
+  connected: boolean;
   displayName: string | null;
   email: string | null;
   organization: string | null;

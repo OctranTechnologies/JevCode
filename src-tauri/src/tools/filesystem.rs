@@ -706,6 +706,7 @@ pub async fn create_file(
         })?;
     use tokio::io::AsyncWriteExt;
     file.write_all(content.as_bytes()).await?;
+    file.flush().await?;
     output(
         format!("Created {relative} ({} bytes).", content.len()),
         json!({"path":relative,"bytes":content.len()}),

@@ -706,7 +706,7 @@ mod tests {
     fn provider_methods_are_gated_by_registered_oauth_capabilities() {
         let openai = available_methods("openai");
         assert!(openai[0].available);
-        assert!(!openai[1].available);
+        assert!(openai[1].available);
         assert_eq!(openai[1].method, ProviderAuthMethod::OpenAiChatGpt);
         let gemini = available_methods("gemini");
         assert!(gemini[0].available);

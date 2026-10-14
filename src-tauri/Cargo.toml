@@ -13,6 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+rand = "0.8"
+rsa = "0.9"
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
@@ -25,8 +29,10 @@ futures-util = "0.3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 base64 = "0.22"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto", "use_pem"] }
+zeroize = "1"
 thiserror = "2"
 semver = "1"
 tracing = "0.1"

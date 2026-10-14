@@ -23,7 +23,7 @@ export const providerAccountSchema: z.ZodType<ProviderAccount> = z.object({
   }).strict()),
 }).strict();
 export const providerAccountInfoSchema: z.ZodType<ProviderAccountInfo> = z.object({ providerId: z.string(), providerName: z.string(), authMethod: providerAuthMethodSchema, accountLabel: z.string() });
-export const openAIAccountSchema = z.object({ id: z.string(), displayName: z.string().nullable(), email: z.string().nullable(), organization: z.string().nullable(), clientId: z.string().nullable(), grantedScopes: z.array(z.string()), connectedAt: z.string(), expiresAt: z.string().nullable() }).strict();
+export const openAIAccountSchema = z.object({ id: z.string(), connected: z.boolean(), displayName: z.string().nullable(), email: z.string().nullable(), organization: z.string().nullable(), clientId: z.string().nullable(), grantedScopes: z.array(z.string()), connectedAt: z.string(), expiresAt: z.string().nullable() }).strict();
 export const openAIAuthStatusSchema: z.ZodType<OpenAIAuthStatus> = z.object({ apiKey: providerAccountSchema, chatgpt: z.object({ available: z.boolean(), connectedAccounts: z.array(openAIAccountSchema), unavailableReason: z.string().nullable() }).strict() }).strict();
 export const openAIAuthStartSchema: z.ZodType<OpenAIAuthStart> = z.object({ attemptId: z.string().uuid(), expiresAt: z.string().datetime({ offset: true }) }).strict();
 export const openAIAuthAttemptEventSchema: z.ZodType<OpenAIAuthAttemptEvent> = z.object({ attemptId: z.string().uuid(), state: z.enum(['callback_received', 'denied', 'cancelled', 'timed_out', 'failed']) }).strict();

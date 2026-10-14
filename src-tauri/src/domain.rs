@@ -754,6 +754,7 @@ pub struct ProviderAccountInfo {
 #[serde(rename_all = "camelCase")]
 pub struct OpenAiAccount {
     pub id: String,
+    pub connected: bool,
     pub display_name: Option<String>,
     pub email: Option<String>,
     pub organization: Option<String>,

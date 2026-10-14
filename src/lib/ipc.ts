@@ -6,6 +6,8 @@ import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScop
 import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
+export { openAIAuthAttemptEventSchema };
+
 export const desktopAvailable = isTauri();
 interface Commands {
   bootstrap: { args: undefined; result: Bootstrap };
@@ -61,8 +63,9 @@ interface Commands {
   refresh_provider_auth: { args: { providerId: string }; result: ProviderAccount };
   get_provider_auth_status: { args: { providerId: string }; result: ProviderAccount };
   get_openai_auth_status: { args: undefined; result: OpenAIAuthStatus };
-  openai_auth_start: { args: undefined; result: OpenAIAuthStart };
+  openai_auth_start: { args: { accountId: string | null }; result: OpenAIAuthStart };
   openai_auth_cancel: { args: { attemptId: string }; result: null };
+  openai_auth_logout: { args: { accountId: string }; result: null };
   get_provider_account_info: { args: { providerId: string }; result: ProviderAccountInfo };
   get_provider_available_models: { args: { providerId: string }; result: Model[] };
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
@@ -79,6 +82,7 @@ const responses = {
   get_openai_auth_status: openAIAuthStatusSchema,
   openai_auth_start: openAIAuthStartSchema,
   openai_auth_cancel: z.null(),
+  openai_auth_logout: z.null(),
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),
   frontend_log: z.null(),
 } satisfies { [K in keyof Commands]: z.ZodType<Commands[K]['result']> };
@@ -115,12 +119,16 @@ export function getOpenAIAuthStatus(): Promise<OpenAIAuthStatus> {
 }
 
 /** Starts OpenAI sign-in in the OS browser; only a safe attempt handle crosses IPC. */
-export function startOpenAIAuth(): Promise<OpenAIAuthStart> {
-  return command('openai_auth_start', undefined);
+export function startOpenAIAuth(accountId?: string): Promise<OpenAIAuthStart> {
+  return command('openai_auth_start', { accountId: accountId ?? null });
 }
 
 export function cancelOpenAIAuth(attemptId: string): Promise<null> {
   return command('openai_auth_cancel', { attemptId });
+}
+
+export function logoutOpenAIAuth(accountId: string): Promise<null> {
+  return command('openai_auth_logout', { accountId });
 }
 
 /** Provider-neutral auth facade. Provider-specific protocol stays in Rust. */

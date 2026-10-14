@@ -868,6 +868,7 @@ mod tests {
         let path = root.path().join("openai-auth.sqlite");
         let account = OpenAiAccount {
             id: "safe-account-id".into(),
+            connected: true,
             display_name: Some("Example".into()),
             email: Some("user@example.test".into()),
             organization: None,

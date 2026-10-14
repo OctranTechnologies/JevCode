@@ -640,6 +640,16 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .account-model-list { margin: 10px 0 0 42px; padding: 9px 10px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border-radius: 6px; }
 .account-model-list > span { color: var(--wb-muted); font-size: 9px; font-weight: 590; }
 .account-model-list p { max-height: 86px; margin: 5px 0 0; overflow: auto; color: var(--wb-ink); font-size: 9px; line-height: 1.7; overflow-wrap: anywhere; }
+.openai-oauth-section { display: grid; gap: 8px; margin: 12px 0 0 42px; padding: 10px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 6px; }
+.openai-oauth-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.openai-oauth-heading > div { display: grid; gap: 4px; min-width: 0; }
+.openai-oauth-heading strong { color: var(--wb-ink); font-size: 10px; font-weight: 600; }
+.openai-oauth-heading small, .openai-oauth-empty { color: var(--wb-muted); font-size: 9px; line-height: 1.5; }
+.openai-oauth-empty { margin: 0; }
+.openai-oauth-account { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto auto; align-items: center; gap: 9px; padding-top: 8px; border-top: 1px solid var(--wb-border); }
+.openai-profile { overflow: hidden; color: var(--wb-ink); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.openai-profile small { display: block; margin-top: 3px; color: var(--wb-muted); font-size: 9px; }
+.openai-scopes { color: var(--wb-muted); font-size: 9px; white-space: nowrap; }
 .accounts-feedback { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 12px; padding: 9px 10px; font-size: 10px; line-height: 1.5; border: 1px solid var(--wb-border); border-radius: 6px; }
 .accounts-feedback svg { flex: 0 0 auto; margin-top: 1px; }
 .accounts-feedback.success { color: var(--wb-accent); background: var(--wb-accent-soft); border-color: var(--wb-accent-line); }
@@ -771,6 +781,9 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .account-connect-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .account-form-actions { flex-wrap: wrap; }
   .account-method-note, .account-model-list { margin-left: 0; }
+  .openai-oauth-section { margin-left: 0; }
+  .openai-oauth-account { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .openai-scopes { grid-column: 2; }
   .permission-mode-control { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .permission-rule-row { grid-template-columns: 25px minmax(0, 1fr); }
   .permission-revoke-button { grid-column: 2; justify-self: start; }

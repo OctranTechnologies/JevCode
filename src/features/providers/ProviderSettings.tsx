@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { Check, CircleAlert, CircleCheck, CircleX, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
-import type { Model, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
-import { desktopAvailable, providerAuthAdapter } from '../../lib/ipc';
+import type { Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
+import { cancelOpenAIAuth, desktopAvailable, getOpenAIAuthStatus, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, startOpenAIAuth } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 
 const apiKeyMethod: ProviderAuthMethod = 'api_key';
@@ -55,6 +56,36 @@ export function ProviderSettings({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<Record<string, string[]>>({});
+  const [openAIStatus, setOpenAIStatus] = useState<OpenAIAuthStatus | null>(null);
+  const [openAIAttemptId, setOpenAIAttemptId] = useState<string | null>(null);
+  const [openAIBusy, setOpenAIBusy] = useState(false);
+
+  async function refreshOpenAIStatus() {
+    try { setOpenAIStatus(await getOpenAIAuthStatus()); }
+    catch (cause) { setError(normalizeError(cause).message); }
+  }
+
+  useEffect(() => {
+    if (!desktopAvailable) return;
+    let active = true;
+    void getOpenAIAuthStatus().then(status => { if (active) setOpenAIStatus(status); }).catch(cause => { if (active) setError(normalizeError(cause).message); });
+    let unlisten: (() => void) | undefined;
+    void listen<unknown>('openai:auth-attempt', event => {
+      const parsed = openAIAuthAttemptEventSchema.safeParse(event.payload);
+      if (!parsed.success || !active) return;
+      const attempt = parsed.data as OpenAIAuthAttemptEvent;
+      setOpenAIAttemptId(current => current === attempt.attemptId ? null : current);
+      setOpenAIBusy(false);
+      if (attempt.state === 'callback_received') {
+        void getOpenAIAuthStatus().then(status => { if (active) setOpenAIStatus(status); });
+        setNotice('ChatGPT account connected. Credentials are stored in your OS credential manager.');
+      } else if (attempt.state === 'denied') setError('OpenAI sign-in was cancelled before access was granted.');
+      else if (attempt.state === 'timed_out') setError('OpenAI sign-in timed out. Start again when you’re ready.');
+      else if (attempt.state === 'failed') setError('OpenAI sign-in could not be verified. Start a new attempt.');
+      else if (attempt.state === 'cancelled') setNotice('OpenAI sign-in cancelled.');
+    }).then(stop => { if (active) unlisten = stop; else stop(); });
+    return () => { active = false; unlisten?.(); };
+  }, []);
 
   function resetFeedback() {
     setNotice(null);
@@ -126,6 +157,39 @@ export function ProviderSettings({
     }
   }
 
+  async function connectOpenAIChatGPT(accountId?: string) {
+    setOpenAIBusy(true);
+    resetFeedback();
+    try {
+      const started = await startOpenAIAuth(accountId);
+      setOpenAIAttemptId(started.attemptId);
+      setNotice(accountId
+        ? 'Continue sign-in in your browser to reconnect this ChatGPT account.'
+        : 'Continue sign-in in your browser. JevCode will verify your account before connecting it.');
+    } catch (cause) {
+      setOpenAIBusy(false);
+      setError(normalizeError(cause).message);
+    }
+  }
+
+  async function cancelOpenAIChatGPT() {
+    if (!openAIAttemptId) return;
+    setOpenAIBusy(true);
+    try { await cancelOpenAIAuth(openAIAttemptId); setOpenAIAttemptId(null); setOpenAIBusy(false); }
+    catch (cause) { setOpenAIBusy(false); setError(normalizeError(cause).message); }
+  }
+
+  async function disconnectOpenAIAccount(accountId: string) {
+    setOpenAIBusy(true);
+    resetFeedback();
+    try {
+      await logoutOpenAIAuth(accountId);
+      await refreshOpenAIStatus();
+      setNotice('ChatGPT credentials removed from your OS credential manager.');
+    } catch (cause) { setError(normalizeError(cause).message); }
+    finally { setOpenAIBusy(false); }
+  }
+
   const remoteProviders = providers.filter(provider => provider.protocol !== 'preview');
 
   return <section className="settings-content accounts-settings">
@@ -192,9 +256,25 @@ export function ProviderSettings({
             </div>
           </form>}
 
-          {oauthOptions.map(option => <div className="account-method-note" key={option.method}>
-            <span>{option.label}</span>
-            <small>{option.available ? 'Available' : option.unavailableReason}</small>
+          {provider.id === 'openai' && <div className="openai-oauth-section">
+            <div className="openai-oauth-heading"><div><strong>Sign in with ChatGPT</strong><small>Official browser sign-in · tokens stay in native secure storage</small></div>
+              {openAIAttemptId
+                ? <button className="account-button quiet" onClick={() => void cancelOpenAIChatGPT()} disabled={openAIBusy}><CircleX size={13} />Cancel sign-in</button>
+                : <button className="account-button connect" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || openAIBusy}><ShieldCheck size={13} />{openAIBusy ? 'Starting…' : 'Continue with ChatGPT'}</button>}
+            </div>
+            {openAIStatus?.chatgpt.connectedAccounts.map(chatgpt => <div className="openai-oauth-account" key={chatgpt.id}>
+              <span className={'account-status ' + (chatgpt.connected ? 'connected' : 'needs_attention')}>{chatgpt.connected ? <CircleCheck size={13} /> : <CircleAlert size={13} />}{chatgpt.connected ? 'Connected' : 'Expired'}</span>
+              <span className="openai-profile">{chatgpt.displayName ?? chatgpt.email ?? 'ChatGPT account'}{chatgpt.displayName && chatgpt.email ? <small>{chatgpt.email}</small> : null}</span>
+              <span className="openai-scopes">{chatgpt.connected
+                ? (chatgpt.grantedScopes.includes('chatgpt.tokens.use.direct') ? 'Plan access enabled' : 'Identity only')
+                : <button className="account-button quiet" onClick={() => void connectOpenAIChatGPT(chatgpt.id)} disabled={openAIBusy}>Reconnect</button>}</span>
+              <button className="account-button remove" onClick={() => void disconnectOpenAIAccount(chatgpt.id)} disabled={openAIBusy} aria-label={'Disconnect ' + (chatgpt.email ?? 'ChatGPT account')}><Trash2 size={13} />Disconnect</button>
+            </div>)}
+            {openAIStatus?.chatgpt.connectedAccounts.length === 0 && <p className="openai-oauth-empty">No ChatGPT accounts connected.</p>}
+            {openAIStatus?.chatgpt.unavailableReason && <p className="openai-oauth-empty">{openAIStatus.chatgpt.unavailableReason}</p>}
+          </div>}
+          {provider.id !== 'openai' && oauthOptions.map(option => <div className="account-method-note" key={option.method}>
+            <span>{option.label}</span><small>{option.available ? 'Available' : option.unavailableReason}</small>
           </div>)}
 
           {models[provider.id] && <div className="account-model-list" aria-live="polite">
