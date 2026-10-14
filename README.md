@@ -345,16 +345,21 @@ Authentication is intentionally separated by product entitlement:
   `openai_auth_start` command implements the beginning of OpenAI's official
   open-source sign-in flow: it creates a fresh state, nonce, and PKCE verifier;
   binds a short-lived listener to `127.0.0.1`; then opens the official
-  authorization URL in the OS default browser. The stable `ext_agent_host_id`
-  is stored as non-secret installation metadata in SQLite. The callback checks
-  state and reports only a safe attempt status. Authorization-code exchange,
-  issued-client registration persistence, ID-token verification, and account
-  connection are not implemented yet, so reaching the callback does not connect
-  an account. State, nonce, verifier, challenge, callback data, and the full
-  authorization URL remain in Rust memory; none are returned through Tauri IPC,
-  TypeScript, SQLite, localStorage, or logs. Access, refresh, and ID tokens remain
-  keychain-only when the later exchange flow is implemented. No Codex/ChatGPT
-  credentials or browser cookies are read.
+  authorization URL in the OS default browser. The callback uses OpenAI's
+  documented exact path, `/auth/callback`, and the stable `ext_agent_host_id`
+  is stored as non-secret installation metadata in SQLite. The native
+  `OpenAIAuthManager` validates the loopback host, state, authorization code,
+  and issued client ID, then returns only a safe attempt outcome to the command
+  layer. The listener closes on callback success or failure, cancellation, and
+  timeout; the browser receives a short page with no authorization values.
+  Authorization-code exchange, issued-client registration persistence,
+  ID-token verification, and account connection are not implemented yet, so a
+  validated callback does not connect an account. State, nonce, verifier,
+  challenge, callback data, and the full authorization URL remain in Rust
+  memory; none are returned through Tauri IPC, TypeScript, SQLite, localStorage,
+  or logs. Access, refresh, and ID tokens remain keychain-only when the later
+  exchange flow is implemented. No Codex/ChatGPT credentials or browser cookies
+  are read.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are supported. Google documents OAuth for Gemini with a

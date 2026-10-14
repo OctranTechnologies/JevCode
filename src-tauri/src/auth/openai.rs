@@ -40,6 +40,12 @@ pub(crate) struct PendingOpenAiAuth {
     pub(crate) expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OpenAiCallbackOutcome {
+    AuthorizationReceived,
+    AccessDenied,
+}
+
 /// OpenAI credentials are only resolved inside the native provider layer.
 /// ChatGPT credentials are accepted only after the full callback, code exchange,
 /// and ID-token validation flow is implemented.
@@ -150,6 +156,84 @@ impl OpenAIAuthManager {
         })
     }
 
+    /// Validate and consume the loopback authorization response inside the
+    /// native auth boundary. Authorization codes and issued client IDs are
+    /// deliberately not returned to the command layer, logged, or serialized.
+    pub(crate) fn receive_authorization_callback(
+        &self,
+        pending: &PendingOpenAiAuth,
+        request_target: &str,
+        host_header: &str,
+    ) -> AppResult<OpenAiCallbackOutcome> {
+        let expected_redirect =
+            Url::parse(&pending.redirect_uri).map_err(|_| invalid_callback())?;
+        let expected_host = format!(
+            "{}:{}",
+            expected_redirect.host_str().ok_or_else(invalid_callback)?,
+            expected_redirect.port().ok_or_else(invalid_callback)?
+        );
+        if !constant_time_equal(host_header.as_bytes(), expected_host.as_bytes()) {
+            return Err(invalid_callback());
+        }
+
+        if !request_target.starts_with('/')
+            || request_target.starts_with("//")
+            || request_target.contains('#')
+            || raw_callback_path(request_target) != "/auth/callback"
+            || !request_target
+                .bytes()
+                .all(|byte| (0x21..=0x7e).contains(&byte))
+        {
+            return Err(invalid_callback());
+        }
+        let pairs = parse_callback_query(request_target)?;
+        let values = |name: &str| {
+            pairs
+                .iter()
+                .filter(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>()
+        };
+        let states = values("state");
+        if states.len() != 1 || !constant_time_equal(states[0].as_bytes(), pending.state.as_bytes())
+        {
+            return Err(invalid_callback());
+        }
+
+        let errors = values("error");
+        if errors.len() > 1 {
+            return Err(invalid_callback());
+        }
+        if errors
+            .first()
+            .is_some_and(|error| *error == "access_denied")
+        {
+            if !values("code").is_empty() || !values("client_id").is_empty() {
+                return Err(invalid_callback());
+            }
+            return Ok(OpenAiCallbackOutcome::AccessDenied);
+        }
+        if !errors.is_empty() {
+            return Err(invalid_callback());
+        }
+
+        let codes = values("code");
+        let issued_client_ids = values("client_id");
+        if codes.len() != 1
+            || !valid_callback_value(codes[0])
+            || issued_client_ids.len() != 1
+            || !valid_callback_value(issued_client_ids[0])
+        {
+            return Err(invalid_callback());
+        }
+
+        // These are consumed at the auth-manager boundary. Token exchange and
+        // client registration persistence will be added as a separate step.
+        let _authorization_code = codes[0];
+        let _issued_client_id = issued_client_ids[0];
+        Ok(OpenAiCallbackOutcome::AuthorizationReceived)
+    }
+
     pub fn status(
         &self,
         credentials: &CredentialStore,
@@ -212,6 +296,89 @@ impl OpenAIAuthManager {
     ) -> AppResult<()> {
         credentials.delete_openai_session(&account.id)
     }
+}
+
+fn invalid_callback() -> AppError {
+    AppError::new(
+        "invalid_auth_callback",
+        "The OpenAI sign-in response could not be verified. Start sign-in again.",
+    )
+}
+
+fn raw_callback_path(target: &str) -> &str {
+    let (path, _) = target.split_once('?').unwrap_or((target, ""));
+    path
+}
+
+fn parse_callback_query(target: &str) -> AppResult<Vec<(String, String)>> {
+    let Some((_, query)) = target.split_once('?') else {
+        return Err(invalid_callback());
+    };
+    query
+        .split('&')
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            Ok((decode_form_component(key)?, decode_form_component(value)?))
+        })
+        .collect()
+}
+
+fn decode_form_component(value: &str) -> AppResult<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' => {
+                let Some(hex) = bytes.get(index + 1..index + 3) else {
+                    return Err(invalid_callback());
+                };
+                if hex.len() != 2 {
+                    return Err(invalid_callback());
+                }
+                let high = (hex_digit(hex[0]).ok_or_else(invalid_callback)?) << 4;
+                let low = hex_digit(hex[1]).ok_or_else(invalid_callback)?;
+                decoded.push(high | low);
+                index += 3;
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).map_err(|_| invalid_callback())
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn valid_callback_value(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 16_384
+        && !value
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+}
+
+fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
 }
 
 fn create_state() -> String {
@@ -313,6 +480,18 @@ impl ProviderAuthAdapter for OpenAIAuthManager {
 mod tests {
     use super::*;
     use crate::domain::{ProviderAuthMethodOption, ProviderAuthState};
+
+    fn manager() -> OpenAIAuthManager {
+        OpenAIAuthManager::new(Provider {
+            id: "openai".into(),
+            name: "OpenAI".into(),
+            protocol: crate::domain::ProviderProtocol::OpenAiResponses,
+            base_url: Some("https://api.openai.com/v1".into()),
+            models: vec![],
+            connected: false,
+        })
+        .unwrap()
+    }
 
     #[test]
     fn openai_status_and_account_contracts_contain_only_safe_metadata() {
@@ -475,5 +654,108 @@ mod tests {
                 .create_authentication_session(redirect, &host_id)
                 .is_err());
         }
+    }
+
+    #[test]
+    fn callback_accepts_valid_state_code_and_issued_client_id_without_returning_secrets() {
+        let manager = manager();
+        let pending = manager
+            .create_authentication_session(
+                "http://127.0.0.1:43210/auth/callback",
+                &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            )
+            .unwrap();
+        let target = format!(
+            "/auth/callback?code=private-code&state={}&client_id=issued-client",
+            pending.state
+        );
+
+        assert_eq!(
+            manager
+                .receive_authorization_callback(&pending, &target, "127.0.0.1:43210")
+                .unwrap(),
+            OpenAiCallbackOutcome::AuthorizationReceived
+        );
+    }
+
+    #[test]
+    fn callback_rejects_wrong_state_and_missing_code() {
+        let manager = manager();
+        let pending = manager
+            .create_authentication_session(
+                "http://127.0.0.1:43210/auth/callback",
+                &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            )
+            .unwrap();
+
+        for target in [
+            "/auth/callback?code=private-code&state=wrong&client_id=issued-client".to_owned(),
+            format!(
+                "/auth/callback?state={}&client_id=issued-client",
+                pending.state
+            ),
+        ] {
+            assert_eq!(
+                manager
+                    .receive_authorization_callback(&pending, &target, "127.0.0.1:43210")
+                    .unwrap_err()
+                    .code,
+                "invalid_auth_callback"
+            );
+        }
+    }
+
+    #[test]
+    fn callback_rejects_malformed_parameters_wrong_origin_and_missing_client_id() {
+        let manager = manager();
+        let pending = manager
+            .create_authentication_session(
+                "http://127.0.0.1:43210/auth/callback",
+                &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            )
+            .unwrap();
+        let valid_query = format!(
+            "code=private-code&state={}&client_id=issued-client",
+            pending.state
+        );
+
+        for (target, host) in [
+            ("/auth/callback?state=%Q0".to_owned(), "127.0.0.1:43210"),
+            (
+                format!("/auth/callback?code=private-code&state={}", pending.state),
+                "127.0.0.1:43210",
+            ),
+            (format!("/auth/callback?{valid_query}"), "127.0.0.1:43211"),
+        ] {
+            assert_eq!(
+                manager
+                    .receive_authorization_callback(&pending, &target, host)
+                    .unwrap_err()
+                    .code,
+                "invalid_auth_callback"
+            );
+        }
+    }
+
+    #[test]
+    fn callback_denial_requires_the_matching_state() {
+        let manager = manager();
+        let pending = manager
+            .create_authentication_session(
+                "http://127.0.0.1:43210/auth/callback",
+                &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            )
+            .unwrap();
+
+        assert_eq!(
+            manager
+                .receive_authorization_callback(
+                    &pending,
+                    &format!("/auth/callback?error=access_denied&state={}", pending.state),
+                    "127.0.0.1:43210",
+                )
+                .unwrap(),
+            OpenAiCallbackOutcome::AccessDenied
+        );
     }
 }

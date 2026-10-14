@@ -1955,7 +1955,8 @@ pub async fn openai_auth_start(
     let managed_state = Arc::clone(state.inner());
     let event_app = app.clone();
     tokio::spawn(async move {
-        let completion = wait_for_openai_callback(listener, &pending, cancel_receiver).await;
+        let completion =
+            wait_for_openai_callback(listener, &manager, &pending, cancel_receiver).await;
         if let Some(attempt_state) = completion {
             let event = OpenAiAuthAttemptEvent {
                 attempt_id: attempt_id.clone(),
@@ -2012,14 +2013,23 @@ pub fn openai_auth_cancel(
 
 async fn wait_for_openai_callback(
     listener: TcpListener,
+    manager: &crate::auth::openai::OpenAIAuthManager,
     pending: &crate::auth::openai::PendingOpenAiAuth,
     cancellation: watch::Receiver<bool>,
 ) -> Option<OpenAiAuthAttemptState> {
-    wait_for_openai_callback_until(listener, pending, cancellation, OPENAI_AUTH_TIMEOUT).await
+    wait_for_openai_callback_until(
+        listener,
+        manager,
+        pending,
+        cancellation,
+        OPENAI_AUTH_TIMEOUT,
+    )
+    .await
 }
 
 async fn wait_for_openai_callback_until(
     listener: TcpListener,
+    manager: &crate::auth::openai::OpenAIAuthManager,
     pending: &crate::auth::openai::PendingOpenAiAuth,
     mut cancellation: watch::Receiver<bool>,
     timeout_after: Duration,
@@ -2041,7 +2051,7 @@ async fn wait_for_openai_callback_until(
                 if !peer.ip().is_loopback() {
                     continue;
                 }
-                if let Some(result) = handle_openai_callback(stream, pending).await {
+                if let Some(result) = handle_openai_callback(stream, manager, pending).await {
                     return Some(result);
                 }
             }
@@ -2051,6 +2061,7 @@ async fn wait_for_openai_callback_until(
 
 async fn handle_openai_callback(
     mut stream: TcpStream,
+    manager: &crate::auth::openai::OpenAIAuthManager,
     pending: &crate::auth::openai::PendingOpenAiAuth,
 ) -> Option<OpenAiAuthAttemptState> {
     let mut request = Vec::with_capacity(2048);
@@ -2065,149 +2076,92 @@ async fn handle_openai_callback(
             }
             request.extend_from_slice(&buffer[..read]);
         }
-        Ok::<(), std::io::Error>(())
+        Ok::<bool, std::io::Error>(request.ends_with(b"\r\n\r\n"))
     })
     .await;
-    if !matches!(read_result, Ok(Ok(()))) {
+    if !matches!(read_result, Ok(Ok(true))) {
         let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
-        return None;
+        return Some(OpenAiAuthAttemptState::Failed);
     }
 
     let request_text = match std::str::from_utf8(&request) {
         Ok(request) => request,
         Err(_) => {
             let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
-            return None;
+            return Some(OpenAiAuthAttemptState::Failed);
         }
     };
-    let mut request_line = request_text
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .split_whitespace();
+    let mut lines = request_text.lines();
+    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
     let method = request_line.next().unwrap_or_default();
     let target = request_line.next().unwrap_or_default();
-    let decision = if method != "GET" {
-        CallbackDecision::MethodNotAllowed
-    } else {
-        callback_decision(target, &pending.state)
-    };
+    let version = request_line.next().unwrap_or_default();
+    if request_line.next().is_some() || method.is_empty() || target.is_empty() {
+        let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
+        return Some(OpenAiAuthAttemptState::Failed);
+    }
+    if target.split('?').next() != Some("/auth/callback") {
+        let _ =
+            respond_to_openai_callback(&mut stream, 404, "This sign-in callback is not available.")
+                .await;
+        return None;
+    }
+    if method != "GET" || version != "HTTP/1.1" {
+        let _ =
+            respond_to_openai_callback(&mut stream, 405, "This sign-in callback is not available.")
+                .await;
+        return Some(OpenAiAuthAttemptState::Failed);
+    }
 
-    match decision {
-        CallbackDecision::WrongPath => {
-            let _ = respond_to_openai_callback(
-                &mut stream,
-                404,
-                "This sign-in callback is not available.",
-            )
-            .await;
-            None
+    let mut host_values = Vec::new();
+    let mut malformed_header = false;
+    for line in lines {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break;
         }
-        CallbackDecision::MethodNotAllowed => {
-            let _ = respond_to_openai_callback(
-                &mut stream,
-                405,
-                "This sign-in callback is not available.",
-            )
-            .await;
-            None
+        let Some((name, value)) = line.split_once(':') else {
+            malformed_header = true;
+            break;
+        };
+        if name.eq_ignore_ascii_case("host") {
+            host_values.push(value.trim());
         }
-        CallbackDecision::Invalid => {
-            let _ = respond_to_openai_callback(
-                &mut stream,
-                400,
-                "This sign-in response could not be verified.",
-            )
-            .await;
-            None
-        }
-        CallbackDecision::Received => {
+    }
+    if malformed_header || host_values.len() != 1 {
+        let _ = respond_to_openai_callback(&mut stream, 400, "Invalid sign-in response.").await;
+        return Some(OpenAiAuthAttemptState::Failed);
+    }
+
+    match manager.receive_authorization_callback(pending, target, host_values[0]) {
+        Ok(crate::auth::openai::OpenAiCallbackOutcome::AuthorizationReceived) => {
             let _ = respond_to_openai_callback(
                 &mut stream,
                 200,
-                "The OpenAI response reached JevCode. Account verification is not implemented in this build.",
+                "Sign-in response received. You can return to the desktop app.",
             )
             .await;
             Some(OpenAiAuthAttemptState::CallbackReceived)
         }
-        CallbackDecision::Denied => {
-            let _ =
-                respond_to_openai_callback(&mut stream, 200, "OpenAI sign-in was cancelled.").await;
+        Ok(crate::auth::openai::OpenAiCallbackOutcome::AccessDenied) => {
+            let _ = respond_to_openai_callback(
+                &mut stream,
+                200,
+                "OpenAI sign-in was cancelled. You can return to the desktop app.",
+            )
+            .await;
             Some(OpenAiAuthAttemptState::Denied)
         }
-        CallbackDecision::Failed => {
+        Err(_) => {
             let _ = respond_to_openai_callback(
                 &mut stream,
                 400,
-                "OpenAI sign-in could not be completed.",
+                "This sign-in response could not be verified. Return to the desktop app and try again.",
             )
             .await;
             Some(OpenAiAuthAttemptState::Failed)
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CallbackDecision {
-    WrongPath,
-    MethodNotAllowed,
-    Invalid,
-    Received,
-    Denied,
-    Failed,
-}
-
-fn callback_decision(target: &str, expected_state: &str) -> CallbackDecision {
-    if !target.starts_with('/') || target.starts_with("//") {
-        return CallbackDecision::Invalid;
-    }
-    let Ok(url) = reqwest::Url::parse(&format!("http://127.0.0.1{target}")) else {
-        return CallbackDecision::Invalid;
-    };
-    if url.path() != "/auth/callback" {
-        return CallbackDecision::WrongPath;
-    }
-    let pairs = url.query_pairs().collect::<Vec<_>>();
-    let values = |name: &str| {
-        pairs
-            .iter()
-            .filter(|(key, _)| key == name)
-            .map(|(_, value)| value.as_ref())
-            .collect::<Vec<_>>()
-    };
-    let states = values("state");
-    if states.len() != 1 || !constant_time_equal(states[0].as_bytes(), expected_state.as_bytes()) {
-        return CallbackDecision::Invalid;
-    }
-    let errors = values("error");
-    if errors.len() > 1 {
-        return CallbackDecision::Invalid;
-    }
-    if errors
-        .first()
-        .is_some_and(|error| *error == "access_denied")
-    {
-        return CallbackDecision::Denied;
-    }
-    if !errors.is_empty() {
-        return CallbackDecision::Failed;
-    }
-    let codes = values("code");
-    if codes.len() == 1 && !codes[0].is_empty() {
-        CallbackDecision::Received
-    } else {
-        CallbackDecision::Invalid
-    }
-}
-
-fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right)
-        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
-        == 0
 }
 
 async fn respond_to_openai_callback(
@@ -2282,54 +2236,24 @@ fn open_system_browser(url: &reqwest::Url) -> AppResult<()> {
 mod openai_auth_start_tests {
     use super::*;
 
-    fn pending_session() -> crate::auth::openai::PendingOpenAiAuth {
-        let provider = crate::domain::Provider {
+    fn manager() -> crate::auth::openai::OpenAIAuthManager {
+        crate::auth::openai::OpenAIAuthManager::new(crate::domain::Provider {
             id: "openai".into(),
             name: "OpenAI".into(),
             protocol: crate::domain::ProviderProtocol::OpenAiResponses,
             base_url: Some("https://api.openai.com/v1".into()),
             models: vec![],
             connected: false,
-        };
-        let manager = crate::auth::openai::OpenAIAuthManager::new(provider).unwrap();
+        })
+        .unwrap()
+    }
+
+    fn pending_session() -> crate::auth::openai::PendingOpenAiAuth {
+        let manager = manager();
         let host_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
         manager
             .create_authentication_session("http://127.0.0.1:43210/auth/callback", &host_id)
             .unwrap()
-    }
-
-    #[test]
-    fn callback_accepts_only_matching_state_and_a_code_or_documented_denial() {
-        let state = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        assert_eq!(
-            callback_decision(
-                &format!("/auth/callback?code=private-code&state={state}"),
-                state
-            ),
-            CallbackDecision::Received
-        );
-        assert_eq!(
-            callback_decision(
-                &format!("/auth/callback?error=access_denied&state={state}"),
-                state
-            ),
-            CallbackDecision::Denied
-        );
-        assert_eq!(
-            callback_decision("/auth/callback?code=secret&state=wrong", state),
-            CallbackDecision::Invalid
-        );
-        assert_eq!(
-            callback_decision(
-                &format!("/auth/callback?code=one&code=two&state={state}"),
-                state
-            ),
-            CallbackDecision::Invalid
-        );
-        assert_eq!(
-            callback_decision(&format!("/other?code=secret&state={state}"), state),
-            CallbackDecision::WrongPath
-        );
     }
 
     #[test]
@@ -2346,14 +2270,17 @@ mod openai_auth_start_tests {
     }
 
     #[tokio::test]
-    async fn authentication_listener_handles_cancel_and_timeout() {
+    async fn authentication_listener_shuts_down_on_cancel_and_timeout() {
+        let manager = manager();
         let pending = pending_session();
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let cancel_addr = listener.local_addr().unwrap();
         let (cancel_sender, cancel_receiver) = watch::channel(false);
         cancel_sender.send(true).unwrap();
         assert_eq!(
             wait_for_openai_callback_until(
                 listener,
+                &manager,
                 &pending,
                 cancel_receiver,
                 Duration::from_secs(1)
@@ -2361,12 +2288,15 @@ mod openai_auth_start_tests {
             .await,
             None
         );
+        assert!(TcpListener::bind(cancel_addr).await.is_ok());
 
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let timeout_addr = listener.local_addr().unwrap();
         let (_cancel_sender, cancel_receiver) = watch::channel(false);
         assert_eq!(
             wait_for_openai_callback_until(
                 listener,
+                &manager,
                 &pending,
                 cancel_receiver,
                 Duration::from_millis(1)
@@ -2374,6 +2304,91 @@ mod openai_auth_start_tests {
             .await,
             Some(OpenAiAuthAttemptState::TimedOut)
         );
+        assert!(TcpListener::bind(timeout_addr).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn valid_callback_returns_a_safe_page_and_closes_the_listener() {
+        let manager = manager();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let pending = manager
+            .create_authentication_session(
+                &format!("http://127.0.0.1:{}/auth/callback", addr.port()),
+                &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            )
+            .unwrap();
+        let request_target = format!(
+            "/auth/callback?code=do-not-display-this&state={}&client_id=issued-client",
+            pending.state
+        );
+        let (_cancel_sender, cancel_receiver) = watch::channel(false);
+        let server = tokio::spawn(async move {
+            wait_for_openai_callback_until(
+                listener,
+                &manager,
+                &pending,
+                cancel_receiver,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "GET {request_target} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+            addr.port()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+
+        assert!(response.contains("Sign-in response received. You can return to the desktop app."));
+        assert!(!response.contains("do-not-display-this"));
+        assert!(!response.contains("issued-client"));
+        assert_eq!(
+            server.await.unwrap(),
+            Some(OpenAiAuthAttemptState::CallbackReceived)
+        );
+        assert!(TcpListener::bind(addr).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn malformed_callback_is_rejected_and_closes_the_listener() {
+        let manager = manager();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let pending = manager
+            .create_authentication_session(
+                &format!("http://127.0.0.1:{}/auth/callback", addr.port()),
+                &format!("urn:uuid:{}", uuid::Uuid::new_v4()),
+            )
+            .unwrap();
+        let (_cancel_sender, cancel_receiver) = watch::channel(false);
+        let server = tokio::spawn(async move {
+            wait_for_openai_callback_until(
+                listener,
+                &manager,
+                &pending,
+                cancel_receiver,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "GET /auth/callback?state=wrong HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+            addr.port()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(!response.contains("wrong"));
+        assert_eq!(server.await.unwrap(), Some(OpenAiAuthAttemptState::Failed));
+        assert!(TcpListener::bind(addr).await.is_ok());
     }
 }
 
