@@ -2,7 +2,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { Check, CircleAlert, CircleCheck, CircleX, ExternalLink, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
 import type { Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
-import { cancelOpenAIAuth, desktopAvailable, getOpenAIAuthStatus, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, startOpenAIAuth } from '../../lib/ipc';
+import { cancelOpenAIAuth, desktopAvailable, getOpenAIAuthStatus, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectOpenAIAPIKey, selectOpenAIAccount, startOpenAIAuth } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import { initialOpenAIAuthFlow, openAIAccountNeedsReconnect, openAIAccountStatus, openAIAuthFlowReducer, openAIAuthStartErrorMessage } from './openaiAuthUi';
 
@@ -84,16 +84,26 @@ export function ProviderSettings({
       const attempt = parsed.data as OpenAIAuthAttemptEvent;
       dispatchOpenAIFlow({ type: 'attempt-finished', event: attempt });
       if (attempt.state === 'callback_received') {
-        void getOpenAIAuthStatus().then(status => { if (active) { setOpenAIStatus(status); setOpenAIStatusError(null); } }).catch(() => { if (active) setOpenAIStatusError('OpenAI connected, but the account details could not be refreshed. Retry status below.'); });
-        void providerAuthAdapter('openai').getAvailableModels().then(available => {
-          if (!active) return;
-          setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
-          onModels('openai', available);
-          setNotice(`${available.length} models loaded from your ChatGPT account.`);
-          setError(null);
-        }).catch(cause => {
-          if (active) setError(`ChatGPT sign-in succeeded, but OpenAI models could not be loaded. ${normalizeError(cause).message}`);
-        });
+        void (async () => {
+          try {
+            const status = await getOpenAIAuthStatus();
+            if (!active) return;
+            setOpenAIStatus(status);
+            setOpenAIStatusError(null);
+            if (status.chatgpt.selectedAuthMethod !== 'openai_chatgpt') {
+              setNotice('ChatGPT account connected. Select it below to use its models.');
+              return;
+            }
+            const available = await providerAuthAdapter('openai').getAvailableModels();
+            if (!active) return;
+            setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
+            onModels('openai', available);
+            setNotice(`${available.length} models loaded from the selected ChatGPT account.`);
+            setError(null);
+          } catch (cause) {
+            if (active) setError(`ChatGPT sign-in succeeded, but OpenAI models could not be loaded. ${normalizeError(cause).message}`);
+          }
+        })();
       }
     }).then(stop => { if (active) unlisten = stop; else stop(); });
     return () => { active = false; unlisten?.(); };
@@ -110,8 +120,15 @@ export function ProviderSettings({
     try {
       const account = await providerAuthAdapter(provider.id).connect(secret);
       onAccount(account);
-      const chatgptRouteActive = provider.id === 'openai' && !!openAIStatus?.chatgpt.connectedAccounts.length;
-      if (!chatgptRouteActive) {
+      if (provider.id === 'openai') {
+        const status = await getOpenAIAuthStatus();
+        setOpenAIStatus(status);
+        try {
+          const available = await providerAuthAdapter(provider.id).getAvailableModels();
+          setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
+          onModels(provider.id, available);
+        } catch { /* The validated key is connected; catalog refresh can be retried from Accounts. */ }
+      } else {
         try {
           const available = await providerAuthAdapter(provider.id).getAvailableModels();
           if (available.length) onModels(provider.id, available);
@@ -119,8 +136,8 @@ export function ProviderSettings({
       }
       setSecret('');
       setEditingId(null);
-      setNotice(chatgptRouteActive
-        ? 'The OpenAI API key was tested and saved. ChatGPT OAuth remains the active model route until you disconnect it.'
+      setNotice(provider.id === 'openai'
+        ? 'The OpenAI API key was tested and saved. OpenAI requests now use the API key because you connected it explicitly.'
         : `${provider.name} connection tested and saved in your OS credential manager.`);
     } catch (cause) {
       setError(normalizeError(cause).message);
@@ -197,17 +214,67 @@ export function ProviderSettings({
   }
 
   async function disconnectOpenAIAccount(accountId: string) {
+    setBusyId('openai');
     resetFeedback();
     try {
-      await logoutOpenAIAuth(accountId);
-      await refreshOpenAIStatus();
-      try {
-        const available = await providerAuthAdapter('openai').getAvailableModels();
-        setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
-        onModels('openai', available);
-      } catch { /* The account is disconnected; model refresh can be retried later. */ }
-      setNotice('ChatGPT credentials removed from your OS credential manager.');
+      const result = await logoutOpenAIAuth(accountId);
+      const status = await getOpenAIAuthStatus();
+      setOpenAIStatus(status);
+      setOpenAIStatusError(null);
+      onModels('openai', []);
+      setModels(current => { const next = { ...current }; delete next.openai; return next; });
+      if (status.chatgpt.selectedAuthMethod === 'openai_chatgpt' && status.chatgpt.connectedAccounts.length > 0) {
+        try {
+          const available = await providerAuthAdapter('openai').getAvailableModels();
+          setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
+          onModels('openai', available);
+        } catch { /* The account is removed; the selected account can be reconnected. */ }
+      } else if (status.chatgpt.selectedAuthMethod === 'api_key') {
+        try {
+          const available = await providerAuthAdapter('openai').getAvailableModels();
+          setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
+          onModels('openai', available);
+        } catch { /* The API key route remains selected; its catalog can be refreshed later. */ }
+      }
+      setNotice(result.revocationConfirmed
+        ? 'Account removed from this device and its ChatGPT session revoked.'
+        : 'Account removed from this device. OpenAI could not confirm remote sign-out; review app access in your ChatGPT settings.');
     } catch (cause) { setError(normalizeError(cause).message); }
+    finally { setBusyId(null); }
+  }
+
+  async function selectChatGPTAccount(accountId: string) {
+    setBusyId('openai');
+    resetFeedback();
+    onModels('openai', []);
+    setModels(current => { const next = { ...current }; delete next.openai; return next; });
+    try {
+      const status = await selectOpenAIAccount(accountId);
+      setOpenAIStatus(status);
+      const available = await providerAuthAdapter('openai').getAvailableModels();
+      setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
+      onModels('openai', available);
+      const selected = status.chatgpt.connectedAccounts.find(item => item.id === accountId);
+      setNotice(`${selected?.email ?? selected?.displayName ?? 'ChatGPT account'} is selected. ${available.length} models loaded.`);
+    } catch (cause) {
+      setError(normalizeError(cause).message);
+    } finally { setBusyId(null); }
+  }
+
+  async function selectAPIKeyRoute() {
+    setBusyId('openai');
+    resetFeedback();
+    onModels('openai', []);
+    setModels(current => { const next = { ...current }; delete next.openai; return next; });
+    try {
+      const status = await selectOpenAIAPIKey();
+      setOpenAIStatus(status);
+      const available = await providerAuthAdapter('openai').getAvailableModels();
+      setModels(current => ({ ...current, openai: available.map(model => model.displayName) }));
+      onModels('openai', available);
+      setNotice(`OpenAI requests now use the API key. ${available.length} models loaded.`);
+    } catch (cause) { setError(normalizeError(cause).message); }
+    finally { setBusyId(null); }
   }
 
   const remoteProviders = providers.filter(provider => provider.protocol !== 'preview');
@@ -235,13 +302,14 @@ export function ProviderSettings({
 
         if (provider.id === 'openai') {
           const chatgptAccounts = openAIStatus?.chatgpt.connectedAccounts ?? [];
-          const activeChatgptAccount = [...chatgptAccounts].sort((left, right) => right.connectedAt.localeCompare(left.connectedAt))[0];
+          const activeChatgptAccount = chatgptAccounts.find(account => account.id === openAIStatus?.chatgpt.selectedAccountId);
           const chatgptConnected = !!activeChatgptAccount && !openAIAccountNeedsReconnect(activeChatgptAccount);
           const chatgptNeedsReconnect = !!activeChatgptAccount && openAIAccountNeedsReconnect(activeChatgptAccount);
           const keyConnected = account.state === 'connected';
           const keyNeedsAttention = account.state === 'needs_attention';
-          const connected = keyConnected || chatgptConnected;
-          const needsAttention = !connected && (keyNeedsAttention || chatgptNeedsReconnect);
+          const selectedMethod = openAIStatus?.chatgpt.selectedAuthMethod;
+          const connected = selectedMethod === 'openai_chatgpt' ? chatgptConnected : selectedMethod === 'api_key' ? keyConnected : keyConnected || chatgptConnected;
+          const needsAttention = selectedMethod === 'openai_chatgpt' ? chatgptNeedsReconnect || (!activeChatgptAccount && chatgptAccounts.length === 0) : selectedMethod === 'api_key' ? keyNeedsAttention : !connected && (keyNeedsAttention || chatgptNeedsReconnect);
           const aggregateState = connected ? 'connected' : needsAttention ? 'needs_attention' : 'not_connected';
           const chatGPTAvailable = openAIStatus?.chatgpt.available ?? desktopAvailable;
           const showConnectionChoices = !openAIStatusLoading && !openAIStatusError && chatgptAccounts.length === 0 && !keyConnected && !keyNeedsAttention && !editing;
@@ -265,10 +333,12 @@ export function ProviderSettings({
             {openAIStatusLoading && <div className="openai-status-loading" role="status"><LoaderCircle size={14} className="spin" />Loading OpenAI account status…</div>}
             {openAIStatusError && <div className="openai-auth-feedback error" role="alert"><CircleAlert size={14} /><span>{openAIStatusError}</span><button className="account-button quiet" onClick={() => void refreshOpenAIStatus()} disabled={openAIStatusLoading}>Retry</button></div>}
             {openAIStatus?.chatgpt.unavailableReason && <div className="openai-auth-feedback error" role="alert"><CircleAlert size={14} /><span>{openAIStatus.chatgpt.unavailableReason}</span></div>}
-            {chatgptAccounts.length > 0 && <div className="openai-auth-routing-note" role="status">
-              {chatgptNeedsReconnect
-                ? 'ChatGPT OAuth remains the selected route for OpenAI requests until it is disconnected. Requests will pause for reconnection; JevCode will not fall back to API-key billing.'
-                : 'OpenAI model requests use ChatGPT OAuth while it is connected. A saved API key is not used as an automatic fallback.'}
+            {(chatgptAccounts.length > 0 || selectedMethod === 'openai_chatgpt') && <div className="openai-auth-routing-note" role="status">
+              {selectedMethod === 'openai_chatgpt'
+                ? chatgptNeedsReconnect || chatgptAccounts.length === 0
+                  ? 'ChatGPT OAuth is selected and needs reconnection. Requests pause until you reconnect or explicitly choose the API key.'
+                  : 'OpenAI requests use the selected ChatGPT account. JevCode will not switch to API-key billing automatically.'
+                : 'OpenAI requests use the API key. Select a ChatGPT account to route requests through your ChatGPT account.'}
             </div>}
 
             {openAIFlow.feedback && openAIFlow.phase === 'idle' && <div className={`openai-auth-feedback ${openAIFlow.feedback.tone}`} role={openAIFlow.feedback.tone === 'error' ? 'alert' : 'status'}>
@@ -302,6 +372,7 @@ export function ProviderSettings({
               {chatgptAccounts.length > 0 ? chatgptAccounts.map(chatgpt => {
                 const accountStatus = openAIAccountStatus(chatgpt);
                 const reconnect = accountStatus.tone === 'needs_attention';
+                const isSelected = openAIStatus?.chatgpt.selectedAccountId === chatgpt.id;
                 const isManaged = managedOpenAIAccountId === chatgpt.id;
                 return <div className="openai-method-group" key={chatgpt.id}>
                   <div className="openai-method-row">
@@ -314,15 +385,19 @@ export function ProviderSettings({
                     <div className="openai-method-account">
                       <span>{chatgpt.displayName ?? 'ChatGPT account'}</span>
                       {chatgpt.email && <small>{chatgpt.email}</small>}
+                      <small>Registration · {chatgpt.id.slice(0, 8)}</small>
                       {accountStatus.detail && <small>{accountStatus.detail}</small>}
                     </div>
                     <div className="openai-method-actions">
+                      <button className="account-button quiet" onClick={() => void selectChatGPTAccount(chatgpt.id)} disabled={!desktopAvailable || busyId === 'openai' || isSelected && selectedMethod === 'openai_chatgpt'} aria-pressed={isSelected && selectedMethod === 'openai_chatgpt'}>
+                        {busyId === 'openai' && !isSelected ? <LoaderCircle size={13} className="spin" /> : isSelected && selectedMethod === 'openai_chatgpt' ? <CircleCheck size={13} /> : null}{isSelected && selectedMethod === 'openai_chatgpt' ? 'Selected' : 'Use account'}
+                      </button>
                       {reconnect && <button className="account-button connect" onClick={() => void connectOpenAIChatGPT(chatgpt.id)} disabled={!desktopAvailable || flowActive}>Reconnect</button>}
                       <button className="account-button quiet" onClick={() => setManagedOpenAIAccountId(isManaged ? null : chatgpt.id)} aria-expanded={isManaged}>
                         {isManaged ? 'Hide account' : 'Manage Account'}
                       </button>
-                      <button className="account-button remove" onClick={() => void disconnectOpenAIAccount(chatgpt.id)} disabled={!desktopAvailable || flowActive} aria-label={'Disconnect ' + (chatgpt.email ?? 'ChatGPT account')}>
-                        <Trash2 size={13} />Disconnect
+                      <button className="account-button remove" onClick={() => void disconnectOpenAIAccount(chatgpt.id)} disabled={!desktopAvailable || flowActive || busyId === 'openai'} aria-label={'Remove ' + (chatgpt.email ?? 'ChatGPT account')}>
+                        <Trash2 size={13} />Remove account
                       </button>
                     </div>
                   </div>
@@ -338,12 +413,18 @@ export function ProviderSettings({
                 <div className="openai-method-actions"><button className="account-button connect" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || !chatGPTAvailable || flowActive}>Continue with ChatGPT</button></div>
               </div>}
 
+              {chatgptAccounts.length > 0 && <div className="openai-add-account-row">
+                <button className="account-button connect" onClick={() => void connectOpenAIChatGPT()} disabled={!desktopAvailable || !chatGPTAvailable || flowActive}>Add Account</button>
+              </div>}
+
               <div className="openai-method-row">
                 <div className="openai-method-status"><span>API Key</span><strong className={`account-status ${keyConnected ? 'connected' : keyNeedsAttention ? 'needs_attention' : ''}`}>
                   {keyConnected ? <><CircleCheck size={13} />Connected</> : keyNeedsAttention ? <><CircleAlert size={13} />{attentionLabel(account.lastErrorCode)}</> : 'Not connected'}
                 </strong></div>
                 <div className="openai-method-account"><span>{keyConnected ? 'Key stored in your OS credential manager.' : keyNeedsAttention ? 'Check or replace the saved key to restore access.' : 'Use an OpenAI API key from your developer account.'}</span></div>
                 <div className="openai-method-actions">
+                  {keyConnected && selectedMethod !== 'api_key' && <button className="account-button quiet" onClick={() => void selectAPIKeyRoute()} disabled={!desktopAvailable || busyId === 'openai'}>Use API key</button>}
+                  {keyConnected && selectedMethod === 'api_key' && <strong className="account-status connected"><CircleCheck size={13} />Selected</strong>}
                   {keyConnected && <>
                     <button className="account-button quiet" onClick={() => void validate(provider)} disabled={!desktopAvailable || busy}>{busy ? <LoaderCircle size={13} className="spin" /> : <RotateCw size={13} />}Test</button>
                     <button className="account-button quiet" onClick={() => { setEditingId(provider.id); setSecret(''); resetFeedback(); }} disabled={!desktopAvailable || busy}><KeyRound size={13} />Change key</button>

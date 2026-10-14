@@ -58,6 +58,8 @@ export interface OpenAIAccount {
 export interface OpenAIChatGptAuthStatus {
   available: boolean;
   connectedAccounts: OpenAIAccount[];
+  selectedAccountId: string | null;
+  selectedAuthMethod: 'api_key' | 'openai_chatgpt' | null;
   unavailableReason: string | null;
 }
 export interface OpenAIAuthStatus {
@@ -66,6 +68,7 @@ export interface OpenAIAuthStatus {
 }
 /** Safe handle for the native browser flow; no OAuth URL or protocol secret is exposed. */
 export interface OpenAIAuthStart { attemptId: string; expiresAt: string }
+export interface OpenAILogoutResult { revocationConfirmed: boolean }
 export type OpenAIAuthAttemptState = 'callback_received' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
 export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
 export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }

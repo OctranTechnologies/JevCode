@@ -681,6 +681,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .openai-method-account > span { overflow: hidden; color: var(--wb-ink); font-size: 10px; text-overflow: ellipsis; }
 .openai-method-account > small { overflow: hidden; color: var(--wb-muted); font-size: 9px; line-height: 1.5; text-overflow: ellipsis; }
 .openai-method-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.openai-add-account-row { display: flex; justify-content: flex-end; padding: 10px 0; border-bottom: 1px solid var(--wb-border); }
 .openai-account-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 11px; padding: 10px 0 2px; border-top: 1px solid var(--wb-border); }
 .openai-account-details > span { display: grid; min-width: 0; gap: 4px; }
 .openai-account-details small { color: var(--wb-muted); font-size: 9px; }

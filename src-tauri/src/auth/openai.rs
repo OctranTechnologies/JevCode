@@ -3,7 +3,8 @@ use crate::{
     credentials::CredentialStore,
     domain::{
         Model, ModelCapability, ModelStatus, OpenAiAccount, OpenAiAuthStatus,
-        OpenAiChatGptAuthStatus, Provider, ProviderAccount, ProviderAccountInfo,
+        OpenAiChatGptAuthStatus, OpenAiLogoutResult, Provider, ProviderAccount,
+        ProviderAccountInfo,
     },
     error::{AppError, AppResult},
     persistence::Database,
@@ -117,6 +118,8 @@ pub(crate) trait OpenAiOAuthTransport: Send + Sync {
     async fn discovery(&self) -> AppResult<OpenAiOidcDiscovery>;
     async fn exchange_code(&self, request: OpenAiTokenRequest) -> AppResult<OpenAiTokenResponse>;
     async fn refresh_token(&self, request: OpenAiRefreshRequest) -> AppResult<OpenAiTokenResponse>;
+    async fn revoke_token(&self, endpoint: &str, request: OpenAiRevocationRequest)
+        -> AppResult<()>;
     async fn jwks(&self) -> AppResult<JwkSet>;
 }
 
@@ -190,6 +193,8 @@ pub(crate) struct OpenAiOidcDiscovery {
     token_endpoint: String,
     jwks_uri: String,
     id_token_signing_alg_values_supported: Vec<String>,
+    #[serde(default)]
+    revocation_endpoint: Option<String>,
 }
 
 pub(crate) struct OpenAiTokenRequest {
@@ -212,6 +217,17 @@ pub(crate) struct OpenAiRefreshRequest {
 }
 
 impl Drop for OpenAiRefreshRequest {
+    fn drop(&mut self) {
+        self.refresh_token.zeroize();
+    }
+}
+
+pub(crate) struct OpenAiRevocationRequest {
+    client_id: String,
+    refresh_token: String,
+}
+
+impl Drop for OpenAiRevocationRequest {
     fn drop(&mut self) {
         self.refresh_token.zeroize();
     }
@@ -285,6 +301,34 @@ impl OpenAiOAuthTransport for ReqwestOpenAiOAuthTransport {
             .await
             .map_err(|_| auth_network_error())?;
         read_refresh_response(response).await
+    }
+
+    async fn revoke_token(
+        &self,
+        endpoint: &str,
+        request: OpenAiRevocationRequest,
+    ) -> AppResult<()> {
+        let response = self
+            .client
+            .post(endpoint)
+            .form(&[
+                ("token", request.refresh_token.as_str()),
+                ("token_type_hint", "refresh_token"),
+                ("client_id", request.client_id.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|_| auth_network_error())?;
+        if response.status() == StatusCode::OK {
+            Ok(())
+        } else if response.status().is_server_error() {
+            Err(crate::auth::provider_outage())
+        } else {
+            Err(AppError::new(
+                "revocation_unconfirmed",
+                "OpenAI could not confirm sign-out.",
+            ))
+        }
     }
 
     async fn jwks(&self) -> AppResult<JwkSet> {
@@ -670,7 +714,29 @@ fn validate_discovery(discovery: &OpenAiOidcDiscovery) -> AppResult<()> {
     {
         return Err(identity_verification_error());
     }
+    if discovery
+        .revocation_endpoint
+        .as_deref()
+        .is_some_and(|endpoint| !valid_revocation_endpoint(endpoint))
+    {
+        return Err(identity_verification_error());
+    }
     Ok(())
+}
+
+fn valid_revocation_endpoint(endpoint: &str) -> bool {
+    let Ok(url) = Url::parse(endpoint) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("auth.openai.com")
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.path().starts_with('/')
+        && !url.path().contains(['\\', '\r', '\n'])
 }
 
 #[derive(Deserialize)]
@@ -976,18 +1042,39 @@ fn chatgpt_plan_access_error() -> AppError {
     )
 }
 
-fn select_active_chatgpt_account(mut accounts: Vec<OpenAiAccount>) -> AppResult<OpenAiAccount> {
-    accounts.sort_by(|left, right| right.connected_at.cmp(&left.connected_at));
-    let account = accounts.into_iter().next().ok_or_else(|| {
+fn select_active_chatgpt_account(database: &Database) -> AppResult<OpenAiAccount> {
+    let selected_id = database.ensure_selected_openai_account()?.ok_or_else(|| {
         AppError::new(
             "credentials_required",
             "Sign in with ChatGPT before using ChatGPT plan models.",
         )
     })?;
+    let account = database
+        .openai_accounts()?
+        .into_iter()
+        .find(|account| account.id == selected_id)
+        .ok_or_else(|| {
+            AppError::new(
+                "account_not_found",
+                "The selected OpenAI account is unavailable.",
+            )
+        })?;
     if account.requires_reconnect || !account.connected {
         return Err(openai_reconnect_error());
     }
     Ok(account)
+}
+
+fn openai_auth_uses_chatgpt(
+    preference: Option<crate::domain::ProviderAuthMethod>,
+    has_accounts: bool,
+) -> bool {
+    match preference {
+        Some(crate::domain::ProviderAuthMethod::OpenAiChatGpt) => true,
+        Some(crate::domain::ProviderAuthMethod::ApiKey)
+        | Some(crate::domain::ProviderAuthMethod::GoogleOAuth) => false,
+        None => has_accounts,
+    }
 }
 
 fn require_chatgpt_plan_scope(account: &OpenAiAccount) -> AppResult<()> {
@@ -1106,8 +1193,13 @@ impl OpenAIAuthManager {
         database: &Database,
     ) -> AppResult<OpenAiRequestCredential> {
         let accounts = database.openai_accounts()?;
-        if !accounts.is_empty() {
-            let account = select_active_chatgpt_account(accounts)?;
+        let preference = database.openai_auth_preference()?;
+        let use_chatgpt = openai_auth_uses_chatgpt(preference, !accounts.is_empty());
+        if use_chatgpt {
+            if accounts.is_empty() {
+                return Err(openai_reconnect_error());
+            }
+            let account = select_active_chatgpt_account(database)?;
             require_chatgpt_plan_scope(&account)?;
             let (access_token, _) = self
                 .session_access_token(credentials, database, &account.id, false)
@@ -1130,8 +1222,13 @@ impl OpenAIAuthManager {
         database: &Database,
     ) -> AppResult<Vec<Model>> {
         let accounts = database.openai_accounts()?;
-        if !accounts.is_empty() {
-            let account = select_active_chatgpt_account(accounts)?;
+        let preference = database.openai_auth_preference()?;
+        let use_chatgpt = openai_auth_uses_chatgpt(preference, !accounts.is_empty());
+        if use_chatgpt {
+            if accounts.is_empty() {
+                return Err(openai_reconnect_error());
+            }
+            let account = select_active_chatgpt_account(database)?;
             require_chatgpt_plan_scope(&account)?;
             let (access_token, mut safe_account) = self
                 .session_access_token(credentials, database, &account.id, false)
@@ -1173,17 +1270,7 @@ impl OpenAIAuthManager {
         credentials: &dyn OpenAiSessionStorage,
         database: &Database,
     ) -> AppResult<()> {
-        let account = select_active_chatgpt_account(database.openai_accounts()?)?;
-        let mut account = database
-            .openai_accounts()?
-            .into_iter()
-            .find(|saved| saved.id == account.id)
-            .ok_or_else(|| {
-                AppError::new(
-                    "account_not_found",
-                    "This ChatGPT account is no longer saved.",
-                )
-            })?;
+        let mut account = select_active_chatgpt_account(database)?;
         self.mark_needs_reconnect(credentials, database, &mut account)
     }
 
@@ -1372,9 +1459,11 @@ impl OpenAIAuthManager {
         })?;
         let client_id = registered_client_id.unwrap_or("dynamic_agent_client");
         let mut pairs = authorization_url.query_pairs_mut();
+        pairs.append_pair("client_id", client_id);
+        if registered_client_id.is_none() {
+            pairs.append_pair("agent_name_hint", OPENAI_AGENT_NAME);
+        }
         pairs
-            .append_pair("client_id", client_id)
-            .append_pair("agent_name_hint", OPENAI_AGENT_NAME)
             .append_pair("ext_agent_host_id", ext_agent_host_id)
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", redirect_uri)
@@ -1422,32 +1511,34 @@ impl OpenAIAuthManager {
             .ok_or_else(|| {
                 AppError::new("account_not_found", "This OpenAI account is unavailable.")
             })?;
-        let mut serialized = credentials.get_openai_session(account_id)?.ok_or_else(|| {
-            AppError::new("credentials_required", "Reconnect this OpenAI account.")
-        })?;
-        let session_result = serde_json::from_str::<OpenAiSession>(&serialized);
-        serialized.zeroize();
-        let session = session_result.map_err(|_| {
+        let registered_client_id = account.client_id.as_deref().ok_or_else(|| {
             AppError::new(
-                "invalid_auth_session",
-                "This OpenAI session is invalid. Sign in again.",
+                "account_not_reconnectable",
+                "This OpenAI account has no saved registration. Add it again.",
             )
         })?;
-        if session.account_id != account_id
-            || account.client_id.as_deref() != Some(session.issued_client_id.as_str())
-            || session.ext_agent_host_id != ext_agent_host_id
-        {
-            return Err(AppError::new(
-                "invalid_auth_session",
-                "This OpenAI session does not match its saved account. Sign in again.",
-            ));
-        }
+        // A revoked or locally removed credential must not prevent the user
+        // from reconnecting. Reuse an ID token hint only when the native
+        // session still matches this safe account profile and installation.
+        let id_token_hint = credentials
+            .get_openai_session(account_id)?
+            .and_then(|mut serialized| {
+                let parsed = serde_json::from_str::<OpenAiSession>(&serialized);
+                serialized.zeroize();
+                parsed.ok()
+            })
+            .filter(|session| {
+                session.account_id == account_id
+                    && session.issued_client_id == registered_client_id
+                    && session.ext_agent_host_id == ext_agent_host_id
+            })
+            .map(|session| session.id_token.clone());
         self.create_authentication_session_for(
             redirect_uri,
             ext_agent_host_id,
-            Some(&session.issued_client_id),
+            Some(registered_client_id),
             Some(account_id),
-            Some(&session.id_token),
+            id_token_hint.as_deref(),
         )
     }
 
@@ -1532,6 +1623,15 @@ impl OpenAIAuthManager {
             if account.client_id.as_deref() != Some(authorization.client_id.as_str()) {
                 return Err(identity_verification_error());
             }
+        } else if database
+            .openai_accounts()?
+            .iter()
+            .any(|account| account.id == account_id)
+        {
+            return Err(AppError::new(
+                "account_already_connected",
+                "This OpenAI account is already saved. Select it or reconnect it instead.",
+            ));
         }
         let now = Utc::now();
         let expires_at = now
@@ -1562,8 +1662,8 @@ impl OpenAIAuthManager {
             organization: None,
             client_id: Some(authorization.client_id.clone()),
             granted_scopes: scopes.clone(),
-            // The most recently authorized account is the active ChatGPT
-            // account for catalog discovery and inference.
+            // Account selection is persisted separately; authorization never
+            // silently changes the user's selected account.
             connected_at: now.to_rfc3339(),
             expires_at: Some(expires_at.to_rfc3339()),
         };
@@ -1592,31 +1692,85 @@ impl OpenAIAuthManager {
             let _ = credentials.delete_openai_session(&account_id);
             return Err(error);
         }
+        database.select_openai_account_if_unset(&account_id)?;
         Ok(account)
     }
 
-    pub fn logout(
+    pub async fn logout(
         &self,
         credentials: &dyn OpenAiSessionStorage,
         database: &Database,
         account_id: &str,
-    ) -> AppResult<()> {
+    ) -> AppResult<OpenAiLogoutResult> {
         let account_id = uuid::Uuid::parse_str(account_id)
             .map_err(|_| AppError::new("invalid_input", "The OpenAI account is invalid."))?
             .to_string();
-        if !database
+        let account = database
             .openai_accounts()?
             .iter()
-            .any(|account| account.id == account_id)
-        {
-            return Err(AppError::new(
-                "account_not_found",
-                "This OpenAI account is no longer connected.",
-            ));
+            .find(|account| account.id == account_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::new(
+                    "account_not_found",
+                    "This OpenAI account is no longer connected.",
+                )
+            })?;
+        let lock = openai_refresh_lock(&account_id)?;
+        let _guard = lock.lock().await;
+
+        let mut revocation_confirmed = false;
+        if let (Some(client_id), Some(mut serialized)) = (
+            account.client_id.as_deref(),
+            credentials.get_openai_session(&account_id)?,
+        ) {
+            let parsed = serde_json::from_str::<OpenAiSession>(&serialized);
+            serialized.zeroize();
+            if let Ok(session) = parsed {
+                if session.account_id == account_id && session.issued_client_id == client_id {
+                    if let Ok(discovery) = self.oauth.discovery().await {
+                        if validate_discovery(&discovery).is_ok() {
+                            if let Some(endpoint) = discovery.revocation_endpoint.as_deref() {
+                                for attempt in 0..3 {
+                                    match self
+                                        .oauth
+                                        .revoke_token(
+                                            endpoint,
+                                            OpenAiRevocationRequest {
+                                                client_id: client_id.to_owned(),
+                                                refresh_token: session.refresh_token.clone(),
+                                            },
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            revocation_confirmed = true;
+                                            break;
+                                        }
+                                        Err(error)
+                                            if attempt < 2
+                                                && (error.code == "network_error"
+                                                    || error.code == "provider_outage") =>
+                                        {
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                100 * (attempt + 1),
+                                            ))
+                                            .await;
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         credentials.delete_openai_session(&account_id)?;
         database.delete_openai_account(&account_id)?;
-        Ok(())
+        Ok(OpenAiLogoutResult {
+            revocation_confirmed,
+        })
     }
 
     pub fn status(
@@ -1627,11 +1781,23 @@ impl OpenAIAuthManager {
     ) -> AppResult<OpenAiAuthStatus> {
         let api_key = self.api_key.get_auth_status(credentials, stored)?;
         let connected_accounts = self.chatgpt_accounts_status(credentials, database)?;
+        let selected_account_id = database.ensure_selected_openai_account()?;
+        let selected_auth_method = database.openai_auth_preference()?.or_else(|| {
+            if selected_account_id.is_some() {
+                Some(crate::domain::ProviderAuthMethod::OpenAiChatGpt)
+            } else if api_key.state == crate::domain::ProviderAuthState::Connected {
+                Some(crate::domain::ProviderAuthMethod::ApiKey)
+            } else {
+                None
+            }
+        });
         Ok(OpenAiAuthStatus {
             api_key,
             chatgpt: OpenAiChatGptAuthStatus {
                 available: true,
                 connected_accounts,
+                selected_account_id,
+                selected_auth_method,
                 unavailable_reason: None,
             },
         })
@@ -1971,10 +2137,29 @@ mod tests {
     }
 
     #[test]
-    fn active_chatgpt_account_is_the_latest_authorized_and_never_skips_to_an_older_one() {
-        let older = safe_account("older", "2026-10-12T10:00:00Z", false);
-        let newest = safe_account("newest", "2026-10-13T10:00:00Z", true);
-        let error = select_active_chatgpt_account(vec![older, newest]).unwrap_err();
+    fn selected_chatgpt_account_is_explicit_and_never_skips_to_another_account() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("openai-selected.sqlite")).unwrap();
+        let older = safe_account(
+            &uuid::Uuid::new_v4().to_string(),
+            "2026-10-12T10:00:00Z",
+            false,
+        );
+        let newest = safe_account(
+            &uuid::Uuid::new_v4().to_string(),
+            "2026-10-13T10:00:00Z",
+            true,
+        );
+        database.save_openai_account(&older).unwrap();
+        database.save_openai_account(&newest).unwrap();
+        database.select_openai_account(&older.id).unwrap();
+        assert_eq!(
+            select_active_chatgpt_account(&database).unwrap().id,
+            older.id
+        );
+
+        database.select_openai_account(&newest.id).unwrap();
+        let error = select_active_chatgpt_account(&database).unwrap_err();
         assert_eq!(error.code, "openai_reconnect_required");
     }
 
@@ -1985,6 +2170,15 @@ mod tests {
         let error = require_chatgpt_plan_scope(&account).unwrap_err();
         assert_eq!(error.code, "chatgpt_plan_unavailable");
         assert!(!error.message.contains("API key"));
+    }
+
+    #[test]
+    fn openai_auth_route_does_not_fall_back_between_explicit_methods() {
+        use crate::domain::ProviderAuthMethod::{ApiKey, OpenAiChatGpt};
+        assert!(openai_auth_uses_chatgpt(Some(OpenAiChatGpt), false));
+        assert!(!openai_auth_uses_chatgpt(Some(ApiKey), true));
+        assert!(openai_auth_uses_chatgpt(None, true));
+        assert!(!openai_auth_uses_chatgpt(None, false));
     }
 
     fn test_provider() -> Provider {
@@ -2041,6 +2235,8 @@ mod tests {
         exchanged: AtomicBool,
         refresh_calls: AtomicUsize,
         refresh_error: Mutex<Option<String>>,
+        revoke_calls: AtomicUsize,
+        revoke_error: Mutex<Option<String>>,
     }
 
     #[async_trait]
@@ -2111,6 +2307,28 @@ mod tests {
                 .take()
                 .ok_or_else(identity_verification_error)
         }
+
+        async fn revoke_token(
+            &self,
+            endpoint: &str,
+            request: OpenAiRevocationRequest,
+        ) -> AppResult<()> {
+            assert_eq!(
+                endpoint,
+                "https://auth.openai.com/api/accounts/oauth/revoke"
+            );
+            assert_eq!(request.client_id, TEST_CLIENT_ID);
+            assert_eq!(request.refresh_token, TEST_REFRESH_TOKEN);
+            self.revoke_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(error) = self.revoke_error.lock().unwrap().clone() {
+                return if error == "network" {
+                    Err(auth_network_error())
+                } else {
+                    Err(crate::auth::provider_outage())
+                };
+            }
+            Ok(())
+        }
     }
 
     fn test_discovery() -> OpenAiOidcDiscovery {
@@ -2120,6 +2338,7 @@ mod tests {
             token_endpoint: OPENAI_TOKEN_URL.into(),
             jwks_uri: OPENAI_JWKS_URL.into(),
             id_token_signing_alg_values_supported: vec!["RS256".into()],
+            revocation_endpoint: Some("https://auth.openai.com/api/accounts/oauth/revoke".into()),
         }
     }
 
@@ -2202,6 +2421,8 @@ mod tests {
             exchanged: AtomicBool::new(false),
             refresh_calls: AtomicUsize::new(0),
             refresh_error: Mutex::new(error.map(str::to_owned)),
+            revoke_calls: AtomicUsize::new(0),
+            revoke_error: Mutex::new(None),
         });
         let manager =
             OpenAIAuthManager::with_oauth_transport(test_provider(), transport.clone()).unwrap();
@@ -2470,6 +2691,8 @@ mod tests {
             chatgpt: OpenAiChatGptAuthStatus {
                 available: true,
                 connected_accounts: vec![account],
+                selected_account_id: None,
+                selected_auth_method: None,
                 unavailable_reason: None,
             },
         };
@@ -2550,6 +2773,7 @@ mod tests {
             pairs.get("id_token_hint").map(|value| value.as_ref()),
             Some(TEST_ID_TOKEN)
         );
+        assert!(!pairs.contains_key("agent_name_hint"));
 
         let callback_without_client =
             format!("/auth/callback?code=reauth-code&state={}", pending.state);
@@ -2569,6 +2793,27 @@ mod tests {
                 .code,
             "invalid_auth_callback"
         );
+
+        storage.delete_openai_session(&account_id).unwrap();
+        let recovery = manager
+            .create_reauthentication_session(
+                "http://127.0.0.1:43210/auth/callback",
+                &host_id,
+                &account_id,
+                &storage,
+                &database,
+            )
+            .unwrap();
+        let recovery_pairs = recovery
+            .authorization_url
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            recovery_pairs.get("client_id").map(|value| value.as_ref()),
+            Some(TEST_CLIENT_ID)
+        );
+        assert!(!recovery_pairs.contains_key("id_token_hint"));
+        assert!(!recovery_pairs.contains_key("agent_name_hint"));
     }
 
     #[tokio::test]
@@ -2594,6 +2839,8 @@ mod tests {
             exchanged: AtomicBool::new(false),
             refresh_calls: AtomicUsize::new(0),
             refresh_error: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+            revoke_error: Mutex::new(None),
         });
         let manager =
             OpenAIAuthManager::with_oauth_transport(test_provider(), transport.clone()).unwrap();
@@ -2651,6 +2898,8 @@ mod tests {
             chatgpt: OpenAiChatGptAuthStatus {
                 available: true,
                 connected_accounts: accounts.clone(),
+                selected_account_id: Some(accounts[0].id.clone()),
+                selected_auth_method: Some(crate::domain::ProviderAuthMethod::OpenAiChatGpt),
                 unavailable_reason: None,
             },
         };
@@ -2661,9 +2910,116 @@ mod tests {
             assert!(!safe_status_json.contains(secret));
         }
 
-        manager.logout(&storage, &database, &account.id).unwrap();
+        let logout = manager
+            .logout(&storage, &database, &account.id)
+            .await
+            .unwrap();
+        assert!(logout.revocation_confirmed);
+        assert_eq!(transport.revoke_calls.load(Ordering::SeqCst), 1);
         assert!(database.openai_accounts().unwrap().is_empty());
         assert!(storage.get_openai_session(&account.id).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn fresh_add_account_attempt_never_overwrites_an_existing_registration() {
+        let (encoding_key, jwks) = test_signing_key();
+        let host_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
+        let pending = manager()
+            .create_authentication_session("http://127.0.0.1:43210/auth/callback", &host_id)
+            .unwrap();
+        let id_token = sign_test_id_token(
+            &encoding_key,
+            &pending.nonce,
+            OPENAI_ISSUER,
+            serde_json::json!(TEST_CLIENT_ID),
+            Utc::now().timestamp() as u64 + 3600,
+        );
+        let transport = Arc::new(MockOAuthTransport {
+            jwks: Mutex::new(Some(jwks)),
+            id_token,
+            expected_verifier: Mutex::new(Some(pending.code_verifier.clone())),
+            exchanged: AtomicBool::new(false),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_error: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+            revoke_error: Mutex::new(None),
+        });
+        let manager =
+            OpenAIAuthManager::with_oauth_transport(test_provider(), transport.clone()).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("openai-add-account.sqlite")).unwrap();
+        let storage = MemorySessionStorage::default();
+        let existing_id = openai_account_id(TEST_CLIENT_ID, "profile-subject-42");
+        let existing = safe_account(&existing_id, "2026-10-13T10:00:00Z", false);
+        database.save_openai_account(&existing).unwrap();
+        storage
+            .save_openai_session(&existing_id, "existing-session-sentinel")
+            .unwrap();
+        let callback = format!(
+            "/auth/callback?code=authorization-code-for-test&state={}&client_id={TEST_CLIENT_ID}",
+            pending.state
+        );
+
+        let error = manager
+            .receive_authorization_callback(
+                &pending,
+                &callback,
+                "127.0.0.1:43210",
+                &storage,
+                &database,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "account_already_connected");
+        let saved_accounts = database.openai_accounts().unwrap();
+        assert_eq!(saved_accounts.len(), 1);
+        assert_eq!(saved_accounts[0].id, existing.id);
+        assert_eq!(saved_accounts[0].email, existing.email);
+        assert_eq!(
+            storage.get_openai_session(&existing_id).unwrap().as_deref(),
+            Some("existing-session-sentinel")
+        );
+        assert!(transport.exchanged.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn logout_clears_local_account_even_when_remote_revocation_cannot_be_confirmed() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("openai-revoke-failure.sqlite")).unwrap();
+        let storage = MemorySessionStorage::default();
+        let account = seed_refreshable_account(
+            &database,
+            &storage,
+            Utc::now() + ChronoDuration::hours(1),
+            None,
+        );
+        let (manager, transport) = refresh_manager(None);
+        *transport.revoke_error.lock().unwrap() = Some("network".into());
+
+        let result = manager
+            .logout(&storage, &database, &account.id)
+            .await
+            .unwrap();
+        assert!(!result.revocation_confirmed);
+        assert_eq!(transport.revoke_calls.load(Ordering::SeqCst), 3);
+        assert!(database.openai_accounts().unwrap().is_empty());
+        assert!(storage.get_openai_session(&account.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn discovery_revocation_endpoint_must_remain_on_openai_auth_origin() {
+        let mut discovery = test_discovery();
+        validate_discovery(&discovery).unwrap();
+        for endpoint in [
+            "http://auth.openai.com/revoke",
+            "https://attacker.example/revoke",
+            "https://auth.openai.com.evil.test/revoke",
+            "https://user@auth.openai.com/revoke",
+            "https://auth.openai.com/revoke?token=secret",
+        ] {
+            discovery.revocation_endpoint = Some(endpoint.into());
+            assert!(validate_discovery(&discovery).is_err());
+        }
     }
 
     #[test]

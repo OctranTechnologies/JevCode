@@ -774,6 +774,8 @@ pub struct OpenAiAccount {
 pub struct OpenAiChatGptAuthStatus {
     pub available: bool,
     pub connected_accounts: Vec<OpenAiAccount>,
+    pub selected_account_id: Option<String>,
+    pub selected_auth_method: Option<ProviderAuthMethod>,
     pub unavailable_reason: Option<String>,
 }
 
@@ -791,6 +793,15 @@ pub struct OpenAiAuthStatus {
 pub struct OpenAiAuthStart {
     pub attempt_id: String,
     pub expires_at: String,
+}
+
+/// Result of removing a local ChatGPT registration. No credential material is
+/// returned; false means the local session was cleared but remote revocation
+/// could not be confirmed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiLogoutResult {
+    pub revocation_confirmed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

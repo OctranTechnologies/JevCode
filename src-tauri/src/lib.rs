@@ -116,6 +116,8 @@ pub fn run() {
             commands::openai_auth_start,
             commands::openai_auth_cancel,
             commands::openai_auth_logout,
+            commands::openai_auth_select_account,
+            commands::openai_auth_use_api_key,
             commands::get_provider_account_info,
             commands::get_provider_available_models,
             commands::frontend_log,

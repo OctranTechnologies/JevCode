@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
 import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
@@ -67,7 +67,9 @@ interface Commands {
   openai_auth_refresh: { args: { accountId: string }; result: OpenAIAccount };
   openai_auth_start: { args: { accountId: string | null }; result: OpenAIAuthStart };
   openai_auth_cancel: { args: { attemptId: string }; result: null };
-  openai_auth_logout: { args: { accountId: string }; result: null };
+  openai_auth_logout: { args: { accountId: string }; result: OpenAILogoutResult };
+  openai_auth_select_account: { args: { accountId: string }; result: OpenAIAuthStatus };
+  openai_auth_use_api_key: { args: undefined; result: OpenAIAuthStatus };
   get_provider_account_info: { args: { providerId: string }; result: ProviderAccountInfo };
   get_provider_available_models: { args: { providerId: string }; result: Model[] };
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
@@ -86,7 +88,9 @@ const responses = {
   openai_auth_refresh: openAIAccountSchema,
   openai_auth_start: openAIAuthStartSchema,
   openai_auth_cancel: z.null(),
-  openai_auth_logout: z.null(),
+  openai_auth_logout: z.object({ revocationConfirmed: z.boolean() }).strict(),
+  openai_auth_select_account: openAIAuthStatusSchema,
+  openai_auth_use_api_key: openAIAuthStatusSchema,
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),
   frontend_log: z.null(),
 } satisfies { [K in keyof Commands]: z.ZodType<Commands[K]['result']> };
@@ -104,7 +108,7 @@ export async function command<K extends keyof Commands>(name: K, args: Commands[
 export async function loadBootstrap(): Promise<Bootstrap> {
   if (desktopAvailable) return command('bootstrap', undefined);
   // Browser preview displays configuration metadata only. Native actions stay disabled.
-  return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [{ method: 'api_key', label: 'OpenAI API key', available: true, unavailableReason: null }] }, chatgpt: { available: true, connectedAccounts: [], unavailableReason: null } } });
+  return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [{ method: 'api_key', label: 'OpenAI API key', available: true, unavailableReason: null }] }, chatgpt: { available: true, connectedAccounts: [], selectedAccountId: null, selectedAuthMethod: null, unavailableReason: null } } });
 }
 
 export interface ProviderAuthAdapter {
@@ -136,8 +140,18 @@ export function cancelOpenAIAuth(attemptId: string): Promise<null> {
   return command('openai_auth_cancel', { attemptId });
 }
 
-export function logoutOpenAIAuth(accountId: string): Promise<null> {
+export function logoutOpenAIAuth(accountId: string): Promise<OpenAILogoutResult> {
   return command('openai_auth_logout', { accountId });
+}
+
+/** Persist the selected safe OpenAI account; no credentials cross IPC. */
+export function selectOpenAIAccount(accountId: string): Promise<OpenAIAuthStatus> {
+  return command('openai_auth_select_account', { accountId });
+}
+
+/** Explicitly route OpenAI requests through an already connected API key. */
+export function selectOpenAIAPIKey(): Promise<OpenAIAuthStatus> {
+  return command('openai_auth_use_api_key', undefined);
 }
 
 /** Provider-neutral auth facade. Provider-specific protocol stays in Rust. */

@@ -99,16 +99,24 @@ fn catalog(state: &SharedState) -> AppResult<Vec<Provider>> {
                 true
             } else if provider.id == "openai" {
                 let oauth_accounts = state.database.openai_accounts()?;
-                if let Some(active) = oauth_accounts
-                    .into_iter()
-                    .max_by(|left, right| left.connected_at.cmp(&right.connected_at))
-                {
-                    active.connected
-                        && !active.requires_reconnect
-                        && active
-                            .granted_scopes
-                            .iter()
-                            .any(|scope| scope == "chatgpt.tokens.use.direct")
+                let selected_id = state.database.ensure_selected_openai_account()?;
+                let preference = state.database.openai_auth_preference()?;
+                let chatgpt_selected = preference
+                    == Some(crate::domain::ProviderAuthMethod::OpenAiChatGpt)
+                    || (preference.is_none() && selected_id.is_some());
+                if chatgpt_selected {
+                    let active = selected_id
+                        .and_then(|id| oauth_accounts.into_iter().find(|account| account.id == id));
+                    if let Some(active) = active {
+                        active.connected
+                            && !active.requires_reconnect
+                            && active
+                                .granted_scopes
+                                .iter()
+                                .any(|scope| scope == "chatgpt.tokens.use.direct")
+                    } else {
+                        false
+                    }
                 } else {
                     state.credentials.get("openai")?.is_some()
                 }
@@ -1863,6 +1871,11 @@ pub async fn connect_provider(
         available_methods: auth::available_methods(&provider.id),
     };
     state.database.save_provider_account(&account)?;
+    if provider.id == "openai" {
+        state
+            .database
+            .set_openai_auth_preference(crate::domain::ProviderAuthMethod::ApiKey)?;
+    }
     Ok(account)
 }
 
@@ -1957,13 +1970,37 @@ pub async fn openai_auth_refresh(
 }
 
 #[tauri::command]
-pub fn openai_auth_logout(account_id: String, state: State<'_, SharedState>) -> AppResult<()> {
+pub async fn openai_auth_logout(
+    account_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::domain::OpenAiLogoutResult> {
     let provider = state.config.provider("openai")?.clone();
-    crate::auth::openai::OpenAIAuthManager::new(provider)?.logout(
-        &state.credentials,
-        &state.database,
-        &account_id,
-    )
+    crate::auth::openai::OpenAIAuthManager::new(provider)?
+        .logout(&state.credentials, &state.database, &account_id)
+        .await
+}
+
+#[tauri::command]
+pub fn openai_auth_select_account(
+    account_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<OpenAiAuthStatus> {
+    state.database.select_openai_account(&account_id)?;
+    get_openai_auth_status(state)
+}
+
+#[tauri::command]
+pub fn openai_auth_use_api_key(state: State<'_, SharedState>) -> AppResult<OpenAiAuthStatus> {
+    if state.credentials.get("openai")?.is_none() {
+        return Err(AppError::new(
+            "credentials_required",
+            "Connect an OpenAI API key before selecting API key authentication.",
+        ));
+    }
+    state
+        .database
+        .set_openai_auth_preference(crate::domain::ProviderAuthMethod::ApiKey)?;
+    get_openai_auth_status(state)
 }
 
 const OPENAI_AUTH_TIMEOUT: Duration = Duration::from_secs(10 * 60);

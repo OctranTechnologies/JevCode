@@ -365,13 +365,19 @@ Authentication is intentionally separated by product entitlement:
   Access, refresh, and ID tokens are stored only in the OS credential manager
   under UUID-scoped entries in `dev.jevcode.desktop.openai`; account name,
   verified email, client ID, scopes, and timestamps are the only OAuth profile
-  data stored in SQLite. The React layer receives only safe account state. On
-  startup, bootstrap restores saved profiles and reports whether each access
-  token is valid or due for refresh. Before each OpenAI request, the native
-  adapter uses the most recently authorized ChatGPT session when one is saved;
-  otherwise it uses the API key only if the user connected one. OAuth errors do
-  not fall through to API-key billing. To deliberately switch to API-key billing,
-  disconnect ChatGPT OAuth first. It refreshes within
+  data stored in SQLite. Every OAuth registration is a distinct safe profile,
+  even when two registrations have the same verified email. Its stable local
+  profile ID (derived from the issued client ID and verified subject) scopes a
+  separate keychain item, so adding or reconnecting one account cannot overwrite
+  another account's credentials. The React layer receives only safe account
+  state, registration labels, the selected profile ID, and the selected auth
+  method. Selection and auth method persist across restarts; selecting an
+  account invalidates the prior account's cached model catalog. Before each
+  OpenAI request, the native adapter uses only the explicitly selected ChatGPT
+  profile or API-key method. Removing the last selected ChatGPT account leaves
+  ChatGPT selected and pauses requests until reconnect or an explicit switch to
+  an already connected API key. OAuth errors never fall through to API-key
+  billing. It refreshes within
   five minutes of expiry, respects OpenAI's `earliest_refresh_at` value, and
   serializes refreshes per account so only one request rotates tokens at a
   time. The documented form-encoded refresh grant uses that registration's
@@ -387,19 +393,28 @@ Authentication is intentionally separated by product entitlement:
   error clears the unusable credential and leaves a safe profile marked
   **Reconnect needed**. Network and service errors preserve the saved session
   and do not start a refresh retry loop. `openai_auth_status`,
-  `openai_auth_refresh` and `openai_auth_logout` expose safe metadata only.
-  Disconnect deletes the keychain item before removing its SQLite profile.
-  JevCode does not read Codex/ChatGPT credentials or browser cookies.
+  `openai_auth_refresh`, `openai_auth_select_account`,
+  `openai_auth_use_api_key` and `openai_auth_logout` expose safe metadata only.
+  Reconnect reuses that account's issued client ID, host ID and (only when the
+  matching saved session remains valid) its ID-token hint; it omits the
+  first-registration agent name. Adding an account always starts a fresh
+  dynamic-client OAuth attempt. Remove tries OpenAI's discovery-advertised
+  revocation endpoint with the account's refresh token, client ID, and
+  `refresh_token` hint. It retries temporary network/service failures with
+  bounded backoff, clears the local credential and profile either way, and
+  reports whether remote revocation was confirmed. JevCode does not read
+  Codex/ChatGPT credentials or browser cookies.
 - Settings → Providers → OpenAI presents ChatGPT OAuth and an API key as
   separate authentication methods. ChatGPT sign-in opens the system browser;
   the page shows the waiting, cancel, reconnect, denial, timeout, network and
   provider-outage states without exposing authorization material. Account
-  management displays only verified profile metadata. API keys can be tested,
-  replaced or disconnected independently of ChatGPT OAuth. When both methods
-  are saved, the UI states that ChatGPT OAuth is the active OpenAI request route;
-  a connected API key is never used as a silent fallback. Successful sign-in
-  refreshes the account-specific model picker, and cached catalog metadata is
-  restored on app restart.
+  management displays only verified profile metadata and a stable short
+  registration label for accounts sharing an email. Users can add, select,
+  reconnect, or remove accounts; each selection loads that account's available
+  models. API keys can be tested, replaced, disconnected, or explicitly selected
+  as the request route independently of ChatGPT OAuth. A connected API key is
+  never a silent fallback. Successful sign-in refreshes the selected account's
+  model picker, and safe profile/selection metadata is restored on app restart.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are supported. Google documents OAuth for Gemini with a
@@ -407,11 +422,24 @@ Authentication is intentionally separated by product entitlement:
   until JevCode has an app client configured.
 - OpenCode Zen and OpenCode Go use their respective API keys.
 
-The UI receives no secret on reads: account status, account info and available
-models are returned as non-secret types. Secrets are not serialized to SQLite,
-localStorage, JSON configuration, source code or logs. Frontend log commands
-accept only a small allowlist of fixed event names. Provider response bodies are
-never included in errors or logs. Connection failures map to stable categories:
+The UI receives no secret on reads: account status, account info, logout results
+and available models are returned as non-secret types. Tauri commands are
+explicitly allowlisted and include no command to read OAuth credentials; the
+renderer can only start/cancel auth, select a safe profile, request safe status,
+or request removal. Secrets are not serialized to SQLite, localStorage, JSON
+configuration, source code, diagnostics or logs. Frontend log commands accept
+only a small allowlist of fixed event names. Provider response bodies are never
+included in errors or logs, and OAuth authorization URLs are not logged. The
+loopback listener binds only to IPv4 `127.0.0.1`, accepts one correctly hosted
+callback with fresh one-time state, and shuts down on success, failure,
+cancellation or timeout. Discovery URLs are pinned to OpenAI's issuer, token,
+authorization and JWKS endpoints; revocation metadata is constrained to HTTPS
+on `auth.openai.com` with redirects disabled. ID tokens require supported
+asymmetric signatures, matching issuer/audience/authorized party, expiry,
+not-before, nonce, and a nonempty subject. Refresh and logout serialize per
+account to protect rotating refresh tokens. No crash-report upload service is
+configured; local diagnostics expose app/platform metadata only. Connection
+failures map to stable categories:
 invalid credential, expired authentication, quota exhausted, subscription
 unavailable, network error and provider outage.
 

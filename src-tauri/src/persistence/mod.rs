@@ -67,6 +67,8 @@ impl Database {
         Self::migrate_mcp(&connection)?;
         Self::migrate_openai_accounts(&connection)?;
         Self::migrate_openai_installation(&connection)?;
+        Self::migrate_openai_account_selection(&connection)?;
+        Self::migrate_openai_auth_preference(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -224,6 +226,28 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_openai_account_selection(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS openai_account_selection (
+                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                 account_id TEXT NOT NULL
+             );
+             PRAGMA user_version = 12;",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_openai_auth_preference(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS openai_auth_preference (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                method TEXT NOT NULL CHECK (method IN ('api_key', 'openai_chatgpt'))
+             );
+             PRAGMA user_version = 13;",
+        )?;
+        Ok(())
+    }
+
     /// Stable, non-secret identifier for this installation's OpenAI agent host.
     /// It is persisted locally because OpenAI requires the same value on later
     /// sign-ins from this host.
@@ -262,6 +286,134 @@ impl Database {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
+    pub fn selected_openai_account_id(&self) -> AppResult<Option<String>> {
+        let selected = self
+            .connection()?
+            .query_row(
+                "SELECT account_id FROM openai_account_selection WHERE singleton = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        selected
+            .map(|id| {
+                uuid::Uuid::parse_str(&id)
+                    .map(|id| id.to_string())
+                    .map_err(|_| {
+                        AppError::new(
+                            "persistence",
+                            "The saved OpenAI account selection is invalid.",
+                        )
+                    })
+            })
+            .transpose()
+    }
+
+    pub fn openai_auth_preference(&self) -> AppResult<Option<ProviderAuthMethod>> {
+        let method = self
+            .connection()?
+            .query_row(
+                "SELECT method FROM openai_auth_preference WHERE singleton = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        method
+            .map(|method| match method.as_str() {
+                "api_key" => Ok(ProviderAuthMethod::ApiKey),
+                "openai_chatgpt" => Ok(ProviderAuthMethod::OpenAiChatGpt),
+                _ => Err(AppError::new(
+                    "persistence",
+                    "The saved OpenAI authentication preference is invalid.",
+                )),
+            })
+            .transpose()
+    }
+
+    pub fn set_openai_auth_preference(&self, method: ProviderAuthMethod) -> AppResult<()> {
+        let method = match method {
+            ProviderAuthMethod::ApiKey => "api_key",
+            ProviderAuthMethod::OpenAiChatGpt => "openai_chatgpt",
+            ProviderAuthMethod::GoogleOAuth => {
+                return Err(AppError::new(
+                    "invalid_input",
+                    "Choose an available OpenAI authentication method.",
+                ));
+            }
+        };
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO openai_auth_preference(singleton, method) VALUES (1, ?1) ON CONFLICT(singleton) DO UPDATE SET method = excluded.method",
+            [method],
+        )?;
+        connection.execute(
+            "DELETE FROM model_catalogs WHERE provider_id = 'openai'",
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn ensure_selected_openai_account(&self) -> AppResult<Option<String>> {
+        let accounts = self.openai_accounts()?;
+        if accounts.is_empty() {
+            self.connection()?.execute(
+                "DELETE FROM openai_account_selection WHERE singleton = 1",
+                [],
+            )?;
+            return Ok(None);
+        }
+        if let Some(selected) = self.selected_openai_account_id()? {
+            if accounts.iter().any(|account| account.id == selected) {
+                return Ok(Some(selected));
+            }
+        }
+        let fallback = accounts
+            .iter()
+            .max_by(|left, right| left.connected_at.cmp(&right.connected_at))
+            .map(|account| account.id.as_str())
+            .ok_or_else(|| AppError::new("persistence", "No OpenAI account is available."))?;
+        self.select_openai_account(fallback)?;
+        Ok(Some(fallback.to_owned()))
+    }
+
+    pub fn select_openai_account_if_unset(&self, account_id: &str) -> AppResult<()> {
+        let selected = self.ensure_selected_openai_account()?;
+        if selected.is_none() {
+            self.select_openai_account(account_id)?;
+        }
+        Ok(())
+    }
+
+    pub fn select_openai_account(&self, account_id: &str) -> AppResult<()> {
+        let account_id = uuid::Uuid::parse_str(account_id)
+            .map_err(|_| AppError::new("invalid_input", "Choose a valid OpenAI account."))?
+            .to_string();
+        if !self
+            .openai_accounts()?
+            .iter()
+            .any(|account| account.id == account_id)
+        {
+            return Err(AppError::new(
+                "account_not_found",
+                "This OpenAI account is no longer saved.",
+            ));
+        }
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO openai_account_selection(singleton, account_id) VALUES (1, ?1) ON CONFLICT(singleton) DO UPDATE SET account_id = excluded.account_id",
+            [&account_id],
+        )?;
+        // The catalog belongs to the selected account. Never leave the prior
+        // account's models available while the new catalog is loading.
+        connection.execute(
+            "DELETE FROM model_catalogs WHERE provider_id = 'openai'",
+            [],
+        )?;
+        drop(connection);
+        self.set_openai_auth_preference(ProviderAuthMethod::OpenAiChatGpt)?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn save_openai_account(&self, account: &OpenAiAccount) -> AppResult<()> {
         self.connection()?.execute(
@@ -273,8 +425,26 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn delete_openai_account(&self, id: &str) -> AppResult<()> {
-        self.connection()?
-            .execute("DELETE FROM openai_accounts WHERE id = ?1", [id])?;
+        let id = uuid::Uuid::parse_str(id)
+            .map_err(|_| {
+                AppError::new("invalid_input", "The OpenAI account identifier is invalid.")
+            })?
+            .to_string();
+        {
+            let connection = self.connection()?;
+            connection.execute("DELETE FROM openai_accounts WHERE id = ?1", [&id])?;
+            connection.execute(
+                "DELETE FROM openai_account_selection WHERE singleton = 1 AND account_id = ?1",
+                [&id],
+            )?;
+            connection.execute(
+                "DELETE FROM model_catalogs WHERE provider_id = 'openai'",
+                [],
+            )?;
+        }
+        // Removing the active profile picks a safe local fallback without
+        // switching to a different credential type.
+        self.ensure_selected_openai_account()?;
         Ok(())
     }
 
@@ -894,6 +1064,90 @@ mod tests {
         for token_field in ["access_token", "refresh_token", "id_token"] {
             assert!(!account.contains_key(token_field));
         }
+    }
+
+    #[test]
+    fn openai_account_selection_survives_reopen_and_is_removed_with_its_catalog() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("openai-selection.sqlite");
+        let make_account = |id: String, opened: &str| OpenAiAccount {
+            id,
+            connected: true,
+            access_token_valid: true,
+            requires_reconnect: false,
+            display_name: None,
+            email: Some("same@example.test".into()),
+            organization: None,
+            client_id: Some("issued-client-id".into()),
+            granted_scopes: vec!["openid".into()],
+            connected_at: opened.into(),
+            expires_at: None,
+        };
+        let first = make_account(uuid::Uuid::new_v4().to_string(), "2026-10-12T10:00:00Z");
+        let second = make_account(uuid::Uuid::new_v4().to_string(), "2026-10-13T10:00:00Z");
+        let model: Model = serde_json::from_value(serde_json::json!({
+            "id": "account-model",
+            "provider": "openai",
+            "displayName": "Account model",
+            "capabilities": ["tools"],
+            "supportsTools": true,
+            "supportsVision": false,
+            "supportsReasoning": false,
+            "supportsStreaming": true,
+            "contextWindow": null,
+            "inputPrice": null,
+            "outputPrice": null,
+            "status": "available"
+        }))
+        .unwrap();
+        {
+            let database = Database::open(&path).unwrap();
+            database.save_openai_account(&first).unwrap();
+            database.save_openai_account(&second).unwrap();
+            database.select_openai_account(&first.id).unwrap();
+            database
+                .set_openai_auth_preference(ProviderAuthMethod::ApiKey)
+                .unwrap();
+            database.save_model_catalog("openai", &[model]).unwrap();
+        }
+
+        {
+            let database = Database::open(&path).unwrap();
+            assert_eq!(
+                database
+                    .ensure_selected_openai_account()
+                    .unwrap()
+                    .as_deref(),
+                Some(first.id.as_str())
+            );
+            assert_eq!(
+                database.openai_auth_preference().unwrap(),
+                Some(ProviderAuthMethod::ApiKey)
+            );
+            database.select_openai_account(&second.id).unwrap();
+            assert!(database.model_catalog("openai").unwrap().is_none());
+        }
+
+        let database = Database::open(&path).unwrap();
+        assert_eq!(
+            database
+                .ensure_selected_openai_account()
+                .unwrap()
+                .as_deref(),
+            Some(second.id.as_str())
+        );
+        assert_eq!(
+            database.openai_auth_preference().unwrap(),
+            Some(ProviderAuthMethod::OpenAiChatGpt)
+        );
+        database.delete_openai_account(&second.id).unwrap();
+        assert_eq!(
+            database
+                .ensure_selected_openai_account()
+                .unwrap()
+                .as_deref(),
+            Some(first.id.as_str())
+        );
     }
 
     #[test]
