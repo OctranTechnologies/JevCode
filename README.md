@@ -341,7 +341,10 @@ adapter. The current transports use bearer authorization for OpenAI and OpenCode
 Zen and Go model catalog URLs are taken from their official docs. Safe account
 metadata is stored in SQLite; credentials stay in the OS keychain under service
 `dev.jevcode.desktop` (OpenAI ChatGPT sessions use a separate namespaced
-keychain service and UUID-scoped entries).
+keychain service and UUID-scoped entries). Large OAuth sessions are split into
+1 KiB credential items to fit Windows Credential Manager limits; a small
+manifest switches to the new generation only after every chunk is written, and old single-item
+sessions remain readable for compatibility.
 
 Authentication is intentionally separated by product entitlement:
 
@@ -368,8 +371,10 @@ Authentication is intentionally separated by product entitlement:
   data stored in SQLite. Every OAuth registration is a distinct safe profile,
   even when two registrations have the same verified email. Its stable local
   profile ID (derived from the issued client ID and verified subject) scopes a
-  separate keychain item, so adding or reconnecting one account cannot overwrite
-  another account's credentials. The React layer receives only safe account
+  separate UUID-scoped OS credential records, so adding or reconnecting one
+  account cannot overwrite another account's credentials. The session record is
+  written in bounded chunks with a manifest pointer so a failed write preserves
+  the previous session. The React layer receives only safe account
   state, registration labels, the selected profile ID, and the selected auth
   method. Selection and auth method persist across restarts; selecting an
   account invalidates the prior account's cached model catalog. Before each
