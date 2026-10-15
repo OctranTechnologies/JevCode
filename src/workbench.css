@@ -120,8 +120,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; user-select: none !important; }
 
 .sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; min-height: 33px; margin: 0 2px 14px; }
-.sidebar-brand { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 0; color: inherit; font: inherit; font-size: 14px; font-weight: 680; letter-spacing: -.025em; text-align: left; background: transparent; border: 0; cursor: pointer; }
-.sidebar-brand:hover { color: var(--wb-ink); }
+.sidebar-brand { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 14px; font-weight: 680; letter-spacing: -.025em; }
 .sidebar-brand .brand-mark { width: 28px; height: 29px; font-size: 20px; }
 .quiet-icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 29px; min-height: 29px; padding: 5px; color: var(--wb-muted-strong); background: transparent; border: 1px solid transparent; border-radius: 6px; }
 .quiet-icon-button:hover { color: var(--wb-ink); background: var(--wb-surface); border-color: var(--wb-border); }
