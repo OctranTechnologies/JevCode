@@ -4,6 +4,7 @@ import {
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
+import { MarkdownMessage } from './MarkdownMessage';
 import type { AgentSession, AgentMessage, PermissionResolution, SessionChanges } from '../../types/domain';
 
 const suggestions = [
@@ -71,7 +72,7 @@ export function Conversation({
             <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
           </div>
         ))}
-      {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><div className="agent-prose">{streamingText}</div></div></article>}
+      {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><MarkdownMessage className="agent-prose" content={streamingText} /></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
       {session?.status === 'completed' && !demo && review?.files.length ? <section className="task-change-summary" aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
       <div ref={end} />
@@ -90,14 +91,14 @@ function TimelineMessage({ message, completedCalls, toolOutput, onReviewFile }: 
   }
 
   if (message.role === 'user') return <article className="timeline-user">
-    <div className="timeline-user-mark"><UserRound size={14} /></div><div className="timeline-user-content"><div className="timeline-meta"><strong>You</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div><p>{message.content}</p></div>
+    <div className="timeline-user-mark"><UserRound size={14} /></div><div className="timeline-user-content"><div className="timeline-meta"><strong>You</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div><MarkdownMessage content={message.content} /></div>
   </article>;
 
   const hasCalls = message.toolCalls.length > 0;
   return <article className="timeline-agent">
     <div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content">
       <div className="timeline-meta"><strong>JevCode</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>{hasCalls && <span className="activity-label"><CircleDot size={11} />Activity</span>}</div>
-      {message.content && <div className="agent-prose">{message.content}</div>}
+      {message.content && <MarkdownMessage className="agent-prose" content={message.content} />}
       {hasCalls && <div className="activity-list">{message.toolCalls.map(call => {
         const done = completedCalls.has(call.id);
         const output = call.name === 'run_command' ? toolOutput?.[call.id] : undefined;

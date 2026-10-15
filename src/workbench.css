@@ -228,10 +228,33 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .timeline-meta { display: flex; align-items: center; gap: 8px; min-height: 16px; color: var(--wb-muted); font-size: 10px; }
 .timeline-meta > strong { color: var(--wb-ink); font-size: 10px; font-weight: 630; }
 .timeline-meta time { color: var(--wb-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
-.timeline-user-content p { margin: 6px 0 0; color: var(--wb-ink); font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timeline-user-content .message-markdown { margin-top: 6px; color: var(--wb-ink); font-size: 13px; line-height: 1.65; }
 .timeline-agent { margin-top: 3px; }
 .timeline-agent-content { padding: 2px 0 0; }
-.agent-prose { max-width: 78ch; margin-top: 6px; color: var(--wb-ink); font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-prose { max-width: 78ch; margin-top: 6px; color: var(--wb-ink); font-size: 13px; line-height: 1.75; }
+.message-markdown { min-width: 0; overflow-wrap: anywhere; }
+.message-markdown > :first-child { margin-top: 0; }
+.message-markdown > :last-child { margin-bottom: 0; }
+.message-markdown p { margin: 0 0 10px; }
+.message-markdown h1, .message-markdown h2, .message-markdown h3, .message-markdown h4 { margin: 16px 0 7px; color: var(--wb-ink); font-weight: 630; line-height: 1.35; }
+.message-markdown h1 { font-size: 1.35em; }
+.message-markdown h2 { font-size: 1.2em; }
+.message-markdown h3, .message-markdown h4 { font-size: 1.05em; }
+.message-markdown ul, .message-markdown ol { margin: 7px 0 12px; padding-left: 22px; }
+.message-markdown li { padding-left: 2px; }
+.message-markdown li + li { margin-top: 3px; }
+.message-markdown li::marker { color: var(--wb-muted); }
+.message-markdown blockquote { margin: 11px 0; padding: 1px 0 1px 12px; color: var(--wb-muted-strong); border-left: 1px solid var(--wb-border-strong); }
+.message-markdown blockquote > :last-child { margin-bottom: 0; }
+.message-markdown a { color: var(--wb-accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.message-markdown :not(pre) > code { padding: 2px 4px; color: var(--wb-ink); font: .9em ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 4px; }
+.message-markdown pre { max-width: 100%; margin: 10px 0 12px; padding: 11px 12px; overflow: auto; color: var(--wb-ink); font: 11px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 6px; }
+.message-markdown pre code { padding: 0; color: inherit; font: inherit; background: transparent; border: 0; }
+.message-markdown table { display: block; max-width: 100%; margin: 10px 0 12px; overflow-x: auto; border-collapse: collapse; font-size: .94em; }
+.message-markdown th, .message-markdown td { min-width: 90px; padding: 6px 9px; text-align: left; border: 1px solid var(--wb-border); }
+.message-markdown th { color: var(--wb-ink); font-weight: 620; background: var(--wb-surface-quiet); }
+.message-markdown hr { height: 1px; margin: 14px 0; background: var(--wb-border); border: 0; }
+.message-markdown input[type='checkbox'] { margin: 0 5px 0 0; accent-color: var(--wb-accent); }
 .activity-label { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--wb-muted); font-size: 10px; }
 .activity-list { display: grid; gap: 4px; margin-top: 10px; }
 .activity-call { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 28px; padding: 4px 8px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 6px; }
@@ -444,7 +467,6 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .agent-activity-summary time { margin-left: auto; font-size: 9px; }
 .streaming-label { display: inline-flex; align-items: center; gap: 5px; color: var(--wb-muted); font-size: 9px; }
 .streaming-label i { width: 6px; height: 6px; background: var(--wb-accent); border-radius: 50%; animation: task-pulse 1.2s infinite; }
-.timeline-agent.is-streaming .agent-prose { white-space: pre-wrap; }
 .task-demo-tag { margin-left: auto; padding: 2px 5px; color: var(--wb-muted); font-size: 8px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 4px; }
 .task-detail-panel h3 { margin: 11px 0 15px; color: var(--wb-ink); font-size: 13px; font-weight: 610; line-height: 1.45; }
 .task-detail-field { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--wb-border); }
