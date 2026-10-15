@@ -63,7 +63,9 @@ export function WorkspaceSidebar({
   };
   return <aside className={`workbench-sidebar${collapsed ? ' is-collapsed' : ''}`} aria-label="Workspace navigation">
     <div className="sidebar-brand-row">
-      <div className="sidebar-brand"><Brand /><span>JevCode</span></div>
+      <button className="sidebar-brand" type="button" onClick={() => onView('overview')} title="Go to the project overview" aria-label="JevCode root page">
+        <Brand /><span>JevCode</span>
+      </button>
       <button className="quiet-icon-button collapse-sidebar" onClick={onCollapse} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
         <ChevronsLeft size={17} />
       </button>
