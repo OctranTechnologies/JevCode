@@ -30,6 +30,7 @@ pub fn record(
     let record = UsageRecord {
         id: id(),
         session_id: session.id.clone(),
+        session_title: session.title.clone(),
         project_id: session.project_id.clone(),
         provider_id: session.provider_id.clone(),
         model_id: session.model_id.clone(),

@@ -645,6 +645,9 @@ pub struct PermissionRule {
 pub struct UsageRecord {
     pub id: String,
     pub session_id: String,
+    /// Snapshot title keeps request history meaningful after a task is removed.
+    #[serde(default)]
+    pub session_title: String,
     #[serde(default)]
     pub project_id: String,
     pub provider_id: String,

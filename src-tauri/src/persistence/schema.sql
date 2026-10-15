@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS usage (
     id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id),
+    -- Usage history is retained independently from the lifetime of its task.
+    session_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     data TEXT NOT NULL
 );

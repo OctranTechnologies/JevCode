@@ -244,6 +244,7 @@ export interface TerminalResult { output: string; exitCode: number | null; timed
 export interface UsageRecord {
   id: string;
   sessionId: string;
+  sessionTitle: string;
   projectId: string;
   providerId: string;
   modelId: string;

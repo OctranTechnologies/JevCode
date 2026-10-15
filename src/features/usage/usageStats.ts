@@ -149,6 +149,6 @@ export function buildUsageDashboard(
     byProvider,
     byModel,
     byProject,
-    records: [...period].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    records: [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   };
 }
