@@ -150,6 +150,7 @@ pub struct StreamAccumulator {
     anthropic_arguments: BTreeMap<u64, String>,
     visible_text: String,
     gemini_parts: Vec<Value>,
+    response_output_items: BTreeMap<u64, Value>,
     final_response: Option<Value>,
     response_failure: Option<String>,
     incomplete_reason: Option<String>,
@@ -202,6 +203,7 @@ impl StreamAccumulator {
             anthropic_arguments: BTreeMap::new(),
             visible_text: String::new(),
             gemini_parts: Vec::new(),
+            response_output_items: BTreeMap::new(),
             final_response: None,
             response_failure: None,
             incomplete_reason: None,
@@ -249,11 +251,19 @@ impl StreamAccumulator {
             }
             ProviderProtocol::OpenAiResponses => {
                 if value["type"] == "response.completed" {
-                    self.final_response = value.get("response").cloned();
-                } else if value["type"] == "response.failed" {
+                    let response = value.get("response").cloned();
+                    self.response_failure = response
+                        .as_ref()
+                        .and_then(|response| response["error"]["code"].as_str())
+                        .filter(|code| code.len() <= 128)
+                        .map(str::to_owned)
+                        .or(self.response_failure.take());
+                    self.final_response = response;
+                } else if value["type"] == "response.failed" || value["type"] == "error" {
                     self.response_failure = value["response"]["error"]["code"]
                         .as_str()
                         .or_else(|| value["error"]["code"].as_str())
+                        .or_else(|| value["code"].as_str())
                         .filter(|code| code.len() <= 128)
                         .map(str::to_owned);
                 } else if value["type"] == "response.incomplete" {
@@ -261,6 +271,18 @@ impl StreamAccumulator {
                         .as_str()
                         .filter(|reason| reason.len() <= 128)
                         .map(str::to_owned);
+                }
+                if value["type"] == "response.output_item.done" {
+                    if let (Some(index), Some(item)) = (
+                        value["output_index"].as_u64(),
+                        value.get("item").filter(|item| item.is_object()),
+                    ) {
+                        // Keep only user-visible messages and actionable calls;
+                        // reasoning items must never enter retained tool state.
+                        if has_visible_response_output(std::slice::from_ref(item)) {
+                            self.response_output_items.insert(index, item.clone());
+                        }
+                    }
                 }
             }
             ProviderProtocol::Anthropic => match value["type"].as_str().unwrap_or_default() {
@@ -346,9 +368,29 @@ impl StreamAccumulator {
                 if let Some(reason) = self.incomplete_reason.as_deref() {
                     return Err(response_stream_error(self.chatgpt_plan, None, Some(reason)));
                 }
-                let response = self
+                let mut response = self
                     .final_response
                     .ok_or_else(|| response_stream_error(self.chatgpt_plan, None, None))?;
+                let output = response["output"].as_array().cloned().unwrap_or_default();
+                if !has_visible_response_output(&output) {
+                    let mut recovered: Vec<Value> =
+                        self.response_output_items.into_values().collect();
+                    if !has_visible_response_output(&recovered) && !self.visible_text.is_empty() {
+                        recovered.push(json!({
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": self.visible_text}]
+                        }));
+                    }
+                    if has_visible_response_output(&recovered) {
+                        response["output"] = json!(recovered);
+                    } else if self.chatgpt_plan {
+                        return Err(AppError::new(
+                            "openai_empty_response",
+                            "OpenAI completed this ChatGPT response without visible text or a supported tool call. Refresh the available models and retry, or choose another model.",
+                        ));
+                    }
+                }
                 decode(&self.protocol, response)
             }
             ProviderProtocol::OpenAiChat => {
@@ -393,6 +435,21 @@ impl StreamAccumulator {
             )),
         }
     }
+}
+
+fn has_visible_response_output(output: &[Value]) -> bool {
+    output.iter().any(|item| {
+        item["type"] == "function_call"
+            || (item["type"] == "message"
+                && item["content"].as_array().is_some_and(|content| {
+                    content.iter().any(|part| {
+                        part["text"].as_str().is_some_and(|text| !text.is_empty())
+                            || part["refusal"]
+                                .as_str()
+                                .is_some_and(|refusal| !refusal.is_empty())
+                    })
+                }))
+    })
 }
 
 fn encode_inner(
@@ -1046,6 +1103,100 @@ mod tests {
             incomplete.finish().unwrap_err().code,
             "openai_response_incomplete"
         );
+    }
+
+    #[test]
+    fn responses_stream_recovers_final_output_items_when_completion_has_empty_output() {
+        let mut stream = StreamAccumulator::new(ProviderProtocol::OpenAiResponses);
+        stream.push(&json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "id": "rs_123",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "private reasoning"}]
+            }
+        }));
+        stream.push(&json!({
+            "type": "response.output_item.done",
+            "output_index": 1,
+            "item": {
+                "id": "msg_123",
+                "status": "completed",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "print('hello world')"}]
+            }
+        }));
+        stream.push(&json!({
+            "type": "response.output_item.done",
+            "output_index": 2,
+            "item": {
+                "id": "fc_123",
+                "status": "completed",
+                "type": "function_call",
+                "call_id": "call_123",
+                "name": "create_file",
+                "arguments": "{\"path\":\"hello.py\",\"content\":\"print('hello world')\"}"
+            }
+        }));
+        stream.push(&json!({
+            "type": "response.completed",
+            "response": {"output": [], "usage": {"input_tokens": 3, "output_tokens": 4}}
+        }));
+
+        let response = stream.finish().unwrap();
+        assert_eq!(response.content, "print('hello world')");
+        assert_eq!(response.tool_calls[0].id, "call_123");
+        assert_eq!(response.tool_calls[0].name, "create_file");
+        assert_eq!(response.input_tokens, 3);
+        assert_eq!(response.output_tokens, 4);
+        assert!(!response
+            .provider_data
+            .unwrap_or_default()
+            .to_string()
+            .contains("private reasoning"));
+    }
+
+    #[test]
+    fn responses_stream_recovers_visible_deltas_when_completion_has_no_output_items() {
+        let mut stream = StreamAccumulator::new(ProviderProtocol::OpenAiResponses);
+        stream.push(&json!({
+            "type": "response.output_text.delta",
+            "delta": "The response text arrived in the stream."
+        }));
+        stream.push(&json!({"type":"response.completed","response":{"output":[]}}));
+
+        assert_eq!(
+            stream.finish().unwrap().content,
+            "The response text arrived in the stream."
+        );
+    }
+
+    #[test]
+    fn chatgpt_plan_stream_maps_top_level_error_events() {
+        let mut stream =
+            StreamAccumulator::new_with_chatgpt_plan(ProviderProtocol::OpenAiResponses, true);
+        stream.push(&json!({
+            "type": "error",
+            "code": "subscription_sharing_usage_limit_exceeded",
+            "message": "This provider message must not be surfaced."
+        }));
+
+        let error = stream.finish().unwrap_err();
+        assert_eq!(error.code, "chatgpt_plan_usage_limit");
+        assert!(!error.message.contains("provider message"));
+    }
+
+    #[test]
+    fn chatgpt_plan_empty_completion_has_an_actionable_error() {
+        let mut stream =
+            StreamAccumulator::new_with_chatgpt_plan(ProviderProtocol::OpenAiResponses, true);
+        stream.push(&json!({"type":"response.completed","response":{"output":[]}}));
+
+        let error = stream.finish().unwrap_err();
+        assert_eq!(error.code, "openai_empty_response");
+        assert!(error.message.contains("Refresh the available models"));
     }
 
     #[test]

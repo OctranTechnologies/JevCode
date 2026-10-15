@@ -395,12 +395,14 @@ Authentication is intentionally separated by product entitlement:
   the official OpenAI Responses API host. ChatGPT-plan requests always use
   `store: false` and `stream: true`, send complete local history through
   `input`, and place JevCode function tools in the documented namespace form.
-  The stream must finish with `response.completed`; rate/usage-limit, unavailable,
-  unsupported-capability and incomplete-response errors remain distinct and do
-  not trigger a billing-mode switch. A terminal revoked or expired refresh
-  error clears the unusable credential and leaves a safe profile marked
-  **Reconnect needed**. Network and service errors preserve the saved session
-  and do not start a refresh retry loop. `openai_auth_status`,
+  The stream must finish with `response.completed`; JevCode also retains final
+  `response.output_item.done` items and handles top-level stream error events so
+  partial transports are recovered before an empty-response error is reported.
+  Rate/usage-limit, unavailable, unsupported-capability and incomplete-response
+  errors remain distinct and do not trigger a billing-mode switch. A terminal
+  revoked or expired refresh error clears the unusable credential and leaves a
+  safe profile marked **Reconnect needed**. Network and service errors preserve
+  the saved session and do not start a refresh retry loop. `openai_auth_status`,
   `openai_auth_refresh`, `openai_auth_select_account`,
   `openai_auth_use_api_key` and `openai_auth_logout` expose safe metadata only.
   Reconnect reuses that account's issued client ID, host ID and (only when the
