@@ -84,7 +84,10 @@ pub fn encode_chatgpt_streaming(request: &ProviderRequest<'_>) -> AppResult<(Str
                     "name": tool.name,
                     "description": tool.description,
                     "parameters": tool.input_schema,
-                    "strict": true
+                    // Native tool schemas preserve omitted optional arguments.
+                    // Strict mode requires every property to be required and
+                    // nullable when optional, so these schemas must opt out.
+                    "strict": false
                 })
             })
             .collect();
@@ -428,7 +431,7 @@ fn encode_inner(
                     input.push(json!({"role":role(&message.role),"content":message.content}));
                 }
             }
-            let definitions: Vec<_> = tools.iter().map(|tool| json!({"type":"function","name":tool.name,"description":tool.description,"parameters":tool.input_schema,"strict":true})).collect();
+            let definitions: Vec<_> = tools.iter().map(|tool| json!({"type":"function","name":tool.name,"description":tool.description,"parameters":tool.input_schema,"strict":false})).collect();
             Ok((
                 "responses".into(),
                 json!({"model":model,"instructions":system(request.messages),"input":input,"tools":definitions,"store":false}),
@@ -942,8 +945,43 @@ mod tests {
         assert_eq!(payload["tools"][0]["name"], "jevcode_workspace");
         assert_eq!(payload["tools"][0]["tools"][0]["type"], "function");
         assert_eq!(payload["tools"][0]["tools"][0]["name"], tools[0].name);
+        assert!(payload["tools"][0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| tool["strict"] == false));
         assert!(payload.get("max_output_tokens").is_none());
         assert!(payload.get("previous_response_id").is_none());
+    }
+
+    #[test]
+    fn openai_responses_tool_schemas_preserve_optional_properties_without_strict_mode() {
+        let protocol = ProviderProtocol::OpenAiResponses;
+        let messages = [AgentMessage::text(MessageRole::User, "List this directory")];
+        let tools = crate::tools::definitions();
+        let (_, payload) = encode(
+            &protocol,
+            &ProviderRequest {
+                model_id: "account-provided-slug",
+                protocol: &protocol,
+                messages: &messages,
+                tools: &tools,
+            },
+        )
+        .unwrap();
+
+        let list_directory = payload["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "list_directory")
+            .unwrap();
+        assert_eq!(list_directory["strict"], false);
+        assert_eq!(list_directory["parameters"]["required"], json!([]));
+        assert_eq!(
+            list_directory["parameters"]["properties"]["path"]["type"],
+            "string"
+        );
     }
 
     #[test]

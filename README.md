@@ -379,7 +379,10 @@ Authentication is intentionally separated by product entitlement:
   method. Selection and auth method persist across restarts; selecting an
   account invalidates the prior account's cached model catalog. Before each
   OpenAI request, the native adapter uses only the explicitly selected ChatGPT
-  profile or API-key method. Removing the last selected ChatGPT account leaves
+  profile or API-key method. OpenAI function tools use non-strict schemas
+  because built-in tools have optional arguments; every returned call is still
+  validated against the Rust tool schema and permission policy before execution.
+  Removing the last selected ChatGPT account leaves
   ChatGPT selected and pauses requests until reconnect or an explicit switch to
   an already connected API key. OAuth errors never fall through to API-key
   billing. It refreshes within
