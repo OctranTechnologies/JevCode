@@ -62,7 +62,15 @@ export function Conversation({
       </div>}
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
       {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span><span className="working-dots"><i /><i /><i /></span></div>}
-      {session?.activityEvents.filter(event => ['plan', 'progress', 'file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted'].includes(event.kind)).map(event => <div className="agent-activity-summary" key={event.id}><CircleDot size={12} /><span>{event.summary}</span><time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time></div>)}
+      {session?.activityEvents
+        .filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted'].includes(event.kind))
+        .map(event => (
+          <div className="agent-activity-summary" key={event.id}>
+            <CircleDot size={12} />
+            <span>{event.summary}</span>
+            <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
+          </div>
+        ))}
       {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><div className="agent-prose">{streamingText}</div></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
       {session?.status === 'completed' && !demo && review?.files.length ? <section className="task-change-summary" aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
