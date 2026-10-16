@@ -1,66 +1,118 @@
-# JevCode
+<div align="center">
+  <img src="src-tauri/icons/icon.svg" alt="JevCode orange five-pronged asterisk" width="96" height="96" />
+  <h1>JevCode</h1>
+  <p><strong>A local-first desktop workspace for AI-assisted coding.</strong></p>
+  <p>Bring an agent into your repository, follow its work, review every change, and keep control of your code.</p>
+  <p>
+    <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white" />
+    <img alt="React 19" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
+    <img alt="TypeScript 5.9" src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white" />
+    <img alt="Rust stable" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white" />
+    <img alt="MIT license" src="https://img.shields.io/github/license/OctranTechnologies/JevCode?color=2E8B57" />
+    <img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-59636e" />
+  </p>
+  <p>
+    <a href="#features">Features</a> ·
+    <a href="#installation">Installation</a> ·
+    <a href="#usage">Usage</a> ·
+    <a href="#screenshots">Screenshots</a> ·
+    <a href="#architecture">Architecture</a> ·
+    <a href="#security-audit-and-known-limits">Security</a>
+  </p>
+</div>
 
-A local desktop AI coding agent built with Tauri 2, React, TypeScript, Vite,
-Tailwind CSS and Rust. Open a project, choose a provider and model, run a task,
-review tool activity and diffs, approve sensitive actions, and resume the last
-task when the desktop starts again.
+JevCode is a local desktop AI coding agent built with Tauri 2, React, TypeScript,
+Vite, Tailwind CSS, and Rust. The interface is organized around projects and
+tasks: the agent works through a visible timeline, sensitive actions require
+permission, and file edits stay reviewable.
 
-The original repository contained only this README and a license. No incumbent
-application or architecture was replaced. The initial architecture scope puts
-orchestration, credentials, provider requests and local services in Rust, with
-React responsible for interaction and presentation.
+## Features
 
-## Development
+- **Project workspaces:** open folders and Git repositories, browse ignored-aware
+  file trees, inspect branches and changes, and optionally isolate tasks in Git
+  worktrees.
+- **Provider choice:** use OpenAI, Anthropic, Google Gemini, OpenCode Zen, or
+  OpenCode Go through a shared model and agent interface. OpenAI supports API
+  keys and its supported ChatGPT sign-in flow; other methods depend on provider
+  support and account eligibility.
+- **Visible agent activity:** follow progress, tool calls, command output, approval
+  requests, file edits, and test results in the task timeline.
+- **Permission controls:** choose a conservative access mode and approve sensitive
+  reads, edits, commands, network access, and dangerous actions.
+- **Change review:** inspect diffs, distinguish agent edits from pre-existing work,
+  and accept, revert, open, copy, or stage supported file changes.
+- **Persistent tasks:** search, resume, archive, duplicate, and fork sessions;
+  task history and usage stay available locally across launches.
+- **Extensible tools:** configure MCP servers per user or project, discover tools,
+  and review their permissions before use.
+- **Privacy-conscious storage:** provider credentials use the OS credential store;
+  projects, sessions, settings, and local usage records are stored on device.
 
-Prerequisites: Node.js 22+, a current stable Rust toolchain, Git, and the
-[Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/).
-On Windows these include Visual Studio C++ Build Tools and WebView2. Linux needs
-the documented WebKitGTK/system packages; its credential store uses Secret Service.
+## Installation
+
+JevCode is a native desktop application. To build and run this checkout, install
+Node.js 22 or newer, a stable Rust toolchain, Git, and the platform packages listed
+in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Windows
+also needs Visual Studio C++ Build Tools and WebView2; Linux needs the documented
+WebKitGTK and system packages.
 
 ```sh
 npm ci
 npm run tauri dev
 ```
 
-`tauri dev` starts Vite on `127.0.0.1:1420`, compiles Rust, and opens the desktop
-window. In a debug build the source repository opens automatically on the first
-launch. Release builds start with an empty workspace. Use **Open folder** to add
-other projects. If port 1420 is occupied, close the existing JevCode dev server;
-Vite uses a fixed port so the desktop window cannot silently load the wrong app.
+This starts Vite on `127.0.0.1:1420`, compiles the Rust backend, and opens the
+desktop window. Port 1420 is fixed so the app cannot silently load the wrong dev
+server; close another JevCode dev process if the port is occupied. To build a
+platform package locally, run `npm run tauri build`.
 
-**Local preview** runs a deterministic adapter with real project tools and no
-remote model. Try **Explore this project**, **Explain the architecture**, or
-**Review Git status**. Git status asks for one-time approval by default. Preview
-responses are labeled and report zero LLM tokens.
+For a UI-only browser preview, run `npm run dev`. It shows clearly labeled sample
+project, task, activity, diff, and terminal data; sample actions do not run, and
+project access, credentials, and agent requests require the desktop app.
 
-For a remote model, open **Providers**, save an API key to the OS keychain, then
-start a new session and select that provider and model. A saved key indicates
-presence; account access and model availability are checked on the first request.
-Keys are never stored in SQLite, config files, localStorage or logs. The typed
-password field holds a key briefly while saving it; Rust alone retrieves stored
-credentials. Existing conversations keep their original provider and model.
+## Usage
 
-`npm run dev` opens the UI in a browser for layout work. Browser mode shows a
-clearly labeled sample project, task, activity, diff, and terminal output so the
-workspace can be reviewed without connecting a provider. Sample actions are not
-executed, and local-project, credential, and send controls require the desktop app.
+1. Open a folder or Git repository from the sidebar, or create a project.
+2. Use **Local preview** to explore with the deterministic local adapter, or open
+   **Settings → Providers** to connect a supported provider.
+3. Start a task, select a model, describe the change, and choose Agent or Plan mode.
+4. Review permission prompts before sensitive actions. Watch tool activity and
+   progress in the conversation timeline.
+5. Inspect the **Changes** panel when the task finishes. Review or revert edits,
+   then commit them from the repository when ready.
+
+The first debug launch opens the JevCode source repository automatically; use
+**Open folder** to switch to another project. API keys are saved to the OS
+credential store and are not written to SQLite, configuration files, localStorage,
+or application logs. A saved key is checked for access when used.
 
 ## Screenshots
 
-![Approved JevCode desktop workspace design reference](docs/desktop-mockup.png)
+<p align="center">
+  <img src="docs/mockups/nexus-inspired/01-active-task.png" alt="JevCode active task timeline with tool activity, an approval prompt, and a file changes panel" width="960" />
+  <br /><sub>Active coding task</sub>
+</p>
 
-This is the approved design reference, not a capture of a running build. A native
-runtime screenshot should be added after visual review on a supported capture host.
+<table>
+  <tr>
+    <td align="center"><img src="docs/mockups/nexus-inspired/02-project-overview.png" alt="JevCode project overview with Git state, recent tasks, and file explorer" width="100%" /><br /><sub>Project overview</sub></td>
+    <td align="center"><img src="docs/mockups/nexus-inspired/03-accounts-providers.png" alt="JevCode provider and account settings" width="100%" /><br /><sub>Provider accounts</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/mockups/nexus-inspired/04-local-usage.png" alt="JevCode local usage dashboard" width="100%" /><br /><sub>Local usage dashboard</sub></td>
+    <td align="center"><strong>Design preview</strong><br />The images are product mockups, not captures of a running desktop build. Browser preview data is illustrative.</td>
+  </tr>
+</table>
 
 ## Workspace interface
 
 The main window uses a project and task sidebar, an agent activity timeline, a
 task composer, and an optional right inspector for files, diffs, terminal activity,
 context, and task details. The sidebar and inspector resize from their dividers;
-the sidebar collapses to an icon rail. On narrower windows, the inspector and
-sidebar become drawers so the conversation stays usable. The layout has been
-reviewed at 1280×850, 900×640, and 618×708 browser viewports. A native desktop
-screenshot and live resizing pass still need a supported capture surface.
+the sidebar collapses to an icon rail and remembers that preference across app
+launches. On narrower windows, the inspector and sidebar become temporary drawers
+so the conversation stays usable. The layout has been reviewed at 1280×850,
+900×640, and 618×708 browser viewports.
 
 Use **Ctrl/Cmd+N** for a new task, **Ctrl/Cmd+O** to open a project,
 **Ctrl/Cmd+K** for the command palette, **Ctrl/Cmd+Shift+M** for model selection,
@@ -100,7 +152,7 @@ is not registered as an agent tool. Agent tools continue to use the backend's
 separate permission policy and scoped operations. Git branch switching only accepts
 an existing local branch name and uses Git arguments without shell interpolation.
 
-## Module boundaries
+## Architecture
 
 | Responsibility | Location | Boundary |
 | --- | --- | --- |
@@ -644,8 +696,6 @@ Rust tests cover persistence, path scoping, permission enforcement, real preview
 tool runs, provider normalization and the shared TypeScript fixture. Frontend tests
 cover IPC schemas, stale-event protection, error redaction, keyboard shortcuts and
 session restoration. There is not yet a separate packaged-app integration suite.
-The approved design reference is in `docs/desktop-mockup.png`; it is not shipped as
-interface pixels.
 
 ### Release builds and updates
 
