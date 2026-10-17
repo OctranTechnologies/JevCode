@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater';
 import { createUpdateService, type UpdaterPort } from '../src/services/updater';
+import { defaultUpdatePreferences, type UpdatePreferences } from '../src/types/domain';
+
+function preferences(overrides: Partial<UpdatePreferences> = {}): UpdatePreferences {
+  return { ...defaultUpdatePreferences, ...overrides };
+}
 
 function makeUpdate(overrides: Partial<Update> = {}): Update {
   return {
@@ -80,6 +85,7 @@ describe('UpdateService', () => {
     expect(phases).toContain('ready');
     expect(result.phase).toBe('ready');
     expect(result.downloadedBytes).toBe(10);
+    expect(service.getPreferences().downloadRequestedVersion).toBe('0.2.0');
     expect(update.install).not.toHaveBeenCalled();
   });
 
@@ -229,7 +235,7 @@ describe('UpdateService', () => {
     vi.useFakeTimers();
     const { port } = createPort();
     const service = createUpdateService({ enabled: () => true, port, initialCheckDelayMs: 50, checkIntervalMs: 100 });
-    service.setPreferences({ automaticallyCheck: false, automaticallyDownload: false, channel: 'stable' });
+    service.setPreferences(preferences({ automaticallyCheck: false }));
 
     const stop = service.startAutomaticChecks();
     await vi.advanceTimersByTimeAsync(500);
@@ -241,7 +247,7 @@ describe('UpdateService', () => {
   it('downloads an update in the background when automatic download is enabled', async () => {
     const { port, update } = createPort();
     const service = createUpdateService({ enabled: () => true, port });
-    service.setPreferences({ automaticallyCheck: true, automaticallyDownload: true, channel: 'stable' });
+    service.setPreferences(preferences({ automaticallyDownload: true }));
 
     const result = await service.checkForUpdate();
 
@@ -324,5 +330,94 @@ describe('UpdateService', () => {
     expect(result).toMatchObject({ phase: 'error', error: 'Couldn’t connect to update server. Check your connection and try again.' });
     expect(() => service.getAvailableVersion()).not.toThrow();
     expect(service.getUpdateMetadata()).toBeNull();
+  });
+
+  it('persists Remind Me Later and resurfaces the update after 24 hours', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-17T12:00:00Z'));
+    let saved = defaultUpdatePreferences;
+    const persistPreferences = vi.fn(async (next: UpdatePreferences) => {
+      saved = next;
+      return saved;
+    });
+    const { port } = createPort();
+    const service = createUpdateService({ enabled: () => true, port, persistPreferences });
+    await service.checkForUpdate();
+
+    expect(service.shouldShowNotice()).toBe(true);
+    expect(await service.remindMeLater()).toBe(true);
+    expect(saved).toMatchObject({ deferredVersion: '0.2.0', downloadRequestedVersion: null });
+    expect(service.shouldShowNotice()).toBe(false);
+    expect(service.hasPendingUpdate()).toBe(false);
+
+    const reopened = createUpdateService({ enabled: () => true, port: createPort().port });
+    reopened.setPreferences(saved);
+    await reopened.checkForUpdate();
+    expect(reopened.shouldShowNotice()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+
+    expect(service.shouldShowNotice()).toBe(true);
+    expect(service.hasPendingUpdate()).toBe(true);
+    expect(reopened.shouldShowNotice()).toBe(true);
+    expect(saved).toMatchObject({ deferredVersion: null, remindAfter: null });
+    expect(persistPreferences).toHaveBeenCalledTimes(2);
+  });
+
+  it('restores a skipped version after restart and allows the user to show it again', async () => {
+    let saved = defaultUpdatePreferences;
+    const persistPreferences = vi.fn(async (next: UpdatePreferences) => {
+      saved = next;
+      return saved;
+    });
+    const first = createUpdateService({ enabled: () => true, port: createPort().port, persistPreferences });
+    await first.checkForUpdate();
+    expect(await first.skipAvailableVersion()).toBe(true);
+    expect(saved.skippedVersion).toBe('0.2.0');
+
+    const reopened = createUpdateService({ enabled: () => true, port: createPort().port });
+    reopened.setPreferences(saved);
+    await reopened.checkForUpdate();
+    expect(reopened.shouldShowNotice()).toBe(false);
+    expect(reopened.hasPendingUpdate()).toBe(false);
+
+    expect(await reopened.showSkippedVersion()).toBe(true);
+    expect(reopened.shouldShowNotice()).toBe(true);
+  });
+
+  it('restores a downloaded-update request and downloads it again after restart', async () => {
+    vi.useFakeTimers();
+    let saved = defaultUpdatePreferences;
+    const persistPreferences = vi.fn(async (next: UpdatePreferences) => {
+      saved = next;
+      return saved;
+    });
+    const first = createUpdateService({ enabled: () => true, port: createPort().port, persistPreferences });
+    await first.checkForUpdate();
+    expect((await first.downloadAvailableUpdate()).phase).toBe('ready');
+    expect(saved.downloadRequestedVersion).toBe('0.2.0');
+
+    const { port, update } = createPort();
+    const reopened = createUpdateService({ enabled: () => true, port, initialCheckDelayMs: 25 });
+    reopened.setPreferences(preferences({ ...saved, automaticallyCheck: false }));
+    const stop = reopened.startAutomaticChecks();
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(port.check).toHaveBeenCalledOnce();
+    expect(update.download).toHaveBeenCalledOnce();
+    expect(reopened.getSnapshot().phase).toBe('ready');
+    expect(port.relaunch).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('clears a skipped version when a newer release is found', async () => {
+    const { port } = createPort({ check: vi.fn(async () => makeUpdate({ version: '0.3.0' })) });
+    const service = createUpdateService({ enabled: () => true, port });
+    service.setPreferences(preferences({ skippedVersion: '0.2.0' }));
+
+    const result = await service.checkForUpdate();
+
+    expect(result).toMatchObject({ phase: 'available', availableVersion: '0.3.0', skippedVersion: null });
+    expect(service.shouldShowNotice()).toBe(true);
   });
 });

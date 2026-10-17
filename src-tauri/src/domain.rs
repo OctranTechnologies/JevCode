@@ -110,6 +110,14 @@ pub struct UpdatePreferences {
     pub automatically_download: bool,
     #[serde(default)]
     pub channel: UpdateChannel,
+    #[serde(default)]
+    pub deferred_version: Option<String>,
+    #[serde(default)]
+    pub skipped_version: Option<String>,
+    #[serde(default)]
+    pub remind_after: Option<String>,
+    #[serde(default)]
+    pub download_requested_version: Option<String>,
 }
 
 impl Default for UpdatePreferences {
@@ -118,6 +126,10 @@ impl Default for UpdatePreferences {
             automatically_check: true,
             automatically_download: false,
             channel: UpdateChannel::Stable,
+            deferred_version: None,
+            skipped_version: None,
+            remind_after: None,
+            download_requested_version: None,
         }
     }
 }
@@ -905,6 +917,20 @@ impl PermissionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_preferences_accept_legacy_saved_values() {
+        let legacy: UpdatePreferences = serde_json::from_str(
+            r#"{"automaticallyCheck":false,"automaticallyDownload":true,"channel":"stable"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(legacy.deferred_version, None);
+        assert_eq!(legacy.skipped_version, None);
+        assert!(!legacy.automatically_check);
+        assert!(legacy.automatically_download);
+    }
+
     #[test]
     fn shared_typescript_fixture_roundtrips_without_field_drift() {
         let fixture: Value =

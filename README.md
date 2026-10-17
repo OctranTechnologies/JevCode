@@ -635,12 +635,21 @@ for updates after the desktop bootstrap and main interface have rendered, then
 every 12 hours. Settings → Updates stores preferences in SQLite: automatic checks
 are on by default, automatic downloads are off, and Stable is the only channel.
 Available releases appear in a compact banner; an up-to-date check stays quiet.
-When enabled, automatic downloads run in the background and show progress. The
-user must explicitly install and restart, and JevCode blocks those actions while
-any task is queued, running, streaming, or waiting for input or approval. The
-current Tauri 2 JavaScript updater API does not expose cancellation for an
-in-progress download. Settings → Updates and About both provide a manual check.
-Update checks are disabled in development builds. Tauri verifies each bundle against the public key in
+The banner and Settings → Updates render release notes as a small, safe Markdown
+subset; raw HTML is escaped and links are shown as text, so updater metadata is
+never injected into the WebView. For each available version, choose **Update Now**,
+**Remind Me Later** (shown again after 24 hours), or **Skip this version**. These
+choices persist in SQLite across restarts; a newer version clears an old
+reminder or skip. A subtle dot marks an update that is still pending. When a
+download has completed, the app offers **Restart and Update**. If JevCode closes
+before installation, it checks again and downloads the signed package on the next
+launch to restore the ready state. When enabled, automatic downloads run in the
+background and show progress. The user must explicitly install and restart, and
+JevCode blocks those actions while any task is queued, running, streaming, or
+waiting for input or approval. The current Tauri 2 JavaScript updater API does
+not expose cancellation for an in-progress download. Settings → Updates and
+About both provide a manual check. Update checks are disabled in development
+builds. Tauri verifies each bundle against the public key in
 `src-tauri/tauri.conf.json`, and the app restarts after installation when the
 platform requires it. Signed-version verification is enabled too, so the manifest
 cannot pair a valid package signature

@@ -2,7 +2,8 @@ import { getVersion } from '@tauri-apps/api/app';
 import { isTauri } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
-import type { UpdatePreferences } from '../types/domain';
+import { command } from '../lib/ipc';
+import { defaultUpdatePreferences, type UpdatePreferences } from '../types/domain';
 
 export type UpdatePhase = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'available' | 'downloading' | 'ready' | 'installing' | 'completed' | 'restarting' | 'restart_required' | 'error';
 
@@ -23,6 +24,10 @@ export interface UpdateSnapshot {
   downloadedBytes: number;
   contentLength: number | null;
   error: string | null;
+  deferredVersion: string | null;
+  skippedVersion: string | null;
+  remindAfter: string | null;
+  downloadRequestedVersion: string | null;
 }
 
 export interface UpdaterPort {
@@ -34,6 +39,7 @@ export interface UpdaterPort {
 interface ServiceOptions {
   enabled: () => boolean;
   port: UpdaterPort;
+  persistPreferences?: (preferences: UpdatePreferences) => Promise<UpdatePreferences>;
   initialCheckDelayMs?: number;
   checkIntervalMs?: number;
 }
@@ -47,13 +53,18 @@ const initialSnapshot = (): UpdateSnapshot => ({
   downloadedBytes: 0,
   contentLength: null,
   error: null,
+  deferredVersion: null,
+  skippedVersion: null,
+  remindAfter: null,
+  downloadRequestedVersion: null,
 });
 
 export class UpdateService {
   private snapshot = initialSnapshot();
   private pendingUpdate: Update | null = null;
   private busy = false;
-  private preferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable' };
+  private preferences: UpdatePreferences = defaultUpdatePreferences;
+  private reminderTimeout: ReturnType<typeof setTimeout> | null = null;
   private agentActivityCheck: () => boolean = () => false;
   private readonly listeners = new Set<(snapshot: UpdateSnapshot) => void>();
 
@@ -65,8 +76,57 @@ export class UpdateService {
 
   getSnapshot = (): UpdateSnapshot => this.snapshot;
 
+  getPreferences(): UpdatePreferences {
+    return this.preferences;
+  }
+
   setPreferences(preferences: UpdatePreferences): void {
-    this.preferences = preferences;
+    this.preferences = { ...defaultUpdatePreferences, ...preferences };
+    this.scheduleReminderNotification();
+    this.set({ ...this.snapshot });
+  }
+
+  shouldShowNotice(): boolean {
+    if (!['available', 'downloading', 'ready', 'restart_required'].includes(this.snapshot.phase)) return false;
+    return this.snapshot.phase !== 'available' || !this.isSuppressed(this.snapshot.availableVersion);
+  }
+
+  hasPendingUpdate(): boolean {
+    if (!['available', 'downloading', 'ready', 'restart_required'].includes(this.snapshot.phase)) return false;
+    return this.snapshot.phase !== 'available' || !this.isSuppressed(this.snapshot.availableVersion);
+  }
+
+  async remindMeLater(): Promise<boolean> {
+    const version = this.snapshot.availableVersion;
+    if (!version || this.snapshot.phase !== 'available') return false;
+    return this.saveDisposition({
+      ...this.preferences,
+      deferredVersion: version,
+      remindAfter: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      downloadRequestedVersion: null,
+    });
+  }
+
+  async skipAvailableVersion(): Promise<boolean> {
+    const version = this.snapshot.availableVersion;
+    if (!version || this.snapshot.phase !== 'available') return false;
+    return this.saveDisposition({
+      ...this.preferences,
+      deferredVersion: null,
+      remindAfter: null,
+      skippedVersion: version,
+      downloadRequestedVersion: null,
+    });
+  }
+
+  async showSkippedVersion(): Promise<boolean> {
+    if (!this.preferences.skippedVersion && !this.preferences.deferredVersion) return false;
+    return this.saveDisposition({
+      ...this.preferences,
+      skippedVersion: null,
+      deferredVersion: null,
+      remindAfter: null,
+    });
   }
 
   setAgentActivityCheck(check: () => boolean): void {
@@ -98,7 +158,7 @@ export class UpdateService {
   };
 
   startAutomaticChecks(): () => void {
-    if (!this.isSupported() || !this.preferences.automaticallyCheck) return () => undefined;
+    if (!this.isSupported() || (!this.preferences.automaticallyCheck && !this.preferences.downloadRequestedVersion)) return () => undefined;
 
     let active = true;
     const run = () => {
@@ -139,17 +199,33 @@ export class UpdateService {
           this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'error', error: invalidMetadata });
         } else {
           this.pendingUpdate = update;
+          const availableVersion = normalizeVersion(update.version);
+          const staleDownload = this.preferences.downloadRequestedVersion && this.preferences.downloadRequestedVersion !== availableVersion;
+          const staleReminder = this.preferences.deferredVersion && this.preferences.deferredVersion !== availableVersion;
+          const staleSkip = this.preferences.skippedVersion && this.preferences.skippedVersion !== availableVersion;
+          if (staleDownload || staleReminder || staleSkip) {
+            await this.saveDisposition({
+              ...this.preferences,
+              deferredVersion: staleReminder ? null : this.preferences.deferredVersion,
+              remindAfter: staleReminder ? null : this.preferences.remindAfter,
+              skippedVersion: staleSkip ? null : this.preferences.skippedVersion,
+              downloadRequestedVersion: staleDownload ? null : this.preferences.downloadRequestedVersion,
+            });
+          }
           this.set({
             ...initialSnapshot(),
             phase: 'available',
             currentVersion: normalizeVersion(update.currentVersion),
-            availableVersion: normalizeVersion(update.version),
+            availableVersion,
             notes: typeof update.body === 'string' ? update.body.slice(0, 20_000) : null,
             publishedAt: typeof update.date === 'string' ? update.date : null,
           });
         }
       } else {
         const currentVersion = await this.getCurrentVersion();
+        if (this.preferences.downloadRequestedVersion) {
+          await this.saveDisposition({ ...this.preferences, downloadRequestedVersion: null });
+        }
         this.set({ ...initialSnapshot(), phase: 'up_to_date', currentVersion });
       }
     } catch (error) {
@@ -157,7 +233,9 @@ export class UpdateService {
     } finally {
       this.busy = false;
     }
-    if (this.snapshot.phase === 'available' && this.preferences.automaticallyDownload) {
+    if (this.snapshot.phase === 'available'
+      && (this.preferences.downloadRequestedVersion === this.snapshot.availableVersion
+        || (this.preferences.automaticallyDownload && !this.isSuppressed(this.snapshot.availableVersion)))) {
       return this.downloadAvailableUpdate();
     }
     return this.snapshot;
@@ -168,6 +246,26 @@ export class UpdateService {
 
     this.busy = true;
     const update = this.pendingUpdate;
+    const version = this.snapshot.availableVersion;
+    if (version && (this.preferences.deferredVersion === version || this.preferences.skippedVersion === version)) {
+      const saved = await this.saveDisposition({
+        ...this.preferences,
+        deferredVersion: null,
+        remindAfter: null,
+        skippedVersion: this.preferences.skippedVersion === version ? null : this.preferences.skippedVersion,
+        downloadRequestedVersion: version,
+      });
+      if (!saved) {
+        this.busy = false;
+        return this.snapshot;
+      }
+    } else if (version && this.preferences.downloadRequestedVersion !== version) {
+      const saved = await this.saveDisposition({ ...this.preferences, downloadRequestedVersion: version });
+      if (!saved) {
+        this.busy = false;
+        return this.snapshot;
+      }
+    }
     this.set({
       ...this.snapshot,
       phase: 'downloading',
@@ -182,6 +280,7 @@ export class UpdateService {
     } catch (error) {
       this.pendingUpdate = null;
       this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error, 'download') });
+      await this.saveDisposition({ ...this.preferences, downloadRequestedVersion: null });
       await update.close().catch(() => undefined);
     } finally {
       this.busy = false;
@@ -199,11 +298,13 @@ export class UpdateService {
     try {
       await update.install({ restartAfterInstall: false });
       this.pendingUpdate = null;
+      await this.saveDisposition({ ...this.preferences, downloadRequestedVersion: null });
       this.set({ ...this.snapshot, phase: 'completed' });
       if (this.agentActivityCheck()) this.set({ ...this.snapshot, phase: 'restart_required' });
       else await this.relaunchOrRequireRestart();
     } catch (error) {
       this.pendingUpdate = null;
+      await this.saveDisposition({ ...this.preferences, downloadRequestedVersion: null });
       this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error, 'install') });
     } finally {
       this.pendingUpdate = null;
@@ -257,9 +358,56 @@ export class UpdateService {
     if (update) await update.close().catch(() => undefined);
   }
 
+  private isSuppressed(version: string | null): boolean {
+    if (!version) return false;
+    if (this.preferences.skippedVersion === version) return true;
+    if (this.preferences.deferredVersion !== version || !this.preferences.remindAfter) return false;
+    const remindAfter = Date.parse(this.preferences.remindAfter);
+    return Number.isFinite(remindAfter) && remindAfter > Date.now();
+  }
+
+  private async saveDisposition(preferences: UpdatePreferences): Promise<boolean> {
+    try {
+      const saved = this.options.persistPreferences
+        ? await this.options.persistPreferences(preferences)
+        : preferences;
+      this.preferences = { ...defaultUpdatePreferences, ...saved };
+      this.scheduleReminderNotification();
+      this.set({ ...this.snapshot });
+      return true;
+    } catch {
+      this.set({ ...this.snapshot, error: 'Update preferences could not be saved. Try again.' });
+      return false;
+    }
+  }
+
+  private scheduleReminderNotification(): void {
+    if (this.reminderTimeout) clearTimeout(this.reminderTimeout);
+    this.reminderTimeout = null;
+    if (!this.preferences.deferredVersion || !this.preferences.remindAfter) return;
+
+    const remindAt = Date.parse(this.preferences.remindAfter);
+    if (!Number.isFinite(remindAt)) return;
+    const delay = Math.max(0, Math.min(remindAt - Date.now(), 2_147_000_000));
+    this.reminderTimeout = setTimeout(() => {
+      this.reminderTimeout = null;
+      if (remindAt > Date.now()) {
+        this.scheduleReminderNotification();
+      } else {
+        void this.saveDisposition({ ...this.preferences, deferredVersion: null, remindAfter: null });
+      }
+    }, delay);
+  }
+
   private set(snapshot: UpdateSnapshot): void {
-    this.snapshot = snapshot;
-    for (const listener of this.listeners) listener(snapshot);
+    this.snapshot = {
+      ...snapshot,
+      deferredVersion: this.preferences.deferredVersion,
+      skippedVersion: this.preferences.skippedVersion,
+      remindAfter: this.preferences.remindAfter,
+      downloadRequestedVersion: this.preferences.downloadRequestedVersion,
+    };
+    for (const listener of this.listeners) listener(this.snapshot);
   }
 }
 
@@ -316,4 +464,5 @@ export function createUpdateService(options: ServiceOptions): UpdateService {
 export const updateService = createUpdateService({
   enabled: () => import.meta.env.PROD && isTauri(),
   port: { check, getVersion, relaunch },
+  persistPreferences: preferences => command('save_update_preferences', { input: preferences }),
 });

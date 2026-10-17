@@ -3,6 +3,7 @@ import { Check, Download, ExternalLink, LoaderCircle, RefreshCw, Sparkles } from
 import { Brand } from '../../components/Brand';
 import { command } from '../../lib/ipc';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
+import { ReleaseNotes } from './ReleaseNotes';
 
 export function AboutSettings({ online, agentActive }: { online: boolean; agentActive: boolean }) {
   const [update, setUpdate] = useState<UpdateSnapshot>(() => updateService.getSnapshot());
@@ -53,10 +54,7 @@ export function AboutSettings({ online, agentActive }: { online: boolean; agentA
         </div>
       </div>
 
-      {metadata && <div className="about-release-notes">
-        <div><strong>JevCode v{metadata.version} available</strong>{metadata.publishedAt && <time dateTime={metadata.publishedAt}>{formatReleaseDate(metadata.publishedAt)}</time>}</div>
-        {metadata.notes && <p>{metadata.notes}</p>}
-      </div>}
+      {metadata && <ReleaseNotes version={metadata.version} body={metadata.notes} publishedAt={metadata.publishedAt} className="about-release-notes" />}
 
       {update.phase === 'downloading' && <div className="about-download-progress" role="status">
         <div><span>Downloading update</span><span>{formatBytes(update.downloadedBytes)}{update.contentLength !== null ? ` of ${formatBytes(update.contentLength)}` : ''}</span></div>
@@ -69,11 +67,11 @@ export function AboutSettings({ online, agentActive }: { online: boolean; agentA
           Check for Updates
         </button>
         {update.phase === 'available' && <>
-          <button className="account-button connect" onClick={() => void updateService.downloadAvailableUpdate()} disabled={!online || busy}><Download size={14} />Download update</button>
+          <button className="account-button connect" onClick={() => void updateService.downloadAvailableUpdate()} disabled={!online || busy}><Download size={14} />Update Now</button>
           <button className="account-button quiet" onClick={() => void openRelease()}><ExternalLink size={14} />Release page</button>
         </>}
-        {update.phase === 'ready' && <button className="account-button connect" onClick={() => void updateService.installDownloadedUpdate()} disabled={agentActive}><Download size={14} />Install and restart</button>}
-        {update.phase === 'ready' && agentActive && <p className="updates-restart-hold">Finish the active task before installing and restarting JevCode.</p>}
+        {(update.phase === 'ready' || update.phase === 'restart_required') && <button className="account-button connect" onClick={() => void (update.phase === 'ready' ? updateService.installDownloadedUpdate() : updateService.restartApplication())} disabled={agentActive}><RefreshCw size={14} />Restart and Update</button>}
+        {(update.phase === 'ready' || update.phase === 'restart_required') && agentActive && <p className="updates-restart-hold">Finish the active task before installing or restarting JevCode.</p>}
       </div>
       {releaseError && <p className="about-update-error" role="alert">{releaseError}</p>}
       {supported && !online && <p className="about-help">Reconnect to check for or download an update.</p>}
@@ -113,11 +111,6 @@ function statusDescription(update: UpdateSnapshot, online: boolean, supported: b
   if (!online) return 'You’re offline. Connect to the internet to check for updates.';
   if (update.phase === 'up_to_date') return 'You have the latest version available for this release channel.';
   return 'Check the release service for the latest version.';
-}
-
-function formatReleaseDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
 function formatBytes(bytes: number): string {

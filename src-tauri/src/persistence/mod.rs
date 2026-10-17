@@ -1235,6 +1235,10 @@ mod tests {
             automatically_check: false,
             automatically_download: true,
             channel: UpdateChannel::Stable,
+            deferred_version: Some("0.2.0".into()),
+            skipped_version: Some("0.1.9".into()),
+            remind_after: Some("2026-10-18T12:00:00Z".into()),
+            download_requested_version: Some("0.2.0".into()),
         };
         {
             let database = Database::open(&path).unwrap();
