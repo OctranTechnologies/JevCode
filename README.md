@@ -719,13 +719,40 @@ with a forged version number. The updater also validates release metadata before
 presenting it. Missing, invalid, or modified package signatures are rejected before
 installation and shown as a concise error; raw plugin errors are not displayed.
 
-Before creating a release tag, configure the GitHub Actions repository secrets
-`TAURI_SIGNING_PRIVATE_KEY` and, when the key is password-protected,
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Store the private key contents in the first
-secret and its password in the second; never put either value in Git, application
-configuration, logs, or a checked-in `.env` file. The release workflow passes these
-secrets to Tauri and uploads the generated `.sig` files and updater manifest. The
-public verification key in `tauri.conf.json` is safe to commit.
+#### GitHub Actions release procedure
+
+The workflow at `.github/workflows/release.yml` runs for stable semantic-version
+tags such as `v0.1.0`. Before tagging, update the application version in
+`src-tauri/tauri.conf.json` so it exactly matches the tag. Configure these
+repository Actions secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: the complete private updater key contents.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the key password, or an empty value for
+  an unencrypted key.
+
+`GITHUB_TOKEN` is provided by GitHub Actions and is scoped to release contents;
+no personal access token is needed. The signing key is only passed to the Tauri
+build step and is never printed. Keep the private key out of Git, application
+configuration, logs, and checked-in `.env` files. The public verification key in
+`src-tauri/tauri.conf.json` is safe to commit.
+
+After committing the version change and workflow, push a matching tag:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
+installers with the official `tauri-apps/tauri-action@v1`. It uploads installers,
+updater packages, `.sig` files, and `latest.json` to a draft GitHub Release. A
+final job checks that all expected installers and signatures exist and that the
+manifest has valid entries for all four updater targets. Only then does it publish
+the release as the stable latest version. If a build or check fails, the draft
+remains unpublished and is not served by the app's stable updater endpoint.
+
+macOS notarization/signing and Windows installer signing still require maintainer
+certificates and are not configured here.
 
 For a local signed Windows build in PowerShell, point the documented environment
 variable at the private key file outside the repository, then run the Tauri build:
