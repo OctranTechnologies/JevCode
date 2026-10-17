@@ -83,6 +83,28 @@ describe('UpdateService', () => {
     expect(update.install).not.toHaveBeenCalled();
   });
 
+  it('streams intermediate download progress and the byte count without blocking the service', async () => {
+    const update = makeUpdate({
+      download: vi.fn(async (onEvent?: (event: DownloadEvent) => void) => {
+        onEvent?.({ event: 'Started', data: { contentLength: 100 } });
+        onEvent?.({ event: 'Progress', data: { chunkLength: 72 } });
+        await Promise.resolve();
+        onEvent?.({ event: 'Progress', data: { chunkLength: 28 } });
+        onEvent?.({ event: 'Finished' });
+      }),
+    });
+    const { port } = createPort({ check: vi.fn(async () => update) });
+    const service = createUpdateService({ enabled: () => true, port });
+    const progress: number[] = [];
+    service.subscribe(snapshot => progress.push(snapshot.downloadedBytes));
+    await service.checkForUpdate();
+
+    const result = await service.downloadAvailableUpdate();
+
+    expect(progress).toContain(72);
+    expect(result).toMatchObject({ phase: 'ready', downloadedBytes: 100, contentLength: 100 });
+  });
+
   it('preserves the downloaded update while it is ready to install', async () => {
     const { port, update } = createPort();
     const service = createUpdateService({ enabled: () => true, port });
@@ -126,6 +148,72 @@ describe('UpdateService', () => {
     expect(result.error).toBeNull();
   });
 
+  it('allows retrying a required restart', async () => {
+    const relaunch = vi.fn().mockRejectedValueOnce(new Error('restart failed')).mockResolvedValueOnce(undefined);
+    const { port } = createPort({ relaunch });
+    const service = createUpdateService({ enabled: () => true, port });
+    await service.checkForUpdate();
+    await service.downloadAvailableUpdate();
+    await service.installDownloadedUpdate();
+
+    const result = await service.restartApplication();
+
+    expect(result.phase).toBe('restarting');
+    expect(relaunch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not install a failed or invalidly signed download', async () => {
+    const signedUpdate = makeUpdate({
+      download: vi.fn(async () => { throw new Error('signature verification failed'); }),
+    });
+    const { port } = createPort({ check: vi.fn(async () => signedUpdate) });
+    const service = createUpdateService({ enabled: () => true, port });
+    await service.checkForUpdate();
+
+    const result = await service.installAvailableUpdate();
+
+    expect(result).toMatchObject({ phase: 'error', error: 'The update signature was invalid. JevCode did not install it.' });
+    expect(signedUpdate?.install).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed download with a useful message and never attempts installation', async () => {
+    const update = makeUpdate({ download: vi.fn(async () => { throw new Error('installer package unavailable'); }) });
+    const { port } = createPort({ check: vi.fn(async () => update) });
+    const service = createUpdateService({ enabled: () => true, port });
+    await service.checkForUpdate();
+
+    const result = await service.installAvailableUpdate();
+
+    expect(result.phase).toBe('error');
+    expect(result.error).toBe('Update download failed. JevCode did not install it. Try again later.');
+    expect(update.install).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid update versions and release metadata before downloading', async () => {
+    const update = makeUpdate({ version: 'latest', date: 'not a date' });
+    const { port } = createPort({ check: vi.fn(async () => update) });
+    const service = createUpdateService({ enabled: () => true, port });
+
+    const result = await service.checkForUpdate();
+
+    expect(result).toMatchObject({ phase: 'error', error: 'The update information is invalid, so JevCode did not install it. Try again later.' });
+    expect(update.close).toHaveBeenCalledOnce();
+    expect(update.download).not.toHaveBeenCalled();
+  });
+
+  it('redacts updater details when installation fails', async () => {
+    const update = makeUpdate({ install: vi.fn(async () => { throw new Error('private installer path C:/temp/secret.msi'); }) });
+    const { port } = createPort({ check: vi.fn(async () => update) });
+    const service = createUpdateService({ enabled: () => true, port });
+    await service.checkForUpdate();
+    await service.downloadAvailableUpdate();
+
+    const result = await service.installDownloadedUpdate();
+
+    expect(result.error).toBe('Update installation failed. Your current version is still installed. Try again later.');
+    expect(result.error).not.toContain('secret.msi');
+  });
+
   it('checks automatically only when enabled', async () => {
     vi.useFakeTimers();
     const { port } = createPort();
@@ -154,7 +242,7 @@ describe('UpdateService', () => {
 
     const result = await service.checkForUpdate();
 
-    expect(result).toMatchObject({ phase: 'error', error: 'Could not reach the JevCode update service. Check your connection and try again.' });
+    expect(result).toMatchObject({ phase: 'error', error: 'Couldn’t connect to update server. Check your connection and try again.' });
     expect(() => service.getAvailableVersion()).not.toThrow();
     expect(service.getUpdateMetadata()).toBeNull();
   });

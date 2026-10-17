@@ -631,14 +631,19 @@ interface pixels.
 JevCode uses the official Tauri 2 updater plugins. Release builds create signed
 updater artifacts, and the Tauri GitHub Action publishes their signatures and a
 `latest.json` manifest to the GitHub release. The app checks for updates after
-launch and every 12 hours; Settings → About offers a manual check, release notes,
-download progress, and a separate install/restart action. Update checks are disabled
+launch and every 12 hours. When one is available, a compact dialog shows its version
+and release notes with Later and Update Now actions. Update Now downloads and
+installs the package in sequence, showing live progress and downloaded size; the
+user can return to work while a download continues. The current Tauri 2 JavaScript
+updater API does not expose cancellation for an in-progress download. Settings →
+About provides a manual check and mirrors update status. Update checks are disabled
 in development builds. Tauri verifies each bundle against the public key in
 `src-tauri/tauri.conf.json`, and the app restarts after installation when the
 platform requires it. Signed-version verification is enabled too, so the manifest
 cannot pair a valid package signature
-with a forged version number. The updater rejects missing, invalid, or modified
-package signatures; signature verification must stay enabled.
+with a forged version number. The updater also validates release metadata before
+presenting it. Missing, invalid, or modified package signatures are rejected before
+installation and shown as a concise error; raw plugin errors are not displayed.
 
 Before creating a release tag, configure the GitHub Actions repository secrets
 `TAURI_SIGNING_PRIVATE_KEY` and, when the key is password-protected,
