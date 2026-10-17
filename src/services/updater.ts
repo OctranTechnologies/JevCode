@@ -3,7 +3,13 @@ import { isTauri } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
 
-export type UpdatePhase = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'available' | 'downloading' | 'installing' | 'restarting' | 'restart_required' | 'error';
+export type UpdatePhase = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'available' | 'downloading' | 'ready' | 'installing' | 'completed' | 'restarting' | 'restart_required' | 'error';
+
+export interface UpdateMetadata {
+  version: string;
+  publishedAt: string | null;
+  notes: string | null;
+}
 
 export interface UpdateSnapshot {
   phase: UpdatePhase;
@@ -40,7 +46,7 @@ const initialSnapshot = (): UpdateSnapshot => ({
   error: null,
 });
 
-export class UpdaterService {
+export class UpdateService {
   private snapshot = initialSnapshot();
   private pendingUpdate: Update | null = null;
   private busy = false;
@@ -54,6 +60,25 @@ export class UpdaterService {
 
   getSnapshot = (): UpdateSnapshot => this.snapshot;
 
+  async getCurrentVersion(): Promise<string | null> {
+    try {
+      const currentVersion = await this.options.port.getVersion();
+      this.set({ ...this.snapshot, currentVersion });
+      return currentVersion;
+    } catch {
+      return this.snapshot.currentVersion;
+    }
+  }
+
+  getAvailableVersion(): string | null {
+    return this.snapshot.availableVersion;
+  }
+
+  getUpdateMetadata(): UpdateMetadata | null {
+    const version = this.getAvailableVersion();
+    return version ? { version, publishedAt: this.snapshot.publishedAt, notes: this.snapshot.notes } : null;
+  }
+
   subscribe = (listener: (snapshot: UpdateSnapshot) => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -64,7 +89,7 @@ export class UpdaterService {
 
     let active = true;
     const run = () => {
-      if (active) void this.check();
+      if (active) void this.checkForUpdate();
     };
     const initial = setTimeout(run, this.options.initialCheckDelayMs ?? 10_000);
     const interval = setInterval(run, this.options.checkIntervalMs ?? 12 * 60 * 60 * 1000);
@@ -75,12 +100,13 @@ export class UpdaterService {
     };
   }
 
-  async check(): Promise<UpdateSnapshot> {
+  async checkForUpdate(): Promise<UpdateSnapshot> {
     if (!this.isSupported()) {
       this.set({ ...initialSnapshot(), phase: 'disabled' });
       return this.snapshot;
     }
     if (this.busy) return this.snapshot;
+    if (this.snapshot.phase === 'ready') return this.snapshot;
 
     this.busy = true;
     await this.closePendingUpdate();
@@ -98,7 +124,7 @@ export class UpdaterService {
           publishedAt: update.date ?? null,
         });
       } else {
-        const currentVersion = await this.options.port.getVersion().catch(() => null);
+        const currentVersion = await this.getCurrentVersion();
         this.set({ ...initialSnapshot(), phase: 'up_to_date', currentVersion });
       }
     } catch (error) {
@@ -109,7 +135,7 @@ export class UpdaterService {
     return this.snapshot;
   }
 
-  async installAvailableUpdate(): Promise<UpdateSnapshot> {
+  async downloadAvailableUpdate(): Promise<UpdateSnapshot> {
     if (!this.isSupported() || this.busy || !this.pendingUpdate) return this.snapshot;
 
     this.busy = true;
@@ -124,23 +150,47 @@ export class UpdaterService {
 
     try {
       await update.download((event) => this.onDownloadEvent(event));
-      this.set({ ...this.snapshot, phase: 'installing' });
+      this.set({ ...this.snapshot, phase: 'ready' });
+    } catch (error) {
+      this.pendingUpdate = null;
+      this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error) });
+      await update.close().catch(() => undefined);
+    } finally {
+      this.busy = false;
+    }
+    return this.snapshot;
+  }
+
+  async installDownloadedUpdate(): Promise<UpdateSnapshot> {
+    if (!this.isSupported() || this.busy || !this.pendingUpdate || this.snapshot.phase !== 'ready') return this.snapshot;
+
+    this.busy = true;
+    const update = this.pendingUpdate;
+    this.set({ ...this.snapshot, phase: 'installing', error: null });
+    try {
       await update.install();
       this.pendingUpdate = null;
-      this.set({ ...this.snapshot, phase: 'restarting' });
+      this.set({ ...this.snapshot, phase: 'completed' });
       try {
         await this.options.port.relaunch();
+        this.set({ ...this.snapshot, phase: 'restarting' });
       } catch {
         this.set({ ...this.snapshot, phase: 'restart_required' });
       }
     } catch (error) {
+      this.pendingUpdate = null;
       this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error) });
     } finally {
-      if (this.pendingUpdate === update) this.pendingUpdate = null;
+      this.pendingUpdate = null;
       await update.close().catch(() => undefined);
       this.busy = false;
     }
     return this.snapshot;
+  }
+
+  async installAvailableUpdate(): Promise<UpdateSnapshot> {
+    const downloaded = await this.downloadAvailableUpdate();
+    return downloaded.phase === 'ready' ? this.installDownloadedUpdate() : downloaded;
   }
 
   private onDownloadEvent(event: DownloadEvent): void {
@@ -179,11 +229,11 @@ function friendlyUpdateError(error: unknown): string {
   return 'The update could not be completed. Retry later or install the latest release from GitHub.';
 }
 
-export function createUpdaterService(options: ServiceOptions): UpdaterService {
-  return new UpdaterService(options);
+export function createUpdateService(options: ServiceOptions): UpdateService {
+  return new UpdateService(options);
 }
 
-export const updaterService = createUpdaterService({
+export const updateService = createUpdateService({
   enabled: () => import.meta.env.PROD && isTauri(),
   port: { check, getVersion, relaunch },
 });
