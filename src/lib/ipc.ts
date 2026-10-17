@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdateInfo, UsageRecord, WorkspaceMode } from '../types/domain';
-import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updateInfoSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export { openAIAuthAttemptEventSchema };
@@ -12,7 +12,6 @@ export const desktopAvailable = isTauri();
 interface Commands {
   bootstrap: { args: undefined; result: Bootstrap };
   get_app_diagnostics: { args: undefined; result: AppDiagnostics };
-  check_for_updates: { args: undefined; result: UpdateInfo };
   open_latest_release: { args: undefined; result: null };
   reveal_application_logs: { args: undefined; result: null };
   open_project: { args: { path: string }; result: Project };
@@ -75,7 +74,7 @@ interface Commands {
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
 }
 const responses = {
-  bootstrap: bootstrapSchema, get_app_diagnostics: appDiagnosticsSchema, check_for_updates: updateInfoSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
+  bootstrap: bootstrapSchema, get_app_diagnostics: appDiagnosticsSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
   reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), project_task_worktrees: z.array(taskWorktreeSchema), task_worktree_diff: z.string(), commit_task_worktree: taskWorktreeActionSchema, apply_task_worktree: taskWorktreeActionSchema, remove_task_worktree: sessionSchema, create_session: sessionSchema, send_message: sessionSchema,

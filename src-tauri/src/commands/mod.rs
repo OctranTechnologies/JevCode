@@ -547,114 +547,7 @@ fn reveal_path_in_file_manager(path: &Path) -> AppResult<()> {
     })
 }
 
-#[derive(Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    html_url: String,
-    #[serde(default)]
-    body: String,
-    published_at: Option<String>,
-}
-
-const RELEASE_API_URL: &str =
-    "https://api.github.com/repos/OctranTechnologies/JevCode/releases/latest";
 const RELEASE_PAGE_URL: &str = "https://github.com/OctranTechnologies/JevCode/releases/latest";
-const RELEASE_BODY_LIMIT: usize = 1024 * 1024;
-
-#[tauri::command]
-pub async fn check_for_updates() -> AppResult<UpdateInfo> {
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("JevCode/", env!("CARGO_PKG_VERSION")))
-        .timeout(Duration::from_secs(12))
-        .connect_timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(AppError::internal)?;
-    let mut response = client
-        .get(RELEASE_API_URL)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-        .map_err(|_| {
-            AppError::new(
-                "network_error",
-                "Could not reach GitHub Releases. Check your connection and retry.",
-            )
-        })?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(AppError::new(
-            "release_unavailable",
-            "No public JevCode release is available yet.",
-        ));
-    }
-    if response.status() == reqwest::StatusCode::FORBIDDEN
-        || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
-    {
-        return Err(AppError::new(
-            "release_rate_limited",
-            "GitHub temporarily limited update checks. Try again later.",
-        ));
-    }
-    if !response.status().is_success() {
-        return Err(AppError::new(
-            "release_service_unavailable",
-            "GitHub Releases is temporarily unavailable. Try again later.",
-        ));
-    }
-    if response
-        .content_length()
-        .is_some_and(|length| length > RELEASE_BODY_LIMIT as u64)
-    {
-        return Err(AppError::new(
-            "release_response_limit",
-            "GitHub returned an unexpectedly large release record.",
-        ));
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| {
-        AppError::new(
-            "network_error",
-            "The update check was interrupted. Check your connection and retry.",
-        )
-    })? {
-        if bytes.len().saturating_add(chunk.len()) > RELEASE_BODY_LIMIT {
-            return Err(AppError::new(
-                "release_response_limit",
-                "GitHub returned an unexpectedly large release record.",
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let release: GitHubRelease = serde_json::from_slice(&bytes).map_err(|_| {
-        AppError::new(
-            "release_format",
-            "GitHub returned update information JevCode could not read.",
-        )
-    })?;
-    if !is_jevcode_release_url(&release.html_url) {
-        return Err(AppError::new(
-            "release_url_invalid",
-            "GitHub returned an unexpected release link.",
-        ));
-    }
-    let latest =
-        semver::Version::parse(release.tag_name.trim_start_matches('v')).map_err(|_| {
-            AppError::new(
-                "release_version_invalid",
-                "GitHub returned a release with an invalid version.",
-            )
-        })?;
-    let current = semver::Version::parse(env!("CARGO_PKG_VERSION")).map_err(AppError::internal)?;
-    Ok(UpdateInfo {
-        current_version: current.to_string(),
-        latest_version: latest.to_string(),
-        available: latest > current,
-        release_url: release.html_url,
-        notes: release.body.chars().take(4000).collect(),
-        published_at: release.published_at,
-    })
-}
 
 fn is_jevcode_release_url(value: &str) -> bool {
     reqwest::Url::parse(value).is_ok_and(|url| {
@@ -672,6 +565,12 @@ fn is_jevcode_release_url(value: &str) -> bool {
 
 #[tauri::command]
 pub fn open_latest_release() -> AppResult<()> {
+    if !is_jevcode_release_url(RELEASE_PAGE_URL) {
+        return Err(AppError::new(
+            "release_url_invalid",
+            "The configured release link is invalid.",
+        ));
+    }
     #[cfg(target_os = "windows")]
     let mut command = std::process::Command::new("explorer.exe");
     #[cfg(target_os = "macos")]

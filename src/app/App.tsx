@@ -28,6 +28,7 @@ import type { AgentSession, Model, ModelReference, PermissionResolution, Project
 import type { View } from '../features/workspaces/Sidebar';
 import { latestRestorableSession } from './restore';
 import { primaryShortcutModifier as shortcutMod } from '../lib/shortcuts';
+import { updaterService } from '../services/updater';
 
 const demoBranch = 'feat/path-safety';
 
@@ -75,6 +76,8 @@ export default function App() {
     const saved = localStorage.getItem('jevcode-theme');
     return saved ? saved === 'dark' : true;
   });
+
+  useEffect(() => updaterService.startAutomaticChecks(), []);
 
   const data = desktop.data;
   const projectList = data?.workspace.projects;
