@@ -705,17 +705,40 @@ updater artifacts, and the Tauri GitHub Action publishes their signatures and a
 launch and every 12 hours; Settings → Diagnostics also offers a manual check and
 download/install action. Update checks are disabled in development builds. Tauri
 verifies each bundle against the public key in `src-tauri/tauri.conf.json`, and the
-app restarts after installation when the platform requires it.
+app restarts after installation when the platform requires it. Signed-version
+verification is enabled too, so the manifest cannot pair a valid package signature
+with a forged version number. The updater rejects missing, invalid, or modified
+package signatures; signature verification must stay enabled.
 
 Before creating a release tag, configure the GitHub Actions repository secrets
 `TAURI_SIGNING_PRIVATE_KEY` and, when the key is password-protected,
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key must stay out of Git and
-application configuration. The matching public key is safe to commit. Keep a
-secure backup of the private key: replacing it requires rotating the configured
-public key and will prevent existing installations from accepting releases signed
-with the old key. A GitHub draft release becomes available to the updater after it
-is published. macOS notarization/signing and Windows installer signing still
-require maintainer certificates and are not configured here.
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Store the private key contents in the first
+secret and its password in the second; never put either value in Git, application
+configuration, logs, or a checked-in `.env` file. The release workflow passes these
+secrets to Tauri and uploads the generated `.sig` files and updater manifest. The
+public verification key in `tauri.conf.json` is safe to commit.
+
+For a local signed Windows build in PowerShell, point the documented environment
+variable at the private key file outside the repository, then run the Tauri build:
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = "$env:USERPROFILE\.tauri\jevcode-updater.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+npm run tauri build -- --bundles nsis
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+The resulting NSIS updater bundle and its adjacent `.sig` file are written under
+`src-tauri/target/release/bundle/nsis/`. Keep the key in a restricted-access
+encrypted password manager or secrets vault and keep a separate encrypted offline
+backup. Limit access to release maintainers, retain recovery instructions, and
+periodically confirm the backup can be restored without copying the key into the
+repository. Losing or replacing this key requires rotating the configured public
+key and will prevent existing installations from accepting releases signed with
+the old key. A GitHub draft release becomes available to the updater after it is
+published. macOS notarization/signing and Windows installer signing still require
+maintainer certificates and are not configured here.
 
 Provider adapters are covered by offline protocol fixtures. Live API calls require
 user credentials and have not been certified against every provider account/model.

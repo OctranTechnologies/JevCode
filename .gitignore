@@ -8,3 +8,8 @@ src-tauri/gen/
 !.env.example
 *.log
 .impeccable/
+
+# Keep updater signing material and generated signatures out of source control.
+.tauri/
+*.key
+*.sig
