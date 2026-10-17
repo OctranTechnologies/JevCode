@@ -683,9 +683,10 @@ package signature to its manifest version. Downgrades are disabled. GitHub's
 `latest` route excludes drafts and prereleases, and the release workflow rejects
 a tag that is not newer than every published stable release.
 
-The release action creates a stable draft first. A test, signing, platform bundle,
-or manifest failure prevents the publish job from running, leaving the draft out
-of the production endpoint. A draft is promoted only after all platforms pass.
+After the release quality gate and updater-key preflight pass, the workflow creates
+a stable draft. A test, signing, platform bundle, or manifest failure prevents the
+publish job from running, leaving the draft out of the production endpoint. A
+draft is promoted only after all platforms pass.
 See the official [Tauri updater guide](https://v2.tauri.app/plugin/updater/),
 [GitHub pipeline guide](https://v2.tauri.app/distribute/pipelines/github/),
 and [tauri-action manifest generator](https://github.com/tauri-apps/tauri-action/blob/dev/src/upload-version-json.ts)
@@ -728,9 +729,10 @@ npm run release:patch
 ```
 
 The workflow validates that the tag matches every app version file, passes the
-release quality gate, and is newer than all published stable releases before it
-creates a draft. A test, platform build, signing, or manifest validation failure
-leaves the release unpublished. If pushing the tag fails after the version commit reaches
+release quality gate, confirms the updater signing key is configured, and is
+newer than all published stable releases before it creates a draft. A test,
+platform build, signing, or manifest validation failure leaves the release
+unpublished. If pushing the tag fails after the version commit reaches
 `origin/main`, push the reported tag with `git push origin vX.Y.Z` to resume the
 release.
 
@@ -740,9 +742,13 @@ Configure these repository Actions secrets before the first release:
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the key password, or an empty value for
   an unencrypted key.
 
+Add them in the repository's **Settings → Secrets and variables → Actions**.
+The signing key must be available to the release workflow before pushing a
+version tag; the workflow checks this before creating a draft.
+
 `GITHUB_TOKEN` is provided by GitHub Actions and is scoped to release contents;
-no personal access token is needed. The signing key is only passed to the Tauri
-build step and is never printed. Keep the private key out of Git, application
+no personal access token is needed. The signing key is only passed to the
+preflight and Tauri build steps and is never printed. Keep the private key out of Git, application
 configuration, logs, and checked-in `.env` files. The public verification key in
 `src-tauri/tauri.conf.json` is safe to commit.
 
@@ -750,8 +756,10 @@ The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
 installers with the official `tauri-apps/tauri-action@v1`. Its Linux quality job
 runs `npm run check` (formatting, lint, type checks, frontend tests, Rust checks,
 Rust tests and Clippy) before a draft is created. Each platform job must produce
-its installer and every updater bundle/signature it needs. macOS artifact checks
-use the target-specific Rust output directory. The action uploads installers,
+its installer and every updater bundle/signature it needs. The Windows job
+installs and verifies the VBScript Windows capability required by WiX MSI
+packaging. macOS artifact checks use the target-specific Rust output directory.
+The action uploads installers,
 updater packages, `.sig` files, and `latest.json` to the draft. Platform jobs run
 one at a time so the action can merge entries without racing on `latest.json`.
 The final job runs `scripts/validate-updater-release.mjs` against the GitHub
@@ -759,7 +767,9 @@ release assets and downloaded manifest. It rejects missing platforms, wrong
 bundle types, unattached URLs, or missing signature assets. Only then does it
 publish the release as stable and latest. Failed matrix jobs prevent the final
 publish job from running, so incomplete drafts are never served by the stable
-endpoint.
+endpoint. If a failed run is retried, the workflow removes the assets from its
+tag's existing draft before rebuilding, avoiding stale or duplicate platform
+files.
 
 ### Update failure behavior and data safety
 
@@ -786,12 +796,15 @@ same signing key, install the first version, then update to the next. Verify the
 version, release notes, progress, restart, and that existing projects and tasks
 remain available. This checkout produced a signed Windows installer, and its
 updater signature was verified against the configured public key; a modified
-copy was rejected. The hosted v0.1.0 → v0.1.1 installation path could not be run
-from this session because the GitHub CLI credentials are invalid, so the remote
-release state and Actions results could not be inspected. Automated tests and CI
-gates cover release metadata, downgrade rejection, interrupted downloads,
-signature failures, active-task protection, and publication preconditions; these
-checks do not substitute for a hosted installation test.
+copy was rejected. The hosted v0.1.0 → v0.1.1 installation path is still pending:
+the first GitHub run found that the repository Actions secret
+`TAURI_SIGNING_PRIVATE_KEY` is unset, and the Windows runner uses the newer
+VBScript capability mechanism. No stable release was published. Configure the
+secret, then rerun the `v0.1.0` tag workflow before attempting `v0.1.1`.
+Automated tests and CI gates cover release
+metadata, downgrade rejection, interrupted downloads, signature failures,
+active-task protection, and publication preconditions; these checks do not
+substitute for a hosted installation test.
 
 macOS notarization/signing and Windows installer signing still require maintainer
 certificates and are not configured here.

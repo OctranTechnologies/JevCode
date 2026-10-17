@@ -64,6 +64,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Require the updater signing key before creating a draft
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::Configure the TAURI_SIGNING_PRIVATE_KEY repository secret before creating a release tag."
+            exit 1
+          fi
+
       - name: Create or reuse the draft for this tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,6 +96,10 @@ jobs:
               -F draft=true \
               -F prerelease=false > /dev/null
           elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]] && [[ "$(jq -r '.[0].prerelease' <<< "$matching")" == "false" ]]; then
+            while IFS= read -r asset_id; do
+              [[ -n "$asset_id" ]] || continue
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done < <(jq -r '.[0].assets[]?.id' <<< "$matching")
             echo "Reusing the existing draft release for $RELEASE_TAG."
           else
             echo "::error::A non-draft release already exists for $RELEASE_TAG, or multiple releases use this tag. Refusing to replace a published release."
@@ -134,7 +148,19 @@ jobs:
 
       - name: Enable Windows Script Host for MSI packaging
         if: matrix.os == 'windows'
-        run: dism /online /Enable-Feature /FeatureName:VBSCRIPT /All /NoRestart
+        shell: pwsh
+        run: |
+          $capability = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'VBSCRIPT*' } | Select-Object -First 1
+          if (-not $capability) {
+            throw 'The Windows runner does not expose the VBScript capability required by WiX MSI packaging.'
+          }
+          if ($capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $capability.Name | Out-Null
+          }
+          $installedCapability = Get-WindowsCapability -Online -Name $capability.Name
+          if ($installedCapability.State -ne 'Installed') {
+            throw 'The VBScript capability required by WiX MSI packaging could not be installed.'
+          }
 
       - uses: actions/setup-node@v6
         with:
