@@ -21,6 +21,7 @@ import { PermissionsSettings } from '../features/settings/PermissionsSettings';
 import { McpSettings } from '../features/settings/McpSettings';
 import { DiagnosticsSettings } from '../features/settings/DiagnosticsSettings';
 import { AboutSettings } from '../features/settings/AboutSettings';
+import { UpdateDialog } from '../features/settings/UpdateDialog';
 import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
@@ -627,6 +628,7 @@ export default function App() {
     </>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
     <CreateProjectDialog open={createProjectOpen} busy={creatingProject} onClose={() => setCreateProjectOpen(false)} onCreate={createProject} onOpenExisting={() => { setCreateProjectOpen(false); void openFolder(); }} />
+    <UpdateDialog />
   </div>;
 }
 

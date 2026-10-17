@@ -5,6 +5,8 @@ import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updat
 
 export type UpdatePhase = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'available' | 'downloading' | 'ready' | 'installing' | 'completed' | 'restarting' | 'restart_required' | 'error';
 
+type UpdateOperation = 'check' | 'download' | 'install';
+
 export interface UpdateMetadata {
   version: string;
   publishedAt: string | null;
@@ -106,29 +108,41 @@ export class UpdateService {
       return this.snapshot;
     }
     if (this.busy) return this.snapshot;
-    if (this.snapshot.phase === 'ready') return this.snapshot;
+    if (['ready', 'restart_required'].includes(this.snapshot.phase)) return this.snapshot;
 
     this.busy = true;
+    const retainedMetadata = this.snapshot.availableVersion ? {
+      currentVersion: this.snapshot.currentVersion,
+      availableVersion: this.snapshot.availableVersion,
+      notes: this.snapshot.notes,
+      publishedAt: this.snapshot.publishedAt,
+    } : {};
     await this.closePendingUpdate();
-    this.set({ ...initialSnapshot(), phase: 'checking' });
+    this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'checking' });
     try {
       const update = await this.options.port.check();
       if (update) {
+        const invalidMetadata = validateUpdateMetadata(update);
+        if (invalidMetadata) {
+          await update.close().catch(() => undefined);
+          this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'error', error: invalidMetadata });
+          return this.snapshot;
+        }
         this.pendingUpdate = update;
         this.set({
           ...initialSnapshot(),
           phase: 'available',
-          currentVersion: update.currentVersion,
-          availableVersion: update.version,
-          notes: update.body ?? null,
-          publishedAt: update.date ?? null,
+          currentVersion: normalizeVersion(update.currentVersion),
+          availableVersion: normalizeVersion(update.version),
+          notes: typeof update.body === 'string' ? update.body.slice(0, 20_000) : null,
+          publishedAt: typeof update.date === 'string' ? update.date : null,
         });
       } else {
         const currentVersion = await this.getCurrentVersion();
         this.set({ ...initialSnapshot(), phase: 'up_to_date', currentVersion });
       }
     } catch (error) {
-      this.set({ ...initialSnapshot(), phase: 'error', error: friendlyUpdateError(error) });
+      this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'error', error: friendlyUpdateError(error, 'check') });
     } finally {
       this.busy = false;
     }
@@ -153,7 +167,7 @@ export class UpdateService {
       this.set({ ...this.snapshot, phase: 'ready' });
     } catch (error) {
       this.pendingUpdate = null;
-      this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error) });
+      this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error, 'download') });
       await update.close().catch(() => undefined);
     } finally {
       this.busy = false;
@@ -179,10 +193,24 @@ export class UpdateService {
       }
     } catch (error) {
       this.pendingUpdate = null;
-      this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error) });
+      this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error, 'install') });
     } finally {
       this.pendingUpdate = null;
       await update.close().catch(() => undefined);
+      this.busy = false;
+    }
+    return this.snapshot;
+  }
+
+  async restartApplication(): Promise<UpdateSnapshot> {
+    if (!this.isSupported() || this.busy || this.snapshot.phase !== 'restart_required') return this.snapshot;
+    this.busy = true;
+    try {
+      await this.options.port.relaunch();
+      this.set({ ...this.snapshot, phase: 'restarting', error: null });
+    } catch {
+      this.set({ ...this.snapshot, phase: 'restart_required' });
+    } finally {
       this.busy = false;
     }
     return this.snapshot;
@@ -215,18 +243,50 @@ export class UpdateService {
   }
 }
 
-function friendlyUpdateError(error: unknown): string {
-  const detail = error instanceof Error ? error.message.toLowerCase() : '';
-  if (/(signature|verify)/.test(detail)) {
-    return 'JevCode could not verify the update signature. Do not install this update; contact the maintainer.';
+function validateUpdateMetadata(update: Update): string | null {
+  if (!isSemver(update.currentVersion) || !isSemver(update.version)) {
+    return 'The update information is invalid, so JevCode did not install it. Try again later.';
   }
-  if (/(timeout|network|dns|connect|fetch|request)/.test(detail)) {
-    return 'Could not reach the JevCode update service. Check your connection and try again.';
+  if (update.body != null && typeof update.body !== 'string') {
+    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+  }
+  if (update.date != null && !isRfc3339Date(update.date)) {
+    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+  }
+  return null;
+}
+
+function isSemver(value: unknown): value is string {
+  return typeof value === 'string' && /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value);
+}
+
+function normalizeVersion(version: string): string {
+  return version.startsWith('v') ? version.slice(1) : version;
+}
+
+function isRfc3339Date(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+    && !Number.isNaN(Date.parse(value));
+}
+
+function friendlyUpdateError(error: unknown, operation: UpdateOperation): string {
+  const detail = error instanceof Error ? error.message.toLowerCase() : '';
+  if (/(signature|verify|verification)/.test(detail)) {
+    return 'The update signature was invalid. JevCode did not install it.';
+  }
+  if (/(manifest|metadata|invalid version|semver|parse update)/.test(detail)) {
+    return 'The update information is invalid, so JevCode did not install it. Try again later.';
   }
   if (/(endpoint|configuration|config|public key)/.test(detail)) {
     return 'The updater is not configured for this build. Install the latest release from GitHub.';
   }
-  return 'The update could not be completed. Retry later or install the latest release from GitHub.';
+  if (/(timeout|network|dns|connect|fetch|request)/.test(detail)) {
+    return 'Couldn’t connect to update server. Check your connection and try again.';
+  }
+  if (operation === 'download') return 'Update download failed. JevCode did not install it. Try again later.';
+  if (operation === 'install') return 'Update installation failed. Your current version is still installed. Try again later.';
+  return 'Couldn’t connect to update server. Try again later.';
 }
 
 export function createUpdateService(options: ServiceOptions): UpdateService {

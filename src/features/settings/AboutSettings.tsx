@@ -60,7 +60,7 @@ export function AboutSettings({ online }: { online: boolean }) {
 
       {update.phase === 'downloading' && <div className="about-download-progress" role="status">
         <div><span>Downloading update</span><span>{formatBytes(update.downloadedBytes)}{update.contentLength !== null ? ` of ${formatBytes(update.contentLength)}` : ''}</span></div>
-        {update.contentLength !== null && <progress max={update.contentLength} value={Math.min(update.downloadedBytes, update.contentLength)} aria-label="Update download progress" />}
+        <progress max={update.contentLength ?? undefined} value={update.contentLength === null ? undefined : Math.min(update.downloadedBytes, update.contentLength)} aria-label="Update download progress" />
       </div>}
 
       <div className="about-update-actions">
@@ -69,7 +69,7 @@ export function AboutSettings({ online }: { online: boolean }) {
           Check for Updates
         </button>
         {update.phase === 'available' && <>
-          <button className="account-button connect" onClick={() => void updateService.downloadAvailableUpdate()} disabled={!online || busy}><Download size={14} />Download update</button>
+          <button className="account-button connect" onClick={() => void updateService.installAvailableUpdate()} disabled={!online || busy}><Download size={14} />Update Now</button>
           <button className="account-button quiet" onClick={() => void openRelease()}><ExternalLink size={14} />Release page</button>
         </>}
         {update.phase === 'ready' && <button className="account-button connect" onClick={() => void updateService.installDownloadedUpdate()}><Download size={14} />Install and restart</button>}
@@ -92,7 +92,7 @@ function statusTitle(update: UpdateSnapshot): string {
     case 'completed': return 'Update installed';
     case 'restarting': return 'Restarting JevCode';
     case 'restart_required': return 'Restart required';
-    case 'error': return 'Update check failed';
+    case 'error': return 'Update couldn’t be completed';
     case 'up_to_date': return 'You’re up to date';
     default: return 'Update status';
   }
@@ -100,7 +100,7 @@ function statusTitle(update: UpdateSnapshot): string {
 
 function statusDescription(update: UpdateSnapshot, online: boolean, supported: boolean): string {
   if (update.phase === 'error') return update.error ?? 'The update service could not be reached. Try again later.';
-  if (update.phase === 'available') return 'Review the release notes, then download when you’re ready.';
+  if (update.phase === 'available') return 'An update is ready. Choose Update Now to download and install it.';
   if (update.phase === 'ready') return 'The signed update has been downloaded and can now be installed.';
   if (update.phase === 'restart_required') return 'The update is installed. Close and reopen JevCode to finish.';
   if (update.phase === 'restarting') return 'The update is installed. The application is restarting.';
