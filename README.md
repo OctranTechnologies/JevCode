@@ -659,19 +659,37 @@ installation and shown as a concise error; raw plugin errors are not displayed.
 
 The production endpoint is the HTTPS GitHub Releases static manifest at
 `https://github.com/OctranTechnologies/JevCode/releases/latest/download/latest.json`.
-Tauri selects a bundle-specific OS/architecture entry first, then falls back to
-the generic target: Windows x64 MSI/NSIS, macOS Intel/Apple Silicon app bundles,
-and Linux x64 AppImage/DEB/RPM. The manifest must include both the generic keys
-(`windows-x86_64`, `darwin-x86_64`, `darwin-aarch64`, `linux-x86_64`) and the
-matching installer keys. The default Tauri version comparison accepts only a
-newer version; JevCode explicitly disables downgrades. Signed-version verification
-also binds each artifact signature to the version in the manifest. GitHub's
-`latest` route excludes drafts and prereleases. The release workflow keeps a
-stable release in draft until all platform and installer entries point to HTTPS
-GitHub API asset URLs attached to that release and contain signatures.
-The endpoint currently returns 404 until the first complete stable release is
-published. This follows the official [Tauri updater](https://v2.tauri.app/plugin/updater/)
-static-manifest format and [Tauri GitHub release pipeline](https://v2.tauri.app/distribute/pipelines/github/).
+The Tauri updater selects an installer-specific target before its generic
+OS/architecture fallback. The manifest contract for the artifacts we publish is:
+
+| Installation | Generic target | Installer target | Signed update bundle |
+| --- | --- | --- | --- |
+| Windows x64 MSI | `windows-x86_64` | `windows-x86_64-msi` | MSI |
+| Windows x64 NSIS | `windows-x86_64` | `windows-x86_64-nsis` | NSIS setup executable |
+| macOS Apple Silicon | `darwin-aarch64` | `darwin-aarch64-app` | `.app.tar.gz` |
+| macOS Intel | `darwin-x86_64` | `darwin-x86_64-app` | `.app.tar.gz` |
+| Linux x64 | `linux-x86_64` | `linux-x86_64-appimage` | AppImage |
+
+The generic Windows entry intentionally prefers MSI (`updaterJsonPreferNsis: false`);
+the app's installed bundle type selects the corresponding installer-specific
+entry when available. DEB and RPM installers are published for manual installation;
+Tauri's Linux auto-updater artifact is the AppImage, so DEB/RPM are not listed as
+updater targets. The release validator requires exactly these nine targets, checks
+that their HTTPS GitHub API asset URLs belong to the release, confirms each asset
+has the expected bundle type and an uploaded `.sig` file, and checks that generic
+entries match their configured preferred targets. Tauri performs cryptographic
+signature verification on the client; signed-version verification binds the
+package signature to its manifest version. Downgrades are disabled. GitHub's
+`latest` route excludes drafts and prereleases, and the release workflow rejects
+a tag that is not newer than every published stable release.
+
+The release action creates a stable draft first. A test, signing, platform bundle,
+or manifest failure prevents the publish job from running, leaving the draft out
+of the production endpoint. A draft is promoted only after all platforms pass.
+See the official [Tauri updater guide](https://v2.tauri.app/plugin/updater/),
+[GitHub pipeline guide](https://v2.tauri.app/distribute/pipelines/github/),
+and [tauri-action manifest generator](https://github.com/tauri-apps/tauri-action/blob/dev/src/upload-version-json.ts)
+for the updater format and release tooling.
 
 #### GitHub Actions release procedure
 
@@ -709,9 +727,10 @@ npm run release:patch
   → existing installations detect the update
 ```
 
-The workflow validates that the tag matches every app version file before it
-creates a draft. A build, signing, or manifest validation failure leaves the
-release unpublished. If pushing the tag fails after the version commit reaches
+The workflow validates that the tag matches every app version file, passes the
+release quality gate, and is newer than all published stable releases before it
+creates a draft. A test, platform build, signing, or manifest validation failure
+leaves the release unpublished. If pushing the tag fails after the version commit reaches
 `origin/main`, push the reported tag with `git push origin vX.Y.Z` to resume the
 release.
 
@@ -728,18 +747,51 @@ configuration, logs, and checked-in `.env` files. The public verification key in
 `src-tauri/tauri.conf.json` is safe to commit.
 
 The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
-installers with the official `tauri-apps/tauri-action@v1`. It uploads installers,
-updater packages, `.sig` files, and `latest.json` to a draft GitHub Release. The
-platform jobs run one at a time so the action can merge each platform's entries
-into the same manifest safely. The
-final job runs `scripts/validate-updater-release.mjs`, which checks the manifest
-version, requires all generic and bundle-specific targets for the distributed
-installers, verifies every signature field, and confirms every HTTPS GitHub API
-asset URL belongs to that draft release. It also confirms the generic platform
-entries match the preferred installer used by the generic-target fallback. Only
-then does it publish the release as stable and latest. If a build or
-check fails, the draft remains unpublished and is not served by the stable updater
+installers with the official `tauri-apps/tauri-action@v1`. Its Linux quality job
+runs `npm run check` (formatting, lint, type checks, frontend tests, Rust checks,
+Rust tests and Clippy) before a draft is created. Each platform job must produce
+its installer and every updater bundle/signature it needs. macOS artifact checks
+use the target-specific Rust output directory. The action uploads installers,
+updater packages, `.sig` files, and `latest.json` to the draft. Platform jobs run
+one at a time so the action can merge entries without racing on `latest.json`.
+The final job runs `scripts/validate-updater-release.mjs` against the GitHub
+release assets and downloaded manifest. It rejects missing platforms, wrong
+bundle types, unattached URLs, or missing signature assets. Only then does it
+publish the release as stable and latest. Failed matrix jobs prevent the final
+publish job from running, so incomplete drafts are never served by the stable
 endpoint.
+
+### Update failure behavior and data safety
+
+Network failures, GitHub outages, missing metadata, invalid JSON and unavailable
+assets leave the installed app and its user database alone. Invalid or corrupted
+packages fail Tauri signature verification before installation. Installation
+errors are shown without exposing raw installer paths or plugin details. If the
+app closes during a download, app-data preferences record the requested version;
+on the next launch JevCode checks and downloads it again. Partial bytes are not
+resumed. Repeated checks are serialized. Tasks may continue while a package
+downloads, but install/restart is blocked while a coding task is active. Older or
+repeated stable tags are blocked before draft creation; GitHub's latest stable
+endpoint excludes drafts and prereleases, and a failed platform build cannot
+publish.
+
+Projects, tasks, usage and preferences live in the OS app-data directory in
+`jevcode.sqlite`, outside the application install directory. Provider credentials
+remain in OS credential storage. The updater replaces application bundles and
+does not migrate or delete these stores. SQLite migrations run when the updated
+app starts; updater failures do not issue project or session deletion commands.
+
+For a full hosted upgrade test, publish two sequential stable versions using the
+same signing key, install the first version, then update to the next. Verify the
+version, release notes, progress, restart, and that existing projects and tasks
+remain available. This checkout produced a signed Windows installer, and its
+updater signature was verified against the configured public key; a modified
+copy was rejected. The hosted v0.1.0 → v0.1.1 installation path could not be run
+from this session because the GitHub CLI credentials are invalid, so the remote
+release state and Actions results could not be inspected. Automated tests and CI
+gates cover release metadata, downgrade rejection, interrupted downloads,
+signature failures, active-task protection, and publication preconditions; these
+checks do not substitute for a hosted installation test.
 
 macOS notarization/signing and Windows installer signing still require maintainer
 certificates and are not configured here.
@@ -755,16 +807,17 @@ Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY
 Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-The resulting NSIS updater bundle and its adjacent `.sig` file are written under
+The NSIS updater bundle and its adjacent `.sig` file are written under
 `src-tauri/target/release/bundle/nsis/`. Keep the key in a restricted-access
 encrypted password manager or secrets vault and keep a separate encrypted offline
 backup. Limit access to release maintainers, retain recovery instructions, and
 periodically confirm the backup can be restored without copying the key into the
 repository. Losing or replacing this key requires rotating the configured public
 key and will prevent existing installations from accepting releases signed with
-the old key. A GitHub draft release becomes available to the updater after it is
-published. macOS notarization/signing and Windows installer signing still require
-maintainer certificates and are not configured here.
+the old key. A GitHub draft release becomes available to the updater only after
+publication. Updater package signing is separate from Windows Authenticode and
+Apple Developer ID/notarization. Those platform certificates still require
+maintainer configuration if signed installers and notarized macOS apps are desired.
 
 Provider adapters are covered by offline protocol fixtures. Live API calls require
 user credentials and have not been certified against every provider account/model.

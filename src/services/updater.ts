@@ -415,6 +415,9 @@ function validateUpdateMetadata(update: Update): string | null {
   if (!isSemver(update.currentVersion) || !isSemver(update.version)) {
     return 'The update information is invalid, so JevCode did not install it. Try again later.';
   }
+  if (compareSemver(update.version, update.currentVersion) <= 0) {
+    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+  }
   if (update.body != null && typeof update.body !== 'string') {
     return 'The update information is invalid, so JevCode did not install it. Try again later.';
   }
@@ -425,7 +428,48 @@ function validateUpdateMetadata(update: Update): string | null {
 }
 
 function isSemver(value: unknown): value is string {
-  return typeof value === 'string' && /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value);
+  return parseSemver(value) !== null;
+}
+
+function parseSemver(value: unknown): { major: bigint; minor: bigint; patch: bigint; prerelease: string[] } | null {
+  if (typeof value !== 'string' || value.length > 128) return null;
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value);
+  if (!match) return null;
+  const prerelease = match[4]?.split('.') ?? [];
+  if (prerelease.some(identifier => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith('0'))) return null;
+  return { major: BigInt(match[1]), minor: BigInt(match[2]), patch: BigInt(match[3]), prerelease };
+}
+
+function compareSemver(left: string, right: string): number {
+  const a = parseSemver(left);
+  const b = parseSemver(right);
+  if (!a || !b) return Number.NEGATIVE_INFINITY;
+  for (const key of ['major', 'minor', 'patch'] as const) {
+    if (a[key] < b[key]) return -1;
+    if (a[key] > b[key]) return 1;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    if (a.prerelease.length === b.prerelease.length) return 0;
+    return a.prerelease.length === 0 ? 1 : -1;
+  }
+  const sharedLength = Math.min(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const leftIdentifier = a.prerelease[index];
+    const rightIdentifier = b.prerelease[index];
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) {
+      const leftNumber = BigInt(leftIdentifier);
+      const rightNumber = BigInt(rightIdentifier);
+      if (leftNumber < rightNumber) return -1;
+      if (leftNumber > rightNumber) return 1;
+    } else if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    } else if (leftIdentifier !== rightIdentifier) {
+      return leftIdentifier < rightIdentifier ? -1 : 1;
+    }
+  }
+  return Math.sign(a.prerelease.length - b.prerelease.length);
 }
 
 function normalizeVersion(version: string): string {

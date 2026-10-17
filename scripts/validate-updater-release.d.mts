@@ -1,5 +1,10 @@
 export const requiredUpdaterTargets: string[];
 
+export function parseUpdaterManifest(json: string): {
+  manifest: unknown;
+  error: string | null;
+};
+
 export interface UpdaterReleaseManifest {
   version?: string;
   notes?: unknown;
@@ -9,6 +14,8 @@ export interface UpdaterReleaseManifest {
 
 export interface GithubReleaseAsset {
   url?: string;
+  name?: string;
+  size?: number;
 }
 
 export function validateUpdaterRelease(input: {

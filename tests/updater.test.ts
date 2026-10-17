@@ -207,6 +207,20 @@ describe('UpdateService', () => {
     expect(update.download).not.toHaveBeenCalled();
   });
 
+  it('rejects an equal or older release before offering an update', async () => {
+    for (const version of ['0.1.0', '0.0.9']) {
+      const update = makeUpdate({ version });
+      const { port } = createPort({ check: vi.fn(async () => update) });
+      const service = createUpdateService({ enabled: () => true, port });
+
+      const result = await service.checkForUpdate();
+
+      expect(result).toMatchObject({ phase: 'error', error: 'The update information is invalid, so JevCode did not install it. Try again later.' });
+      expect(update.close).toHaveBeenCalledOnce();
+      expect(update.download).not.toHaveBeenCalled();
+    }
+  });
+
   it('redacts updater details when installation fails', async () => {
     const update = makeUpdate({ install: vi.fn(async () => { throw new Error('private installer path C:/temp/secret.msi'); }) });
     const { port } = createPort({ check: vi.fn(async () => update) });

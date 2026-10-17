@@ -13,15 +13,30 @@ export const requiredUpdaterTargets = [
   'darwin-aarch64-app',
   'darwin-x86_64-app',
   'linux-x86_64-appimage',
-  'linux-x86_64-deb',
-  'linux-x86_64-rpm',
 ];
+
+export function parseUpdaterManifest(json) {
+  if (typeof json !== 'string') return { manifest: null, error: 'Updater manifest is not text.' };
+  try {
+    return { manifest: JSON.parse(json), error: null };
+  } catch {
+    return { manifest: null, error: 'Updater manifest is malformed JSON.' };
+  }
+}
 
 const preferredTargets = {
   'windows-x86_64': 'windows-x86_64-msi',
   'darwin-aarch64': 'darwin-aarch64-app',
   'darwin-x86_64': 'darwin-x86_64-app',
   'linux-x86_64': 'linux-x86_64-appimage',
+};
+
+const targetAssetSuffix = {
+  'windows-x86_64-msi': '.msi',
+  'windows-x86_64-nsis': '-setup.exe',
+  'darwin-aarch64-app': '.app.tar.gz',
+  'darwin-x86_64-app': '.app.tar.gz',
+  'linux-x86_64-appimage': '.appimage',
 };
 
 export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
@@ -46,10 +61,15 @@ export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
   const actualTargets = Object.keys(manifest.platforms).sort();
   const expectedTargets = [...requiredUpdaterTargets].sort();
   if (JSON.stringify(actualTargets) !== JSON.stringify(expectedTargets)) {
-    errors.push(`Manifest must contain exactly these platform and installer targets: ${expectedTargets.join(', ')}.`);
+    errors.push(`Manifest must contain exactly these supported platform and updater targets: ${expectedTargets.join(', ')}.`);
   }
 
+  if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+    errors.push('GitHub repository must use the owner/repository format.');
+    return errors;
+  }
   const expectedApiPath = `/repos/${repository}/releases/assets/`;
+  const expectedApiPathPattern = expectedApiPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const target of requiredUpdaterTargets) {
     const entry = manifest.platforms[target];
     if (!entry || typeof entry !== 'object') {
@@ -70,13 +90,37 @@ export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
     }
 
     if (artifactUrl.protocol !== 'https:' || artifactUrl.hostname !== 'api.github.com'
-      || artifactUrl.search || artifactUrl.hash || !artifactUrl.pathname.startsWith(expectedApiPath)) {
+      || artifactUrl.port || artifactUrl.username || artifactUrl.password
+      || artifactUrl.search || artifactUrl.hash || !new RegExp(`^${expectedApiPathPattern}\\d+$`).test(artifactUrl.pathname)) {
       errors.push(`Manifest artifact URL must be an HTTPS GitHub API asset URL for ${target}.`);
       continue;
     }
 
-    if (!assets.some(asset => asset?.url === entry.url)) {
+    const asset = assets.find(candidate => candidate?.url === entry.url);
+    if (!asset) {
       errors.push(`Manifest artifact for ${target} is not attached to this GitHub Release.`);
+      continue;
+    }
+
+    const expectedTarget = preferredTargets[target] ?? target;
+    const expectedSuffix = targetAssetSuffix[expectedTarget];
+    const hasUnsafeAssetName = typeof asset.name === 'string'
+      && [...asset.name].some(character => {
+        const code = character.charCodeAt(0);
+        return character === '/' || character === '\\' || code < 0x20 || code === 0x7f;
+      });
+    if (!expectedSuffix || typeof asset.name !== 'string'
+      || hasUnsafeAssetName
+      || !Number.isSafeInteger(asset.size) || asset.size <= 0
+      || !asset.name.toLowerCase().endsWith(expectedSuffix.toLowerCase())) {
+      errors.push(`Manifest artifact for ${target} does not match the expected ${expectedTarget} updater bundle.`);
+    }
+
+    const signatureAsset = assets.find(candidate => candidate?.name === `${asset.name}.sig`);
+    if (!signatureAsset || !Number.isSafeInteger(signatureAsset.size) || signatureAsset.size <= 0
+      || typeof signatureAsset.url !== 'string'
+      || !new RegExp(`^https://api\\.github\\.com${expectedApiPathPattern}\\d+$`).test(signatureAsset.url)) {
+      errors.push(`Uploaded updater signature asset is missing for ${target}.`);
     }
   }
 
@@ -84,7 +128,7 @@ export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
     const base = manifest.platforms[baseTarget];
     const preferred = manifest.platforms[preferredTarget];
     if (base && preferred && (base.url !== preferred.url || base.signature !== preferred.signature)) {
-      errors.push(`Generic target ${baseTarget} must match its preferred installer target ${preferredTarget}.`);
+      errors.push(`Generic target ${baseTarget} must match its preferred updater target ${preferredTarget}.`);
     }
   }
 
@@ -99,7 +143,9 @@ export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
 }
 
 function readJson(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
+  const parsed = parseUpdaterManifest(readFileSync(path, 'utf8'));
+  if (parsed.error) throw new Error(parsed.error);
+  return parsed.manifest;
 }
 
 function getArgument(name) {
@@ -117,11 +163,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(2);
   }
 
-  const manifest = readJson(manifestPath);
-  const assets = readJson(assetsPath);
-  const errors = validateUpdaterRelease({ manifest, assets, repository, tag });
-  if (errors.length) {
-    for (const error of errors) console.error(error);
+  try {
+    const manifest = readJson(manifestPath);
+    const assets = readJson(assetsPath);
+    const errors = validateUpdaterRelease({ manifest, assets, repository, tag });
+    if (errors.length) {
+      for (const error of errors) console.error(error);
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'Updater release validation failed.');
     process.exit(1);
   }
   console.log(`Validated signed updater manifest for ${tag} (${requiredUpdaterTargets.join(', ')}).`);
