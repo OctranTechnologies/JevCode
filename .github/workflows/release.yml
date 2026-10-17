@@ -2,45 +2,139 @@ name: Desktop release
 
 on:
   push:
-    tags: ["v*.*.*"]
+    tags:
+      - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: tauri-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Require a stable tag matching the Tauri version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must use stable semantic versions such as v0.1.0."
+            exit 1
+          fi
+
+          APP_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [[ "$RELEASE_TAG" != "v$APP_VERSION" ]]; then
+            echo "::error::Tag $RELEASE_TAG does not match src-tauri/tauri.conf.json version $APP_VERSION."
+            exit 1
+          fi
+
+  prepare:
+    name: Prepare draft release
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create or reuse the draft for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          releases="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          matching="$(jq -c --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)]' <<< "$releases")"
+          count="$(jq 'length' <<< "$matching")"
+
+          if [[ "$count" -eq 0 ]]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$RELEASE_TAG" \
+              -f name="JevCode $RELEASE_TAG" \
+              -f body="Installers and signed updater packages for JevCode $RELEASE_TAG." \
+              -F draft=true \
+              -F prerelease=false > /dev/null
+          elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]]; then
+            echo "Reusing the existing draft release for $RELEASE_TAG."
+          else
+            echo "::error::A non-draft release already exists for $RELEASE_TAG, or multiple releases use this tag. Refusing to replace a published release."
+            exit 1
+          fi
+
   build:
+    name: Build ${{ matrix.label }}
+    needs: prepare
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-24.04
-            args: ""
           - platform: windows-latest
+            label: Windows x64
+            os: windows
+            rust-target: ""
             args: ""
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
+            label: macOS Apple Silicon
+            os: macos
+            rust-target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
           - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
+            label: macOS Intel
+            os: macos
+            rust-target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - platform: ubuntu-24.04
+            label: Linux x64
+            os: linux
+            rust-target: ""
+            args: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
+
       - name: Install Linux desktop dependencies
-        if: startsWith(matrix.platform, 'ubuntu-')
+        if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev patchelf xdg-utils
+
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ startsWith(matrix.args, '--target') && (contains(matrix.args, 'aarch64') && 'aarch64-apple-darwin' || 'x86_64-apple-darwin') || '' }}
+          targets: ${{ matrix.rust-target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ./src-tauri -> target
-      - run: npm ci
-      - uses: tauri-apps/tauri-action@v1
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Verify updater signing key is configured
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::Configure the TAURI_SIGNING_PRIVATE_KEY repository secret before creating a release tag."
+            exit 1
+          fi
+
+      - name: Build, sign, and upload Tauri release assets
+        id: tauri
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -48,9 +142,112 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: JevCode ${{ github.ref_name }}
-          releaseBody: Download the installer for your operating system from the assets below.
+          releaseBody: Installers and signed updater packages for JevCode ${{ github.ref_name }}.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+          retryAttempts: 3
           args: ${{ matrix.args }}
+
+      - name: Verify this platform produced a signed updater package and installer
+        shell: bash
+        env:
+          PLATFORM_KIND: ${{ matrix.os }}
+        run: |
+          bundle_dir="src-tauri/target/release/bundle"
+          if [[ ! -d "$bundle_dir" ]]; then
+            echo "::error::Tauri bundle output directory is missing."
+            exit 1
+          fi
+
+          signature="$(find "$bundle_dir" -type f -name '*.sig' -print -quit)"
+          if [[ -z "$signature" ]]; then
+            echo "::error::No updater signature was generated for $PLATFORM_KIND. Check the signing key and Tauri bundle configuration."
+            exit 1
+          fi
+
+          case "$PLATFORM_KIND" in
+            windows)
+              installer="$(find "$bundle_dir" -type f \( -iname '*.msi' -o -iname '*-setup.exe' \) -print -quit)"
+              ;;
+            macos)
+              installer="$(find "$bundle_dir" -type f -iname '*.dmg' -print -quit)"
+              ;;
+            linux)
+              installer="$(find "$bundle_dir" -type f \( -iname '*.deb' -o -iname '*.appimage' \) -print -quit)"
+              ;;
+            *)
+              echo "::error::Unexpected release platform: $PLATFORM_KIND"
+              exit 1
+              ;;
+          esac
+
+          if [[ -z "$installer" ]]; then
+            echo "::error::No expected installer was generated for $PLATFORM_KIND."
+            exit 1
+          fi
+
+  publish:
+    name: Validate and publish stable release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Validate complete draft release before publishing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          releases="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          release="$(jq -ce --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag and .draft == true)] | if length == 1 then .[0] else error("expected exactly one draft release for the tag") end' <<< "$releases")"
+          release_id="$(jq -r '.id' <<< "$release")"
+          assets="$(jq -c '.assets' <<< "$release")"
+
+          jq -e '
+            any(.[]; .name == "latest.json") and
+            any(.[]; ((.name | ascii_downcase | endswith(".msi")) or (.name | ascii_downcase | endswith("-setup.exe")))) and
+            any(.[]; .name | ascii_downcase | endswith(".dmg")) and
+            any(.[]; ((.name | ascii_downcase | endswith(".deb")) or (.name | ascii_downcase | endswith(".appimage")))) and
+            (map(select(.name | ascii_downcase | endswith(".sig"))) | length >= 4)
+          ' <<< "$assets" > /dev/null || {
+            echo "::error::Draft release is missing latest.json, a Windows/macOS/Linux installer, or one of the four platform signatures. It will remain unpublished."
+            exit 1
+          }
+
+          manifest_id="$(jq -r '.[] | select(.name == "latest.json") | .id' <<< "$assets")"
+          gh api \
+            --header "Accept: application/octet-stream" \
+            --output "$RUNNER_TEMP/latest.json" \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id"
+
+          jq -e \
+            --arg version "${RELEASE_TAG#v}" \
+            --argjson assets "$assets" '
+              .version == $version and
+              ((.platforms) as $platforms |
+                all(["windows-x86_64", "darwin-aarch64", "darwin-x86_64", "linux-x86_64"][];
+                  . as $target |
+                  ($platforms[$target] // null) as $entry |
+                  $entry != null and
+                  (if ($entry.url | type) == "string" then ($entry.url | length) > 0 else false end) and
+                  (if ($entry.signature | type) == "string" then ($entry.signature | length) >= 40 else false end) and
+                  any($assets[]; .url == $entry.url)
+                )
+              )
+            ' "$RUNNER_TEMP/latest.json" > /dev/null || {
+              echo "::error::latest.json does not contain valid signed assets for Windows x64, macOS Intel/Apple Silicon, and Linux x64. The draft will remain unpublished."
+              exit 1
+            }
+
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -F prerelease=false \
+            -f make_latest=true \
+            --jq 'select(.draft == false) | .html_url' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report published release
+        if: success()
+        run: echo "Published JevCode ${{ github.ref_name }} after validating every platform artifact and updater manifest."
