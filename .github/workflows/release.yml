@@ -307,8 +307,7 @@ jobs:
           manifest_id="$(jq -r '.[] | select(.name == "latest.json") | .id' <<< "$assets")"
           gh api \
             --header "Accept: application/octet-stream" \
-            --output "$RUNNER_TEMP/latest.json" \
-            "repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id"
+            "repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id" > "$RUNNER_TEMP/latest.json"
 
           node scripts/validate-updater-release.mjs \
             --manifest "$RUNNER_TEMP/latest.json" \
