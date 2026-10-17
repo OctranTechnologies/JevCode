@@ -602,7 +602,10 @@ mod tests {
         assert!(valid_project_name("A normal project"));
         assert!(!valid_project_name("../escape"));
         assert!(!valid_project_name("folder/name"));
+        #[cfg(windows)]
         assert!(!valid_project_name("CON"));
+        #[cfg(not(windows))]
+        assert!(valid_project_name("CON"));
     }
 
     #[cfg(unix)]
