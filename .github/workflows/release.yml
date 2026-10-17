@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Require a stable tag matching the Tauri version
+      - name: Require a stable tag matching every app version file
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -28,11 +28,7 @@ jobs:
             exit 1
           fi
 
-          APP_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          if [[ "$RELEASE_TAG" != "v$APP_VERSION" ]]; then
-            echo "::error::Tag $RELEASE_TAG does not match src-tauri/tauri.conf.json version $APP_VERSION."
-            exit 1
-          fi
+          node scripts/release.mjs verify "$RELEASE_TAG"
 
   prepare:
     name: Prepare draft release

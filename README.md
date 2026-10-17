@@ -666,10 +666,47 @@ static-manifest format and [Tauri GitHub release pipeline](https://v2.tauri.app/
 
 #### GitHub Actions release procedure
 
-The workflow at `.github/workflows/release.yml` runs for stable semantic-version
-tags such as `v0.1.0`. Before tagging, update the application version in
-`src-tauri/tauri.conf.json` so it exactly matches the tag. Configure these
-repository Actions secrets:
+`src-tauri/tauri.conf.json` is the single source of truth for the app version,
+following the [Tauri versioning recommendation](https://v2.tauri.app/distribute/#versioning).
+The release commands synchronize that version to `package.json`,
+`package-lock.json`, `src-tauri/Cargo.toml`, and the JevCode entry in
+`src-tauri/Cargo.lock`. `npm run version:check` verifies all six version fields;
+the release workflow runs the same check against the pushed tag before preparing
+a draft.
+
+Commit your application changes to `main`, make sure the working tree is clean,
+then preview or run one of these commands:
+
+```sh
+npm run release:patch -- --dry-run
+npm run release:patch
+# or: npm run release:minor / npm run release:major
+```
+
+The release command verifies that local `main` matches `origin/main`, calculates
+the next stable semantic version, synchronizes all version files, and runs
+`npm run check`. A failed check restores the version files and stops before any
+release commit or tag is created. After successful checks it commits the version
+bump, creates an annotated tag such as `v0.2.0`, pushes `main`, and then pushes
+the tag. The tag starts `.github/workflows/release.yml`:
+
+```text
+npm run release:patch
+  → version files synchronized and checks pass
+  → version commit and vX.Y.Z tag pushed
+  → GitHub Actions builds Windows, macOS, and Linux
+  → signed updater artifacts and signatures generated
+  → complete GitHub Release published
+  → existing installations detect the update
+```
+
+The workflow validates that the tag matches every app version file before it
+creates a draft. A build, signing, or manifest validation failure leaves the
+release unpublished. If pushing the tag fails after the version commit reaches
+`origin/main`, push the reported tag with `git push origin vX.Y.Z` to resume the
+release.
+
+Configure these repository Actions secrets before the first release:
 
 - `TAURI_SIGNING_PRIVATE_KEY`: the complete private updater key contents.
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the key password, or an empty value for
@@ -680,13 +717,6 @@ no personal access token is needed. The signing key is only passed to the Tauri
 build step and is never printed. Keep the private key out of Git, application
 configuration, logs, and checked-in `.env` files. The public verification key in
 `src-tauri/tauri.conf.json` is safe to commit.
-
-After committing the version change and workflow, push a matching tag:
-
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
 
 The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
 installers with the official `tauri-apps/tauri-action@v1`. It uploads installers,
