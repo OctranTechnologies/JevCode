@@ -4,7 +4,7 @@ import { Brand } from '../../components/Brand';
 import { command } from '../../lib/ipc';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
 
-export function AboutSettings({ online }: { online: boolean }) {
+export function AboutSettings({ online, agentActive }: { online: boolean; agentActive: boolean }) {
   const [update, setUpdate] = useState<UpdateSnapshot>(() => updateService.getSnapshot());
   const [releaseError, setReleaseError] = useState<string | null>(null);
 
@@ -69,10 +69,11 @@ export function AboutSettings({ online }: { online: boolean }) {
           Check for Updates
         </button>
         {update.phase === 'available' && <>
-          <button className="account-button connect" onClick={() => void updateService.installAvailableUpdate()} disabled={!online || busy}><Download size={14} />Update Now</button>
+          <button className="account-button connect" onClick={() => void updateService.downloadAvailableUpdate()} disabled={!online || busy}><Download size={14} />Download update</button>
           <button className="account-button quiet" onClick={() => void openRelease()}><ExternalLink size={14} />Release page</button>
         </>}
-        {update.phase === 'ready' && <button className="account-button connect" onClick={() => void updateService.installDownloadedUpdate()}><Download size={14} />Install and restart</button>}
+        {update.phase === 'ready' && <button className="account-button connect" onClick={() => void updateService.installDownloadedUpdate()} disabled={agentActive}><Download size={14} />Install and restart</button>}
+        {update.phase === 'ready' && agentActive && <p className="updates-restart-hold">Finish the active task before installing and restarting JevCode.</p>}
       </div>
       {releaseError && <p className="about-update-error" role="alert">{releaseError}</p>}
       {supported && !online && <p className="about-help">Reconnect to check for or download an update.</p>}
@@ -100,7 +101,7 @@ function statusTitle(update: UpdateSnapshot): string {
 
 function statusDescription(update: UpdateSnapshot, online: boolean, supported: boolean): string {
   if (update.phase === 'error') return update.error ?? 'The update service could not be reached. Try again later.';
-  if (update.phase === 'available') return 'An update is ready. Choose Update Now to download and install it.';
+  if (update.phase === 'available') return 'A signed release is ready to download.';
   if (update.phase === 'ready') return 'The signed update has been downloaded and can now be installed.';
   if (update.phase === 'restart_required') return 'The update is installed. Close and reopen JevCode to finish.';
   if (update.phase === 'restarting') return 'The update is installed. The application is restarting.';

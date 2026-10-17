@@ -131,7 +131,7 @@ describe('UpdateService', () => {
     expect(phases).toContain('installing');
     expect(phases).toContain('completed');
     expect(result.phase).toBe('restarting');
-    expect(update.install).toHaveBeenCalledOnce();
+    expect(update.install).toHaveBeenCalledWith({ restartAfterInstall: false });
     expect(update.close).toHaveBeenCalledOnce();
     expect(port.relaunch).toHaveBeenCalledOnce();
   });
@@ -170,7 +170,7 @@ describe('UpdateService', () => {
     const service = createUpdateService({ enabled: () => true, port });
     await service.checkForUpdate();
 
-    const result = await service.installAvailableUpdate();
+    const result = await service.downloadAvailableUpdate();
 
     expect(result).toMatchObject({ phase: 'error', error: 'The update signature was invalid. JevCode did not install it.' });
     expect(signedUpdate?.install).not.toHaveBeenCalled();
@@ -182,7 +182,7 @@ describe('UpdateService', () => {
     const service = createUpdateService({ enabled: () => true, port });
     await service.checkForUpdate();
 
-    const result = await service.installAvailableUpdate();
+    const result = await service.downloadAvailableUpdate();
 
     expect(result.phase).toBe('error');
     expect(result.error).toBe('Update download failed. JevCode did not install it. Try again later.');
@@ -223,6 +223,85 @@ describe('UpdateService', () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(port.check).toHaveBeenCalledOnce();
     stop();
+  });
+
+  it('does not schedule automatic checks when the saved preference is off', async () => {
+    vi.useFakeTimers();
+    const { port } = createPort();
+    const service = createUpdateService({ enabled: () => true, port, initialCheckDelayMs: 50, checkIntervalMs: 100 });
+    service.setPreferences({ automaticallyCheck: false, automaticallyDownload: false, channel: 'stable' });
+
+    const stop = service.startAutomaticChecks();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(port.check).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('downloads an update in the background when automatic download is enabled', async () => {
+    const { port, update } = createPort();
+    const service = createUpdateService({ enabled: () => true, port });
+    service.setPreferences({ automaticallyCheck: true, automaticallyDownload: true, channel: 'stable' });
+
+    const result = await service.checkForUpdate();
+
+    expect(result.phase).toBe('ready');
+    expect(update.download).toHaveBeenCalledOnce();
+    expect(update.install).not.toHaveBeenCalled();
+    expect(port.relaunch).not.toHaveBeenCalled();
+  });
+
+  it('does not check or download twice when an update check is already running', async () => {
+    let finish!: (update: Update | null) => void;
+    const update = makeUpdate();
+    const check = vi.fn(() => new Promise<Update | null>(resolve => { finish = resolve; }));
+    const { port } = createPort({ check });
+    const service = createUpdateService({ enabled: () => true, port });
+
+    const first = service.checkForUpdate();
+    const second = await service.checkForUpdate();
+    finish(update);
+    const result = await first;
+
+    expect(second.phase).toBe('checking');
+    expect(result.phase).toBe('available');
+    expect(check).toHaveBeenCalledOnce();
+  });
+
+  it('waits to install or restart while an agent task is active', async () => {
+    const { port, update } = createPort();
+    const service = createUpdateService({ enabled: () => true, port });
+    let agentActive = true;
+    service.setAgentActivityCheck(() => agentActive);
+    await service.checkForUpdate();
+    await service.downloadAvailableUpdate();
+
+    const blockedInstall = await service.installDownloadedUpdate();
+
+    expect(blockedInstall.phase).toBe('ready');
+    expect(update.install).not.toHaveBeenCalled();
+    agentActive = false;
+    const installed = await service.installDownloadedUpdate();
+    expect(installed.phase).toBe('restarting');
+    expect(port.relaunch).toHaveBeenCalledOnce();
+  });
+
+  it('does not relaunch if an agent becomes active during installation', async () => {
+    const { port, update } = createPort();
+    let agentActive = false;
+    update.install = vi.fn(async () => { agentActive = true; });
+    const service = createUpdateService({ enabled: () => true, port });
+    service.setAgentActivityCheck(() => agentActive);
+    await service.checkForUpdate();
+    await service.downloadAvailableUpdate();
+
+    const result = await service.installDownloadedUpdate();
+
+    expect(result.phase).toBe('restart_required');
+    expect(port.relaunch).not.toHaveBeenCalled();
+    agentActive = false;
+    expect((await service.restartApplication()).phase).toBe('restarting');
+    expect(port.relaunch).toHaveBeenCalledOnce();
   });
 
   it('uses a safe error message instead of displaying raw update service details', async () => {

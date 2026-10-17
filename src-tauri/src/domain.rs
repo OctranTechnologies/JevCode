@@ -94,6 +94,34 @@ pub struct ModelPreferences {
     pub recent: Vec<ModelReference>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePreferences {
+    #[serde(default = "default_true")]
+    pub automatically_check: bool,
+    #[serde(default)]
+    pub automatically_download: bool,
+    #[serde(default)]
+    pub channel: UpdateChannel,
+}
+
+impl Default for UpdatePreferences {
+    fn default() -> Self {
+        Self {
+            automatically_check: true,
+            automatically_download: false,
+            channel: UpdateChannel::Stable,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {

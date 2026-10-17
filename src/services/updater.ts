@@ -2,6 +2,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { isTauri } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import type { UpdatePreferences } from '../types/domain';
 
 export type UpdatePhase = 'disabled' | 'idle' | 'checking' | 'up_to_date' | 'available' | 'downloading' | 'ready' | 'installing' | 'completed' | 'restarting' | 'restart_required' | 'error';
 
@@ -52,6 +53,8 @@ export class UpdateService {
   private snapshot = initialSnapshot();
   private pendingUpdate: Update | null = null;
   private busy = false;
+  private preferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable' };
+  private agentActivityCheck: () => boolean = () => false;
   private readonly listeners = new Set<(snapshot: UpdateSnapshot) => void>();
 
   constructor(private readonly options: ServiceOptions) {}
@@ -61,6 +64,14 @@ export class UpdateService {
   }
 
   getSnapshot = (): UpdateSnapshot => this.snapshot;
+
+  setPreferences(preferences: UpdatePreferences): void {
+    this.preferences = preferences;
+  }
+
+  setAgentActivityCheck(check: () => boolean): void {
+    this.agentActivityCheck = check;
+  }
 
   async getCurrentVersion(): Promise<string | null> {
     try {
@@ -87,7 +98,7 @@ export class UpdateService {
   };
 
   startAutomaticChecks(): () => void {
-    if (!this.isSupported()) return () => undefined;
+    if (!this.isSupported() || !this.preferences.automaticallyCheck) return () => undefined;
 
     let active = true;
     const run = () => {
@@ -117,8 +128,8 @@ export class UpdateService {
       notes: this.snapshot.notes,
       publishedAt: this.snapshot.publishedAt,
     } : {};
-    await this.closePendingUpdate();
     this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'checking' });
+    await this.closePendingUpdate();
     try {
       const update = await this.options.port.check();
       if (update) {
@@ -126,17 +137,17 @@ export class UpdateService {
         if (invalidMetadata) {
           await update.close().catch(() => undefined);
           this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'error', error: invalidMetadata });
-          return this.snapshot;
+        } else {
+          this.pendingUpdate = update;
+          this.set({
+            ...initialSnapshot(),
+            phase: 'available',
+            currentVersion: normalizeVersion(update.currentVersion),
+            availableVersion: normalizeVersion(update.version),
+            notes: typeof update.body === 'string' ? update.body.slice(0, 20_000) : null,
+            publishedAt: typeof update.date === 'string' ? update.date : null,
+          });
         }
-        this.pendingUpdate = update;
-        this.set({
-          ...initialSnapshot(),
-          phase: 'available',
-          currentVersion: normalizeVersion(update.currentVersion),
-          availableVersion: normalizeVersion(update.version),
-          notes: typeof update.body === 'string' ? update.body.slice(0, 20_000) : null,
-          publishedAt: typeof update.date === 'string' ? update.date : null,
-        });
       } else {
         const currentVersion = await this.getCurrentVersion();
         this.set({ ...initialSnapshot(), phase: 'up_to_date', currentVersion });
@@ -145,6 +156,9 @@ export class UpdateService {
       this.set({ ...initialSnapshot(), ...retainedMetadata, phase: 'error', error: friendlyUpdateError(error, 'check') });
     } finally {
       this.busy = false;
+    }
+    if (this.snapshot.phase === 'available' && this.preferences.automaticallyDownload) {
+      return this.downloadAvailableUpdate();
     }
     return this.snapshot;
   }
@@ -177,20 +191,17 @@ export class UpdateService {
 
   async installDownloadedUpdate(): Promise<UpdateSnapshot> {
     if (!this.isSupported() || this.busy || !this.pendingUpdate || this.snapshot.phase !== 'ready') return this.snapshot;
+    if (this.agentActivityCheck()) return this.snapshot;
 
     this.busy = true;
     const update = this.pendingUpdate;
     this.set({ ...this.snapshot, phase: 'installing', error: null });
     try {
-      await update.install();
+      await update.install({ restartAfterInstall: false });
       this.pendingUpdate = null;
       this.set({ ...this.snapshot, phase: 'completed' });
-      try {
-        await this.options.port.relaunch();
-        this.set({ ...this.snapshot, phase: 'restarting' });
-      } catch {
-        this.set({ ...this.snapshot, phase: 'restart_required' });
-      }
+      if (this.agentActivityCheck()) this.set({ ...this.snapshot, phase: 'restart_required' });
+      else await this.relaunchOrRequireRestart();
     } catch (error) {
       this.pendingUpdate = null;
       this.set({ ...this.snapshot, phase: 'error', error: friendlyUpdateError(error, 'install') });
@@ -204,6 +215,7 @@ export class UpdateService {
 
   async restartApplication(): Promise<UpdateSnapshot> {
     if (!this.isSupported() || this.busy || this.snapshot.phase !== 'restart_required') return this.snapshot;
+    if (this.agentActivityCheck()) return this.snapshot;
     this.busy = true;
     try {
       await this.options.port.relaunch();
@@ -216,9 +228,17 @@ export class UpdateService {
     return this.snapshot;
   }
 
-  async installAvailableUpdate(): Promise<UpdateSnapshot> {
-    const downloaded = await this.downloadAvailableUpdate();
-    return downloaded.phase === 'ready' ? this.installDownloadedUpdate() : downloaded;
+  private async relaunchOrRequireRestart(): Promise<void> {
+    if (this.agentActivityCheck()) {
+      this.set({ ...this.snapshot, phase: 'restart_required' });
+      return;
+    }
+    try {
+      await this.options.port.relaunch();
+      this.set({ ...this.snapshot, phase: 'restarting' });
+    } catch {
+      this.set({ ...this.snapshot, phase: 'restart_required' });
+    }
   }
 
   private onDownloadEvent(event: DownloadEvent): void {
