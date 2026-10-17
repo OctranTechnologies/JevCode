@@ -125,6 +125,7 @@ pub fn run() {
             commands::get_provider_available_models,
             commands::frontend_log,
             commands::set_permission_mode,
+            commands::save_update_preferences,
             commands::list_permission_rules,
             commands::revoke_permission_rule,
             commands::list_mcp_servers,

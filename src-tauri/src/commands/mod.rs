@@ -76,6 +76,7 @@ pub struct Bootstrap {
     permission_policy: PermissionPolicy,
     model_preferences: ModelPreferences,
     openai_auth_status: OpenAiAuthStatus,
+    update_preferences: UpdatePreferences,
 }
 
 fn models_for_provider(state: &SharedState, provider: &Provider) -> AppResult<Vec<Model>> {
@@ -170,6 +171,7 @@ pub fn bootstrap(state: State<'_, SharedState>) -> AppResult<Bootstrap> {
         },
         model_preferences: state.database.model_preferences()?,
         openai_auth_status,
+        update_preferences: state.database.update_preferences()?,
     })
 }
 
@@ -1643,6 +1645,15 @@ pub fn set_permission_mode(
 ) -> AppResult<PermissionMode> {
     state.database.set_permission_mode(mode)?;
     Ok(mode)
+}
+
+#[tauri::command]
+pub fn save_update_preferences(
+    input: UpdatePreferences,
+    state: State<'_, SharedState>,
+) -> AppResult<UpdatePreferences> {
+    state.database.save_update_preferences(&input)?;
+    Ok(input)
 }
 
 #[tauri::command]

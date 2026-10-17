@@ -701,14 +701,17 @@ session restoration. There is not yet a separate packaged-app integration suite.
 
 JevCode uses the official Tauri 2 updater plugins. Release builds create signed
 updater artifacts, and the Tauri GitHub Action publishes their signatures and a
-`latest.json` manifest to the GitHub release. The app checks for updates after
-launch and every 12 hours. When one is available, a compact dialog shows its version
-and release notes with Later and Update Now actions. Update Now downloads and
-installs the package in sequence, showing live progress and downloaded size; the
-user can return to work while a download continues. The current Tauri 2 JavaScript
-updater API does not expose cancellation for an in-progress download. Settings →
-About provides a manual check and mirrors update status. Update checks are disabled
-in development builds. Tauri verifies each bundle against the public key in
+`latest.json` manifest to the GitHub release. In release builds, JevCode checks
+for updates after the desktop bootstrap and main interface have rendered, then
+every 12 hours. Settings → Updates stores preferences in SQLite: automatic checks
+are on by default, automatic downloads are off, and Stable is the only channel.
+Available releases appear in a compact banner; an up-to-date check stays quiet.
+When enabled, automatic downloads run in the background and show progress. The
+user must explicitly install and restart, and JevCode blocks those actions while
+any task is queued, running, streaming, or waiting for input or approval. The
+current Tauri 2 JavaScript updater API does not expose cancellation for an
+in-progress download. Settings → Updates and About both provide a manual check.
+Update checks are disabled in development builds. Tauri verifies each bundle against the public key in
 `src-tauri/tauri.conf.json`, and the app restarts after installation when the
 platform requires it. Signed-version verification is enabled too, so the manifest
 cannot pair a valid package signature

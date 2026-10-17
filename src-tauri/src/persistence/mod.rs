@@ -736,6 +736,29 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_preferences(&self) -> AppResult<UpdatePreferences> {
+        let value: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM app_preferences WHERE key = 'update_preferences'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn save_update_preferences(&self, preferences: &UpdatePreferences) -> AppResult<()> {
+        let value = serde_json::to_string(preferences)?;
+        self.connection()?.execute(
+            "INSERT INTO app_preferences(key, value) VALUES ('update_preferences', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [value],
+        )?;
+        Ok(())
+    }
+
     pub fn permission_rules(&self) -> AppResult<Vec<PermissionRule>> {
         let connection = self.connection()?;
         let mut statement = connection
@@ -1235,6 +1258,27 @@ mod tests {
         assert!(!reopened
             .has_permission_rule("permission-project", &fingerprint)
             .unwrap());
+    }
+
+    #[test]
+    fn update_preferences_survive_database_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("updates.sqlite");
+        let preferences = UpdatePreferences {
+            automatically_check: false,
+            automatically_download: true,
+            channel: UpdateChannel::Stable,
+        };
+        {
+            let database = Database::open(&path).unwrap();
+            assert_eq!(
+                database.update_preferences().unwrap(),
+                UpdatePreferences::default()
+            );
+            database.save_update_preferences(&preferences).unwrap();
+        }
+        let reopened = Database::open(&path).unwrap();
+        assert_eq!(reopened.update_preferences().unwrap(), preferences);
     }
 
     #[test]

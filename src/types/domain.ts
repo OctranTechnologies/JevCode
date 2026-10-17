@@ -92,6 +92,8 @@ export type ModelCapability = 'tools' | 'vision' | 'reasoning' | 'streaming';
 export type ModelStatus = 'available' | 'deprecated' | 'unavailable';
 export interface ModelReference { providerId: string; modelId: string }
 export interface ModelPreferences { defaultModel: ModelReference | null; favorites: ModelReference[]; recent: ModelReference[] }
+export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable' }
+export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable' };
 export interface AgentSession {
   id: string;
   projectId: string;
@@ -277,6 +279,7 @@ export interface Bootstrap {
   permissionPolicy: PermissionPolicy;
   modelPreferences: ModelPreferences;
   openaiAuthStatus: OpenAIAuthStatus;
+  updatePreferences: UpdatePreferences;
 }
 export interface AppDiagnostics {
   appVersion: string; operatingSystem: string; architecture: string; dataDirectory: string; logsDirectory: string;

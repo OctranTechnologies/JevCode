@@ -3,7 +3,7 @@ import { Brand } from '../../components/Brand';
 import type { AgentSession, Project } from '../../types/domain';
 import { primaryShortcutModifier } from '../../lib/shortcuts';
 
-export type View = 'agent' | 'overview' | 'providers' | 'about' | 'permissions' | 'usage' | 'mcp' | 'diagnostics';
+export type View = 'agent' | 'overview' | 'providers' | 'updates' | 'about' | 'permissions' | 'usage' | 'mcp' | 'diagnostics';
 export function Sidebar({ projects, projectId, sessions, sessionId, view, onProject, onSession, onView, onNew, onOpen, opening }: {
   projects: Project[]; projectId: string; sessions: AgentSession[]; sessionId: string | null; view: View;
   onProject: (id: string) => void; onSession: (session: AgentSession) => void; onView: (view: View) => void; onNew: () => void; onOpen: () => void; opening: boolean;
