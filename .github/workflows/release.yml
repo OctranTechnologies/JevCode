@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tauri-release-${{ github.ref }}
+  group: tauri-release
   cancel-in-progress: false
 
 jobs:
@@ -57,7 +57,7 @@ jobs:
               -f body="Installers and signed updater packages for JevCode $RELEASE_TAG." \
               -F draft=true \
               -F prerelease=false > /dev/null
-          elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]]; then
+          elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]] && [[ "$(jq -r '.[0].prerelease' <<< "$matching")" == "false" ]]; then
             echo "Reusing the existing draft release for $RELEASE_TAG."
           else
             echo "::error::A non-draft release already exists for $RELEASE_TAG, or multiple releases use this tag. Refusing to replace a published release."
@@ -71,6 +71,7 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - platform: windows-latest
@@ -169,24 +170,34 @@ jobs:
 
           case "$PLATFORM_KIND" in
             windows)
-              installer="$(find "$bundle_dir" -type f \( -iname '*.msi' -o -iname '*-setup.exe' \) -print -quit)"
+              msi="$(find "$bundle_dir" -type f -iname '*.msi' -print -quit)"
+              nsis="$(find "$bundle_dir" -type f -iname '*-setup.exe' -print -quit)"
+              if [[ -z "$msi" || -z "$nsis" ]]; then
+                echo "::error::Windows release must include both MSI and NSIS installers."
+                exit 1
+              fi
               ;;
             macos)
               installer="$(find "$bundle_dir" -type f -iname '*.dmg' -print -quit)"
+              if [[ -z "$installer" ]]; then
+                echo "::error::macOS release is missing its DMG installer."
+                exit 1
+              fi
               ;;
             linux)
-              installer="$(find "$bundle_dir" -type f \( -iname '*.deb' -o -iname '*.appimage' \) -print -quit)"
+              appimage="$(find "$bundle_dir" -type f -iname '*.appimage' -print -quit)"
+              deb="$(find "$bundle_dir" -type f -iname '*.deb' -print -quit)"
+              rpm="$(find "$bundle_dir" -type f -iname '*.rpm' -print -quit)"
+              if [[ -z "$appimage" || -z "$deb" || -z "$rpm" ]]; then
+                echo "::error::Linux release must include AppImage, DEB, and RPM installers."
+                exit 1
+              fi
               ;;
             *)
               echo "::error::Unexpected release platform: $PLATFORM_KIND"
               exit 1
               ;;
           esac
-
-          if [[ -z "$installer" ]]; then
-            echo "::error::No expected installer was generated for $PLATFORM_KIND."
-            exit 1
-          fi
 
   publish:
     name: Validate and publish stable release
@@ -201,18 +212,22 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           releases="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          release="$(jq -ce --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag and .draft == true)] | if length == 1 then .[0] else error("expected exactly one draft release for the tag") end' <<< "$releases")"
+          release="$(jq -ce --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag and .draft == true and .prerelease == false)] | if length == 1 then .[0] else error("expected exactly one stable draft release for the tag") end' <<< "$releases")"
           release_id="$(jq -r '.id' <<< "$release")"
           assets="$(jq -c '.assets' <<< "$release")"
+          printf '%s' "$assets" > "$RUNNER_TEMP/release-assets.json"
 
           jq -e '
             any(.[]; .name == "latest.json") and
-            any(.[]; ((.name | ascii_downcase | endswith(".msi")) or (.name | ascii_downcase | endswith("-setup.exe")))) and
-            any(.[]; .name | ascii_downcase | endswith(".dmg")) and
-            any(.[]; ((.name | ascii_downcase | endswith(".deb")) or (.name | ascii_downcase | endswith(".appimage")))) and
-            (map(select(.name | ascii_downcase | endswith(".sig"))) | length >= 4)
+            any(.[]; .name | ascii_downcase | endswith(".msi")) and
+            any(.[]; .name | ascii_downcase | endswith("-setup.exe")) and
+            (map(select(.name | ascii_downcase | endswith(".dmg"))) | length >= 2) and
+            any(.[]; .name | ascii_downcase | endswith(".deb")) and
+            any(.[]; .name | ascii_downcase | endswith(".rpm")) and
+            any(.[]; .name | ascii_downcase | endswith(".appimage")) and
+            (map(select(.name | ascii_downcase | endswith(".sig"))) | length >= 7)
           ' <<< "$assets" > /dev/null || {
-            echo "::error::Draft release is missing latest.json, a Windows/macOS/Linux installer, or one of the four platform signatures. It will remain unpublished."
+            echo "::error::Draft release is missing latest.json, one of the distributed installers, or one of the required updater signatures. It will remain unpublished."
             exit 1
           }
 
@@ -222,21 +237,11 @@ jobs:
             --output "$RUNNER_TEMP/latest.json" \
             "repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id"
 
-          jq -e \
-            --arg version "${RELEASE_TAG#v}" \
-            --argjson assets "$assets" '
-              .version == $version and
-              ((.platforms) as $platforms |
-                all(["windows-x86_64", "darwin-aarch64", "darwin-x86_64", "linux-x86_64"][];
-                  . as $target |
-                  ($platforms[$target] // null) as $entry |
-                  $entry != null and
-                  (if ($entry.url | type) == "string" then ($entry.url | length) > 0 else false end) and
-                  (if ($entry.signature | type) == "string" then ($entry.signature | length) >= 40 else false end) and
-                  any($assets[]; .url == $entry.url)
-                )
-              )
-            ' "$RUNNER_TEMP/latest.json" > /dev/null || {
+          node scripts/validate-updater-release.mjs \
+            --manifest "$RUNNER_TEMP/latest.json" \
+            --assets "$RUNNER_TEMP/release-assets.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" || {
               echo "::error::latest.json does not contain valid signed assets for Windows x64, macOS Intel/Apple Silicon, and Linux x64. The draft will remain unpublished."
               exit 1
             }

@@ -19,6 +19,7 @@
   "plugins": {
     "updater": {
       "requireSignedVersion": true,
+      "allowDowngrades": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxNkNERUZDMDFBQTI5N0QKUldSOUthb0IvTjVza2JUNU91WTRuL1gycFNBMnpUMzJ1VWc0amRiWExoWTRhQ216OVhhbEdpMlMK",
       "endpoints": ["https://github.com/OctranTechnologies/JevCode/releases/latest/download/latest.json"]
     }

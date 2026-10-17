@@ -648,6 +648,22 @@ with a forged version number. The updater also validates release metadata before
 presenting it. Missing, invalid, or modified package signatures are rejected before
 installation and shown as a concise error; raw plugin errors are not displayed.
 
+The production endpoint is the HTTPS GitHub Releases static manifest at
+`https://github.com/OctranTechnologies/JevCode/releases/latest/download/latest.json`.
+Tauri selects a bundle-specific OS/architecture entry first, then falls back to
+the generic target: Windows x64 MSI/NSIS, macOS Intel/Apple Silicon app bundles,
+and Linux x64 AppImage/DEB/RPM. The manifest must include both the generic keys
+(`windows-x86_64`, `darwin-x86_64`, `darwin-aarch64`, `linux-x86_64`) and the
+matching installer keys. The default Tauri version comparison accepts only a
+newer version; JevCode explicitly disables downgrades. Signed-version verification
+also binds each artifact signature to the version in the manifest. GitHub's
+`latest` route excludes drafts and prereleases. The release workflow keeps a
+stable release in draft until all platform and installer entries point to HTTPS
+GitHub API asset URLs attached to that release and contain signatures.
+The endpoint currently returns 404 until the first complete stable release is
+published. This follows the official [Tauri updater](https://v2.tauri.app/plugin/updater/)
+static-manifest format and [Tauri GitHub release pipeline](https://v2.tauri.app/distribute/pipelines/github/).
+
 #### GitHub Actions release procedure
 
 The workflow at `.github/workflows/release.yml` runs for stable semantic-version
@@ -674,11 +690,17 @@ git push origin v0.2.0
 
 The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
 installers with the official `tauri-apps/tauri-action@v1`. It uploads installers,
-updater packages, `.sig` files, and `latest.json` to a draft GitHub Release. A
-final job checks that all expected installers and signatures exist and that the
-manifest has valid entries for all four updater targets. Only then does it publish
-the release as the stable latest version. If a build or check fails, the draft
-remains unpublished and is not served by the app's stable updater endpoint.
+updater packages, `.sig` files, and `latest.json` to a draft GitHub Release. The
+platform jobs run one at a time so the action can merge each platform's entries
+into the same manifest safely. The
+final job runs `scripts/validate-updater-release.mjs`, which checks the manifest
+version, requires all generic and bundle-specific targets for the distributed
+installers, verifies every signature field, and confirms every HTTPS GitHub API
+asset URL belongs to that draft release. It also confirms the generic platform
+entries match the preferred installer used by the generic-target fallback. Only
+then does it publish the release as stable and latest. If a build or
+check fails, the draft remains unpublished and is not served by the stable updater
+endpoint.
 
 macOS notarization/signing and Windows installer signing still require maintainer
 certificates and are not configured here.
