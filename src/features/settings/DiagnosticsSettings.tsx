@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Activity, Check, CircleAlert, Clipboard, ExternalLink, FolderOpen, LoaderCircle, RefreshCw, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
-import type { AppDiagnostics, UpdateInfo } from '../../types/domain';
+import { Activity, Check, CircleAlert, Clipboard, Download, ExternalLink, FolderOpen, LoaderCircle, RefreshCw, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
+import type { AppDiagnostics } from '../../types/domain';
 import { command } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
+import { updaterService, type UpdateSnapshot } from '../../services/updater';
 
 export function DiagnosticsSettings({ online, onError }: { online: boolean; onError: (message: string | null) => void }) {
   const [details, setDetails] = useState<AppDiagnostics | null>(null);
-  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [update, setUpdate] = useState<UpdateSnapshot>(() => updaterService.getSnapshot());
   const [busy, setBusy] = useState<'diagnostics' | 'update' | 'logs' | 'copy' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -19,17 +20,25 @@ export function DiagnosticsSettings({ online, onError }: { online: boolean; onEr
   }, [onError]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => updaterService.subscribe(setUpdate), []);
 
   async function checkUpdates() {
     setBusy('update');
-    setUpdate(null);
     setNotice(null);
     onError(null);
     try {
-      const result = await command('check_for_updates', undefined);
-      setUpdate(result);
-      setNotice(result.available ? `JevCode ${result.latestVersion} is ready to download.` : `JevCode ${result.currentVersion} is up to date.`);
-    } catch (error) { onError(normalizeError(error).message); }
+      const result = await updaterService.check();
+      if (result.phase === 'available') setNotice(`JevCode ${result.availableVersion} is ready to install.`);
+      else if (result.phase === 'up_to_date') setNotice(`JevCode ${result.currentVersion ? `v${result.currentVersion}` : ''} is up to date.`);
+      else if (result.error) setNotice(result.error);
+    } finally { setBusy(null); }
+  }
+
+  async function installUpdate() {
+    setBusy('update');
+    setNotice(null);
+    onError(null);
+    try { await updaterService.installAvailableUpdate(); }
     finally { setBusy(null); }
   }
 
@@ -99,10 +108,18 @@ export function DiagnosticsSettings({ online, onError }: { online: boolean; onEr
       </section>
 
       <section className="diagnostic-section" aria-labelledby="diagnostic-updates-title">
-        <div className="diagnostic-section-heading"><div><h2 id="diagnostic-updates-title">Updates</h2><p>Checks the official JevCode GitHub release page. Downloads are installed manually.</p></div><RefreshCw size={16} /></div>
-        {update?.available && <div className="diagnostic-update-notes"><strong>JevCode {update.latestVersion}</strong><time>{update.publishedAt ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(update.publishedAt)) : ''}</time>{update.notes && <p>{update.notes}</p>}</div>}
-        <div className="diagnostic-actions"><button className="account-button connect" onClick={() => void checkUpdates()} disabled={!online || busy !== null}>{busy === 'update' ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}Check for updates</button>{update?.available && <button className="account-button quiet" onClick={() => void openRelease()} disabled={busy !== null}><ExternalLink size={14} />Open official release page</button>}</div>
-        {!online && <small className="diagnostic-help">Reconnect to check releases.</small>}
+        <div className="diagnostic-section-heading"><div><h2 id="diagnostic-updates-title">Updates</h2><p>JevCode checks for signed releases automatically and lets you check or install one here.</p></div><RefreshCw size={16} /></div>
+        {update.phase === 'available' && <div className="diagnostic-update-notes"><strong>JevCode {update.availableVersion}</strong><time>{update.publishedAt ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(update.publishedAt)) : ''}</time>{update.notes && <p>{update.notes}</p>}</div>}
+        {update.phase === 'checking' && <p className="diagnostic-help" role="status"><LoaderCircle size={13} className="spin" />Checking the signed release manifest…</p>}
+        {update.phase === 'up_to_date' && <p className="diagnostic-help" role="status">{update.currentVersion ? `JevCode v${update.currentVersion} is up to date.` : 'JevCode is up to date.'}</p>}
+        {update.phase === 'downloading' && <div className="diagnostic-download" role="status"><div><LoaderCircle size={13} className="spin" />Downloading update{update.contentLength ? ` · ${formatBytes(update.downloadedBytes)} of ${formatBytes(update.contentLength)}` : ` · ${formatBytes(update.downloadedBytes)}`}</div>{update.contentLength !== null && <progress max={update.contentLength} value={Math.min(update.downloadedBytes, update.contentLength)} aria-label="Update download progress" />}</div>}
+        {update.phase === 'installing' && <p className="diagnostic-help" role="status"><LoaderCircle size={13} className="spin" />Installing update…</p>}
+        {update.phase === 'restarting' && <p className="diagnostic-help" role="status">Update installed. Restarting JevCode…</p>}
+        {update.phase === 'restart_required' && <p className="diagnostic-update-error" role="alert">Update installed. Restart JevCode to finish applying it.</p>}
+        {update.phase === 'error' && <p className="diagnostic-update-error" role="alert">{update.error}</p>}
+        <div className="diagnostic-actions"><button className="account-button connect" onClick={() => void checkUpdates()} disabled={!online || busy !== null || !updaterService.isSupported() || ['checking', 'downloading', 'installing', 'restarting'].includes(update.phase)}>{update.phase === 'checking' ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}Check for updates</button>{update.phase === 'available' && <><button className="account-button connect" onClick={() => void installUpdate()} disabled={!online || busy !== null}><Download size={14} />Download and install</button><button className="account-button quiet" onClick={() => void openRelease()} disabled={busy !== null}><ExternalLink size={14} />Release page</button></>}</div>
+        {!updaterService.isSupported() && <small className="diagnostic-help">Update checks run in installed release builds. Development builds do not contact the update service.</small>}
+        {updaterService.isSupported() && !online && <small className="diagnostic-help">Reconnect to check or download releases.</small>}
       </section>
     </> : <div className="diagnostic-load-state" role="status">{busy === 'diagnostics' ? <><LoaderCircle size={16} className="spin" />Loading local diagnostics…</> : <><CircleAlert size={16} />Local diagnostics are unavailable. Refresh to retry.</>}</div>}
   </section>;
@@ -110,4 +127,13 @@ export function DiagnosticsSettings({ online, onError }: { online: boolean; onEr
 
 function DiagnosticValue({ label, value }: { label: string; value: string }) {
   return <div className="diagnostic-value"><dt>{label}</dt><dd title={value}>{value}</dd></div>;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${value.toFixed(1)} ${units[unit]}`;
 }

@@ -24,6 +24,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let config_dir = app.path().app_config_dir()?;
@@ -84,7 +86,6 @@ pub fn run() {
             commands::reveal_project,
             commands::reveal_application_logs,
             commands::get_app_diagnostics,
-            commands::check_for_updates,
             commands::open_latest_release,
             commands::run_project_terminal,
             commands::project_branch,

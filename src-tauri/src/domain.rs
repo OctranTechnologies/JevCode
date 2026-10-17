@@ -689,17 +689,6 @@ pub struct AppDiagnostics {
     pub provider_attention_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateInfo {
-    pub current_version: String,
-    pub latest_version: String,
-    pub available: bool,
-    pub release_url: String,
-    pub notes: String,
-    pub published_at: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProviderAuthMethod {
     #[serde(rename = "api_key")]

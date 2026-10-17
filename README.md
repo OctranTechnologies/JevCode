@@ -51,7 +51,7 @@ permission, and file edits stay reviewable.
 ## Installation
 
 JevCode is a native desktop application. To build and run this checkout, install
-Node.js 22 or newer, a stable Rust toolchain, Git, and the platform packages listed
+Node.js 22 or newer, Rust 1.90 or newer, Git, and the platform packages listed
 in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Windows
 also needs Visual Studio C++ Build Tools and WebView2; Linux needs the documented
 WebKitGTK and system packages.
@@ -699,14 +699,23 @@ session restoration. There is not yet a separate packaged-app integration suite.
 
 ### Release builds and updates
 
-Push a semantic version tag such as `v0.1.0` to build Windows, Linux x64,
-macOS Apple Silicon and macOS Intel installers. `.github/workflows/release.yml`
-creates a draft GitHub release with unsigned artifacts. macOS notarization/signing
-and Windows signing require maintainer certificates and are not configured here.
-Settings → Diagnostics can check for a newer GitHub release and open its release
-page; it does not silently install updates. Signed in-app updates require an updater
-key and corresponding public key and CI private-key secrets before enabling Tauri's
-updater plugin.
+JevCode uses the official Tauri 2 updater plugins. Release builds create signed
+updater artifacts, and the Tauri GitHub Action publishes their signatures and a
+`latest.json` manifest to the GitHub release. The app checks for updates after
+launch and every 12 hours; Settings → Diagnostics also offers a manual check and
+download/install action. Update checks are disabled in development builds. Tauri
+verifies each bundle against the public key in `src-tauri/tauri.conf.json`, and the
+app restarts after installation when the platform requires it.
+
+Before creating a release tag, configure the GitHub Actions repository secrets
+`TAURI_SIGNING_PRIVATE_KEY` and, when the key is password-protected,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key must stay out of Git and
+application configuration. The matching public key is safe to commit. Keep a
+secure backup of the private key: replacing it requires rotating the configured
+public key and will prevent existing installations from accepting releases signed
+with the old key. A GitHub draft release becomes available to the updater after it
+is published. macOS notarization/signing and Windows installer signing still
+require maintainer certificates and are not configured here.
 
 Provider adapters are covered by offline protocol fixtures. Live API calls require
 user credentials and have not been certified against every provider account/model.
