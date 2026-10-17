@@ -762,10 +762,12 @@ packaging. macOS artifact checks use the target-specific Rust output directory.
 The action uploads installers,
 updater packages, `.sig` files, and `latest.json` to the draft. Platform jobs run
 one at a time so the action can merge entries without racing on `latest.json`.
-The final job runs `scripts/validate-updater-release.mjs` against the GitHub
-release assets and downloaded manifest. It rejects missing platforms, wrong
-bundle types, unattached URLs, or missing signature assets. Only then does it
-publish the release as stable and latest. Failed matrix jobs prevent the final
+The final job finds the draft in the authenticated release collection (GitHub's
+release-by-tag endpoint can return 404 for drafts), then runs
+`scripts/validate-updater-release.mjs` against its assets and downloaded manifest.
+It rejects missing platforms, wrong bundle types, unattached URLs, or missing
+signature assets. Only then does it publish the release as stable and latest.
+Failed matrix jobs prevent the final
 publish job from running, so incomplete drafts are never served by the stable
 endpoint. If a failed run is retried, the workflow removes the assets from its
 tag's existing draft before rebuilding, avoiding stale or duplicate platform

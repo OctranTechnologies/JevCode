@@ -273,7 +273,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+          matching="$(jq -c --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)]' "$RUNNER_TEMP/releases.json")"
+          count="$(jq 'length' <<< "$matching")"
+          if [[ "$count" -ne 1 ]]; then
+            echo "::error::Expected exactly one draft release for $RELEASE_TAG; found $count. It will remain unpublished."
+            exit 1
+          fi
+
+          release="$(jq -c '.[0]' <<< "$matching")"
           jq -e --arg tag "$RELEASE_TAG" 'select(.tag_name == $tag and .draft == true and .prerelease == false)' <<< "$release" > /dev/null || {
             echo "::error::Expected one stable draft release for $RELEASE_TAG. It will remain unpublished."
             exit 1
