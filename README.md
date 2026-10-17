@@ -668,18 +668,21 @@ OS/architecture fallback. The manifest contract for the artifacts we publish is:
 | Windows x64 NSIS | `windows-x86_64` | `windows-x86_64-nsis` | NSIS setup executable |
 | macOS Apple Silicon | `darwin-aarch64` | `darwin-aarch64-app` | `.app.tar.gz` |
 | macOS Intel | `darwin-x86_64` | `darwin-x86_64-app` | `.app.tar.gz` |
-| Linux x64 | `linux-x86_64` | `linux-x86_64-appimage` | AppImage |
+| Linux x64 AppImage | `linux-x86_64` | `linux-x86_64-appimage` | AppImage |
+| Linux x64 Debian | — | `linux-x86_64-deb` | `.deb` |
+| Linux x64 RPM | — | `linux-x86_64-rpm` | `.rpm` |
 
 The generic Windows entry intentionally prefers MSI (`updaterJsonPreferNsis: false`);
 the app's installed bundle type selects the corresponding installer-specific
-entry when available. DEB and RPM installers are published for manual installation;
-Tauri's Linux auto-updater artifact is the AppImage, so DEB/RPM are not listed as
-updater targets. The release validator requires exactly these nine targets, checks
-that their HTTPS GitHub API asset URLs belong to the release, confirms each asset
-has the expected bundle type and an uploaded `.sig` file, and checks that generic
-entries match their configured preferred targets. Tauri performs cryptographic
-signature verification on the client; signed-version verification binds the
-package signature to its manifest version. Downgrades are disabled. GitHub's
+entry when available. Tauri selects `{os}-{arch}-{bundle_type}` before its
+generic `{os}-{arch}` fallback, so AppImage, Debian, and RPM installations use
+their own signed update bundles. The generic Linux entry points to AppImage as
+the fallback. The release validator requires exactly these eleven targets,
+checks that their HTTPS GitHub API asset URLs belong to the release, confirms
+each asset has the expected bundle type and an uploaded `.sig` file, and checks
+that generic entries match their configured preferred targets. Tauri performs
+cryptographic signature verification on the client; signed-version verification
+binds the package signature to its manifest version. Downgrades are disabled. GitHub's
 `latest` route excludes drafts and prereleases, and the release workflow rejects
 a tag that is not newer than every published stable release.
 

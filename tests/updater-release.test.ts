@@ -28,6 +28,8 @@ function makeRelease() {
     'darwin-aarch64-app': 'JevCode_0.1.1_aarch64.app.tar.gz',
     'darwin-x86_64-app': 'JevCode_0.1.1_x64.app.tar.gz',
     'linux-x86_64-appimage': 'jevcode_0.1.1_amd64.AppImage',
+    'linux-x86_64-deb': 'JevCode_0.1.1_amd64.deb',
+    'linux-x86_64-rpm': 'JevCode-0.1.1-1.x86_64.rpm',
   };
   const targetForUrl = new Map<string, string>();
   for (const target of requiredUpdaterTargets) {
@@ -121,14 +123,15 @@ describe('updater release manifest validation', () => {
     expect(validateUpdaterRelease(release).join(' ')).toContain('does not match the expected windows-x86_64-nsis updater bundle');
   });
 
-  it('requires uploaded signatures for every updater bundle and rejects Linux package entries Tauri cannot update', () => {
+  it('requires uploaded signatures for every platform-specific updater bundle', () => {
     const release = makeRelease();
     release.assets = release.assets.filter(asset => !asset.name.endsWith('.sig'));
 
     expect(validateUpdaterRelease(release).join(' ')).toContain('Uploaded updater signature asset is missing');
 
-    const manifest = { ...release.manifest, platforms: { ...release.manifest.platforms, 'linux-x86_64-deb': { url: `${apiUrl}/deb`, signature: 'x'.repeat(64) } } };
-    expect(validateUpdaterRelease({ ...makeRelease(), manifest }).join(' ')).toContain('exactly these supported platform and updater targets');
+    const wrongRpmBundle = makeRelease();
+    wrongRpmBundle.manifest.platforms['linux-x86_64-rpm'] = wrongRpmBundle.manifest.platforms['linux-x86_64-deb'];
+    expect(validateUpdaterRelease(wrongRpmBundle).join(' ')).toContain('does not match the expected linux-x86_64-rpm updater bundle');
   });
 
   it('rejects version mismatches, prerelease tags, and missing signatures', () => {

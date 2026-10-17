@@ -13,6 +13,8 @@ export const requiredUpdaterTargets = [
   'darwin-aarch64-app',
   'darwin-x86_64-app',
   'linux-x86_64-appimage',
+  'linux-x86_64-deb',
+  'linux-x86_64-rpm',
 ];
 
 export function parseUpdaterManifest(json) {
@@ -37,6 +39,8 @@ const targetAssetSuffix = {
   'darwin-aarch64-app': '.app.tar.gz',
   'darwin-x86_64-app': '.app.tar.gz',
   'linux-x86_64-appimage': '.appimage',
+  'linux-x86_64-deb': '.deb',
+  'linux-x86_64-rpm': '.rpm',
 };
 
 export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
@@ -61,7 +65,7 @@ export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
   const actualTargets = Object.keys(manifest.platforms).sort();
   const expectedTargets = [...requiredUpdaterTargets].sort();
   if (JSON.stringify(actualTargets) !== JSON.stringify(expectedTargets)) {
-    errors.push(`Manifest must contain exactly these supported platform and updater targets: ${expectedTargets.join(', ')}.`);
+    errors.push(`Manifest must contain exactly these supported platform and updater targets: ${expectedTargets.join(', ')}. Found: ${actualTargets.length ? actualTargets.join(', ') : '(none)'}.`);
   }
 
   if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
