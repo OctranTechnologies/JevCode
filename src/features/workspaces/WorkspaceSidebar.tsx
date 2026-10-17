@@ -115,7 +115,7 @@ export function WorkspaceSidebar({
 
     <div className="sidebar-bottom">
       <nav className="sidebar-utilities" aria-label="Settings and reports">
-        <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={view === 'providers'} onClick={() => onView('providers')} />
+        <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={view === 'providers' || view === 'about'} onClick={() => onView('providers')} />
         <SidebarAction icon={<ShieldCheck size={16} />} label="Permissions" active={view === 'permissions'} onClick={() => onView('permissions')} />
         <SidebarAction icon={<Puzzle size={16} />} label="MCP" active={view === 'mcp'} onClick={() => onView('mcp')} />
         <SidebarAction icon={<BarChart3 size={16} />} label="Usage" active={view === 'usage'} onClick={() => onView('usage')} />

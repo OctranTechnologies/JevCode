@@ -475,6 +475,45 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 
 .settings-content-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 24px; }
 .settings-content-scroll .settings-content { width: min(760px, 100%); margin: 0 auto; padding: 38px 0; }
+.settings-section-nav { display: flex; width: min(760px, 100%); gap: 16px; margin: 17px auto 0; border-bottom: 1px solid var(--wb-border); }
+.settings-section-nav button { position: relative; min-height: 33px; padding: 0 2px; color: var(--wb-muted); font-size: 10px; background: transparent; border: 0; }
+.settings-section-nav button:hover, .settings-section-nav button.is-active { color: var(--wb-ink); }
+.settings-section-nav button.is-active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--wb-accent); content: ''; }
+.settings-section-nav button:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 2px; }
+.settings-content-scroll .about-settings { width: min(760px, 100%); padding-top: 34px; }
+.about-settings .settings-heading-row { margin-bottom: 20px; }
+.about-settings .settings-heading-row h1 { margin: 0 0 5px; }
+.about-identity { display: flex; align-items: center; gap: 12px; min-height: 65px; padding: 0 0 18px; border-bottom: 1px solid var(--wb-border); }
+.about-identity .brand-mark { flex: 0 0 32px; width: 32px; height: 32px; font-size: 23px; }
+.about-identity > div { display: grid; gap: 4px; }
+.about-identity > div strong { font-size: 13px; font-weight: 620; }
+.about-identity > div span { color: var(--wb-muted); font-size: 10px; }
+.about-current-version { margin-left: auto; color: var(--wb-muted-strong); font: 10px var(--font-mono); }
+.about-update-section { padding: 22px 0 0; }
+.about-section-heading h2 { margin: 0; font-size: 13px; font-weight: 610; }
+.about-section-heading p { max-width: 68ch; margin: 5px 0 0; color: var(--wb-muted); font-size: 10px; line-height: 1.6; }
+.about-version-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; padding: 13px 14px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 7px; }
+.about-version-details dt { margin-bottom: 5px; color: var(--wb-muted); font-size: 9px; }
+.about-version-details dd { margin: 0; color: var(--wb-ink); font: 11px var(--font-mono); }
+.about-update-status { display: flex; align-items: flex-start; gap: 9px; padding: 12px 13px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 7px; }
+.about-update-status > svg { flex: 0 0 auto; margin-top: 1px; color: var(--wb-muted); }
+.about-update-status > div { display: grid; gap: 4px; min-width: 0; }
+.about-update-status strong { color: var(--wb-ink); font-size: 10px; font-weight: 600; }
+.about-update-status span { color: var(--wb-muted); font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.about-update-status.is-up_to_date > svg, .about-update-status.is-completed > svg { color: var(--wb-success); }
+.about-update-status.is-available > svg, .about-update-status.is-ready > svg { color: var(--wb-accent); }
+.about-update-status.is-error > svg { color: var(--wb-danger); }
+.about-release-notes { display: grid; gap: 8px; margin-top: 10px; padding: 12px 13px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 7px; }
+.about-release-notes > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.about-release-notes strong { font-size: 10px; }
+.about-release-notes time { color: var(--wb-muted); font-size: 9px; }
+.about-release-notes p { max-height: 180px; margin: 0; overflow: auto; color: var(--wb-muted-strong); font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.about-download-progress { display: grid; gap: 7px; margin-top: 11px; color: var(--wb-muted-strong); font-size: 9px; }
+.about-download-progress > div { display: flex; justify-content: space-between; gap: 10px; }
+.about-download-progress progress { width: 100%; height: 5px; accent-color: var(--wb-accent); }
+.about-update-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
+.about-help, .about-update-error { margin: 9px 0 0; color: var(--wb-muted); font-size: 9px; line-height: 1.5; }
+.about-update-error { color: var(--wb-danger); }
 .permissions-settings .page-description { max-width: 68ch; }
 .permission-mode-section, .persistent-rules-section { padding-top: 17px; border-top: 1px solid var(--wb-border); }
 .permission-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -1021,19 +1060,11 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .diagnostic-value dt { margin-bottom: 4px; color: var(--wb-muted); font-size: 10px; }
 .diagnostic-value dd { min-width: 0; margin: 0; overflow: hidden; color: var(--wb-ink); font-family: var(--font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .diagnostic-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.diagnostic-update-notes { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; margin-top: 15px; padding: 12px 13px; background: var(--wb-surface-quiet); border-radius: 7px; }
-.diagnostic-update-notes strong { font-size: 12px; }
-.diagnostic-update-notes time { color: var(--wb-muted); font-size: 10px; }
-.diagnostic-update-notes p { grid-column: 1 / -1; max-height: 150px; margin: 0; overflow: auto; color: var(--wb-muted-strong); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.diagnostic-help { display: block; margin-top: 8px; color: var(--wb-muted); font-size: 10px; }
-.diagnostic-download { display: grid; gap: 8px; margin-top: 12px; color: var(--wb-muted-strong); font-size: 10px; }
-.diagnostic-download > div { display: flex; align-items: center; gap: 6px; }
-.diagnostic-download progress { width: 100%; height: 5px; overflow: hidden; accent-color: var(--wb-accent); }
-.diagnostic-update-error { margin: 11px 0 0; color: var(--wb-danger); font-size: 10px; line-height: 1.5; }
 .diagnostic-load-state { display: flex; align-items: center; gap: 8px; padding: 23px 0; color: var(--wb-muted); font-size: 11px; }
 @media (max-width: 620px) {
   .diagnostics-settings .settings-heading-row { align-items: center; }
   .diagnostic-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .about-release-notes > div { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
 
 /* Project overview, ignore-aware file tree, and user-operated project console. */
