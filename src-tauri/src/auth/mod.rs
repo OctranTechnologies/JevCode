@@ -164,6 +164,97 @@ impl ApiKeyAuthAdapter {
         models.dedup_by(|left, right| left.id == right.id);
         Ok(models)
     }
+
+    /// Lists Gemini models with the documented Google OAuth/Cloud-project
+    /// authorization path. This is distinct from Gemini Code Assist, whose
+    /// inference service is reserved for Google-provided clients.
+    pub(crate) async fn get_available_models_with_google_oauth(
+        &self,
+        access_token: &str,
+        project_id: &str,
+    ) -> AppResult<Vec<Model>> {
+        if self.provider.id != "gemini"
+            || self.provider.protocol != ProviderProtocol::Gemini
+            || self.provider.base_url.as_deref()
+                != Some("https://generativelanguage.googleapis.com/v1beta")
+            || access_token.trim().is_empty()
+            || project_id.trim().is_empty()
+        {
+            return Err(AppError::new(
+                "google_gemini_oauth_unavailable",
+                "Google Account access needs a Gemini OAuth session and a Google Cloud project.",
+            ));
+        }
+        self.get_available_models_with_google_oauth_at(self.models_url()?, access_token, project_id)
+            .await
+    }
+
+    async fn get_available_models_with_google_oauth_at(
+        &self,
+        model_url: String,
+        access_token: &str,
+        project_id: &str,
+    ) -> AppResult<Vec<Model>> {
+        let request = self
+            .client
+            .get(model_url)
+            .query(&[("pageSize", "1000")])
+            .bearer_auth(access_token)
+            .header("x-goog-user-project", project_id)
+            .build()
+            .map_err(|_| {
+                AppError::new(
+                    "configuration",
+                    "Could not construct the Gemini OAuth model request.",
+                )
+            })?;
+        let mut response = self.client.execute(request).await.map_err(|error| {
+            if error.is_timeout() || error.is_connect() {
+                network_error()
+            } else {
+                provider_outage()
+            }
+        })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = read_limited(&mut response, 8192).await;
+            return Err(provider_response_error(status, &body));
+        }
+        let body = read_limited(&mut response, 2 * 1024 * 1024).await;
+        let data: Value = serde_json::from_slice(&body).map_err(|_| {
+            AppError::new(
+                "provider_outage",
+                "Google returned an unreadable Gemini model catalog. Try again later.",
+            )
+        })?;
+        let list = data
+            .get("models")
+            .or_else(|| data.get("data"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut models: Vec<_> = list
+            .into_iter()
+            .filter_map(|item| normalize_model(&self.provider, item))
+            .collect();
+        models.sort_by(|left, right| {
+            left.display_name
+                .to_lowercase()
+                .cmp(&right.display_name.to_lowercase())
+        });
+        models.dedup_by(|left, right| left.id == right.id);
+        Ok(models)
+    }
+
+    #[cfg(test)]
+    async fn get_available_models_with_google_oauth_for_test(
+        &self,
+        access_token: &str,
+        project_id: &str,
+    ) -> AppResult<Vec<Model>> {
+        self.get_available_models_with_google_oauth_at(self.models_url()?, access_token, project_id)
+            .await
+    }
 }
 
 pub(crate) fn normalize_model(provider: &Provider, item: Value) -> Option<Model> {
@@ -708,6 +799,70 @@ mod tests {
         assert!(gemini[0].available);
         assert!(!gemini[1].available);
         assert_eq!(gemini[1].method, ProviderAuthMethod::GoogleOAuth);
+    }
+
+    #[tokio::test]
+    async fn gemini_oauth_model_catalog_uses_bearer_and_project_headers() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = vec![0; 4096];
+            let count = socket.read(&mut bytes).await.unwrap();
+            let request = String::from_utf8_lossy(&bytes[..count]).to_ascii_lowercase();
+            assert!(request.starts_with("get /v1beta/models?pagesize=1000 http/1.1"));
+            assert!(request.contains("authorization: bearer oauth-test-token"));
+            assert!(request.contains("x-goog-user-project: personal-cloud-project"));
+            assert!(!request.contains("x-goog-api-key"));
+            let body = r#"{"models":[{"name":"models/gemini-api-model","displayName":"Gemini API Model","inputTokenLimit":65536,"supportedGenerationMethods":["generateContent"]}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let adapter = ApiKeyAuthAdapter::new(local_provider(
+            "gemini",
+            ProviderProtocol::Gemini,
+            format!("http://{address}/v1beta"),
+        ))
+        .unwrap();
+        let models = adapter
+            .get_available_models_with_google_oauth_for_test(
+                "oauth-test-token",
+                "personal-cloud-project",
+            )
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gemini-api-model");
+        assert_eq!(models[0].display_name, "Gemini API Model");
+    }
+
+    #[tokio::test]
+    async fn google_oauth_model_discovery_rejects_custom_endpoints() {
+        let adapter = ApiKeyAuthAdapter::new(local_provider(
+            "gemini",
+            ProviderProtocol::Gemini,
+            "https://attacker.example/v1beta".into(),
+        ))
+        .unwrap();
+        let error = match adapter
+            .get_available_models_with_google_oauth(
+                "google-access-token-must-not-leave-google",
+                "personal-cloud-project",
+            )
+            .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("OAuth tokens must only be sent to Google's official Gemini API host"),
+        };
+        assert_eq!(error.code, "google_gemini_oauth_unavailable");
     }
 
     #[test]

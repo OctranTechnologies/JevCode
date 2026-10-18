@@ -349,6 +349,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .composer-stop-button { color: var(--wb-ink); background: var(--wb-surface); border-color: var(--wb-border-strong); }
 .composer-stop-button:hover { background: var(--wb-danger-soft); color: var(--wb-danger); }
 .composer-footnote { display: flex; align-items: center; gap: 6px; min-height: 20px; padding: 4px 3px 0; color: var(--wb-muted); font-size: 9px; }
+.auth-route-indicator { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding: 2px 6px; border: 1px solid var(--wb-border); border-radius: 999px; color: var(--wb-accent); font-size: 10px; font-weight: 600; line-height: 1.2; }
 .privacy-dot { width: 5px; height: 5px; background: var(--wb-accent); border-radius: 50%; }
 .attached-files { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 0 8px; }
 .attached-file { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 4px 5px 4px 7px; color: var(--wb-muted-strong); font-size: 9px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 5px; }

@@ -9,6 +9,7 @@ import {
   googleAuthStartErrorMessage,
   googleAuthStatusSummary,
   googleAuthUnavailableMessage,
+  googleBillingRouteLabel,
   googleProviderErrorMessage,
   initialGoogleAuthFlow,
 } from '../src/features/providers/googleAuthUi';
@@ -79,7 +80,7 @@ describe('Google Gemini auth settings states', () => {
     expect(googleAuthFailureMessage('permission_denied')).toContain('unsupported');
     expect(googleAuthFailureMessage('permission_denied')).toContain('Workspace');
     expect(googleAuthUnavailableMessage('Google Cloud project ID is required')).toContain('Cloud project');
-    expect(googleAuthStartErrorMessage('google_cloud_project_required')).toContain('project ID');
+    expect(googleAuthStartErrorMessage('google_gemini_project_required')).toContain('Cloud project');
   });
 
   it('finishes only the active attempt and clears its handle', () => {
@@ -92,16 +93,22 @@ describe('Google Gemini auth settings states', () => {
   });
 
   it('distinguishes Google Account, Gemini API Key, Vertex AI and reconnect status', () => {
-    expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth', account: { id: 'google-id', email: 'user@gmail.com', displayName: 'User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: [] } }))).toEqual({ label: 'Account linked', tone: 'needs_attention' });
+    expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth', account: { id: 'google-id', email: 'user@gmail.com', displayName: 'User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: 'personal-project', connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: [] } }))).toEqual({ label: 'Connected', tone: 'connected' });
     expect(googleAuthStatusSummary(status({ selectedAuthType: 'gemini_api_key', apiKeyConnected: true }))).toEqual({ label: 'Connected', tone: 'connected' });
     expect(googleAuthStatusSummary(status())).toEqual({ label: 'Not connected', tone: 'not_connected' });
+    expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth', account: { id: 'google-id', email: 'user@gmail.com', displayName: 'User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: [] } }))).toEqual({ label: 'Cloud project required', tone: 'needs_attention' });
     expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth' })).tone).toBe('needs_attention');
     expect(googleAccountNeedsReconnect({ id: 'google-id', email: null, displayName: null, authType: 'google_oauth', accountType: 'unknown', cloudProjectId: null, connected: false, requiresReconnect: true, expiresAt: null, grantedScopes: [] })).toBe(true);
     expect(googleProviderErrorMessage('google_auth_method_unavailable', 'Vertex AI authentication is not available yet.')).toContain('Vertex AI authentication is not available yet');
+    expect(googleBillingRouteLabel('google_oauth')).toBe('Google Account · Cloud project billing');
+    expect(googleBillingRouteLabel('api_key')).toBe('Gemini API key billing');
+    expect(googleBillingRouteLabel(null)).toBeNull();
   });
 
   it('turns provider errors into friendly messages without forwarding raw OAuth data', () => {
     expect(googleProviderErrorMessage('google_reconnect_required', 'private detail')).toContain('needs reconnecting');
+    expect(googleProviderErrorMessage('google_gemini_project_required', 'Choose a Google Cloud project for Gemini API usage.')).toContain('Cloud project');
+    expect(googleProviderErrorMessage('google_gemini_api_scope_required', 'Reconnect Google and grant Gemini API access.')).toContain('Reconnect Google');
     expect(googleProviderErrorMessage('invalid_credential', 'private detail')).toContain('rejected');
     expect(googleProviderErrorMessage('network_error', 'private detail')).toContain('connection');
     expect(googleProviderErrorMessage('provider_outage', 'private detail')).toContain('temporarily unavailable');

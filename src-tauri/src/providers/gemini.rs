@@ -1,18 +1,19 @@
 use super::{http::HttpProvider, LlmProvider, ProviderRequest, ProviderResponse};
 use crate::{
-    auth::google::{GoogleAuthManager, GoogleRequestCredential},
+    auth::google::{GoogleAuthManager, GoogleRequestAuthSelection, GoogleRequestCredential},
     domain::{Model, Provider, ProviderProtocol},
     error::{AppError, AppResult},
     state::SharedState,
 };
 use async_trait::async_trait;
 
-/// Gemini Developer API transport. Only API keys are accepted here; Google
-/// OAuth accounts are managed separately and are never sent to this API.
+/// Gemini Developer API transport. The selected API-key or Google OAuth route
+/// is captured for this provider instance and never falls back to the other.
 pub struct GeminiProvider {
     provider: Provider,
     state: SharedState,
     auth: GoogleAuthManager,
+    request_selection: GoogleRequestAuthSelection,
 }
 
 impl GeminiProvider {
@@ -24,19 +25,39 @@ impl GeminiProvider {
             ));
         }
         let auth = GoogleAuthManager::with_app_config(provider.clone(), &state.config)?;
+        // Pin the selected auth route/account for this provider instance. A task
+        // keeps using the account it started with even if Settings changes it.
+        let request_selection = auth.request_auth_selection(&state.credentials, &state.database)?;
         Ok(Self {
             provider,
             state,
             auth,
+            request_selection,
         })
     }
 
     async fn transport(&self) -> AppResult<HttpProvider> {
-        let GoogleRequestCredential::ApiKey(key) = self
+        match self
             .auth
-            .request_credential(&self.state.credentials, &self.state.database)
-            .await?;
-        HttpProvider::new(self.provider.clone(), Some(key.to_string()))
+            .request_credential_for_selection(
+                &self.request_selection,
+                &self.state.credentials,
+                &self.state.database,
+            )
+            .await?
+        {
+            GoogleRequestCredential::ApiKey(key) => {
+                HttpProvider::new(self.provider.clone(), Some(key.to_string()))
+            }
+            GoogleRequestCredential::OAuth {
+                access_token,
+                project_id,
+            } => HttpProvider::new_gemini_oauth(
+                self.provider.clone(),
+                access_token.to_string(),
+                project_id,
+            ),
+        }
     }
 
     pub async fn get_available_models(&self) -> AppResult<Vec<Model>> {

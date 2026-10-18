@@ -1,4 +1,4 @@
-import type { GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthFailureReason, GoogleAuthStatus } from '../../types/domain';
+import type { GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthFailureReason, GoogleAuthStatus, ProviderAuthMethod } from '../../types/domain';
 
 export type GoogleAuthFlowPhase = 'idle' | 'starting' | 'waiting' | 'cancelling';
 export type GoogleAuthFeedbackTone = 'success' | 'info' | 'error';
@@ -67,7 +67,10 @@ export function googleAuthStartErrorMessage(code: string): string {
     case 'google_oauth_not_configured':
       return 'Google account sign-in is not configured. Register a Desktop OAuth client ID for JevCode, or use a Gemini API key for model requests.';
     case 'google_cloud_project_required':
-      return 'This Workspace account needs a Google Cloud project ID for Code Assist setup. JevCode cannot use Code Assist models through a supported third-party API yet.';
+    case 'google_gemini_project_required':
+      return 'Choose a Google Cloud project for Gemini API quota and billing before selecting Google Account access.';
+    case 'google_gemini_api_scope_required':
+      return 'Reconnect Google and approve the Gemini API permissions requested by JevCode.';
     case 'google_reconnect_required':
       return 'This Google account needs reconnecting. Start sign-in again to restore access.';
     case 'network_error':
@@ -110,9 +113,19 @@ export function googleAccountNeedsReconnect(account: GoogleAccount): boolean {
   return account.requiresReconnect || !account.connected;
 }
 
+export function googleBillingRouteLabel(method: ProviderAuthMethod | null | undefined): string | null {
+  if (method === 'google_oauth') return 'Google Account · Cloud project billing';
+  if (method === 'api_key') return 'Gemini API key billing';
+  return null;
+}
+
 export function googleAuthStatusSummary(status: GoogleAuthStatus): { label: string; tone: 'connected' | 'needs_attention' | 'not_connected' } {
   if (status.selectedAuthType === 'google_oauth') {
-    if (status.account && !googleAccountNeedsReconnect(status.account)) return { label: 'Account linked', tone: 'needs_attention' };
+    if (status.account && !googleAccountNeedsReconnect(status.account)) {
+      return status.account.cloudProjectId
+        ? { label: 'Connected', tone: 'connected' }
+        : { label: 'Cloud project required', tone: 'needs_attention' };
+    }
     return { label: 'Reconnect needed', tone: 'needs_attention' };
   }
   if (status.selectedAuthType === 'gemini_api_key') return { label: status.apiKeyConnected ? 'Connected' : 'Reconnect needed', tone: status.apiKeyConnected ? 'connected' : 'needs_attention' };
@@ -132,11 +145,11 @@ export function googleProviderErrorMessage(code: string, message: string): strin
     case 'expired_authentication':
       return 'Google account needs reconnecting. Sign in again to restore account access.';
     case 'google_cloud_project_required':
+    case 'google_gemini_project_required':
+    case 'google_gemini_api_scope_required':
     case 'google_oauth_not_configured':
     case 'google_auth_method_unavailable':
       return googleAuthUnavailableMessage(message);
-    case 'google_code_assist_unsupported':
-      return 'Google sign-in identifies your account, but Google has not documented a supported third-party Code Assist inference API. Use a Gemini API key for model requests.';
     case 'google_invalid_cloud_project':
       return 'Enter a valid Google Cloud project ID.';
     case 'invalid_credential':

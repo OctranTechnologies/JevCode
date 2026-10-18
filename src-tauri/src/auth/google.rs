@@ -31,9 +31,9 @@ use zeroize::{Zeroize, Zeroizing};
 const GOOGLE_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_DISCOVERY_URL: &str = "https://accounts.google.com/.well-known/openid-configuration";
-// Google OAuth is used only for verified account identity. JevCode does not
-// send these credentials to the Gemini Developer API or Code Assist backend.
-const GOOGLE_SCOPES: &str = "openid email profile";
+// Google documents this OAuth scope set for Gemini API access from a
+// Cloud-project-backed application. It does not grant Code Assist access.
+const GOOGLE_SCOPES: &str = "openid email profile https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever";
 const REFRESH_SKEW: ChronoDuration = ChronoDuration::minutes(5);
 type RefreshLock = Arc<tokio::sync::Mutex<()>>;
 static GOOGLE_REFRESH_LOCKS: OnceLock<StdMutex<HashMap<String, RefreshLock>>> = OnceLock::new();
@@ -72,7 +72,6 @@ pub(crate) struct PendingGoogleAuth {
     pub(crate) authorization_url: Url,
     pub(crate) expires_at: DateTime<Utc>,
     client_id: String,
-    cloud_project_id: String,
     expected_account_id: Option<String>,
 }
 
@@ -145,6 +144,20 @@ impl Drop for PendingGoogleAuth {
 
 pub(crate) enum GoogleRequestCredential {
     ApiKey(Zeroizing<String>),
+    OAuth {
+        access_token: Zeroizing<String>,
+        project_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum GoogleRequestAuthSelection {
+    ApiKey,
+    OAuth {
+        account_id: String,
+        project_id: Option<String>,
+    },
+    Unselected,
 }
 
 #[async_trait]
@@ -371,7 +384,6 @@ pub struct GoogleAuthManager {
     provider: Provider,
     api_key: ApiKeyAuthAdapter,
     client_id: Option<String>,
-    cloud_project_id: Option<String>,
     oauth: Arc<dyn GoogleOAuthTransport>,
     session_storage: Option<Arc<dyn GoogleSessionStorage>>,
     #[cfg(test)]
@@ -380,22 +392,14 @@ pub struct GoogleAuthManager {
 
 impl GoogleAuthManager {
     pub fn new(provider: Provider) -> AppResult<Self> {
-        Self::with_config(provider, None, None)
+        Self::with_config(provider, None)
     }
 
     pub fn with_app_config(provider: Provider, config: &AppConfig) -> AppResult<Self> {
-        Self::with_config(
-            provider,
-            config.google_oauth_client_id.clone(),
-            config.google_cloud_project_id.clone(),
-        )
+        Self::with_config(provider, config.google_oauth_client_id.clone())
     }
 
-    fn with_config(
-        provider: Provider,
-        client_id: Option<String>,
-        cloud_project_id: Option<String>,
-    ) -> AppResult<Self> {
+    fn with_config(provider: Provider, client_id: Option<String>) -> AppResult<Self> {
         if provider.id != "gemini" {
             return Err(AppError::new(
                 "provider_configuration",
@@ -407,7 +411,6 @@ impl GoogleAuthManager {
             provider,
             api_key,
             client_id: client_id.filter(|value| !value.trim().is_empty()),
-            cloud_project_id: cloud_project_id.filter(|value| !value.trim().is_empty()),
             oauth: Arc::new(ReqwestGoogleOAuthTransport::new()?),
             session_storage: None,
             #[cfg(test)]
@@ -419,11 +422,10 @@ impl GoogleAuthManager {
     fn with_test_dependencies(
         provider: Provider,
         client_id: Option<String>,
-        cloud_project_id: Option<String>,
         oauth: Arc<dyn GoogleOAuthTransport>,
         session_storage: Arc<dyn GoogleSessionStorage>,
     ) -> AppResult<Self> {
-        let mut manager = Self::with_config(provider, client_id, cloud_project_id)?;
+        let mut manager = Self::with_config(provider, client_id)?;
         manager.oauth = oauth;
         manager.session_storage = Some(session_storage);
         manager.api_key_connected_override = Some(false);
@@ -453,6 +455,7 @@ impl GoogleAuthManager {
                         .is_none_or(|expires_at| expires_at <= Utc::now() + REFRESH_SKEW);
                     account.connected = !(account.requires_reconnect
                         || session.access_token.trim().is_empty()
+                        || !has_required_scopes(&session.granted_scopes)
                         || renewal_needed && session.refresh_token.trim().is_empty());
                     account.requires_reconnect = !account.connected;
                 }
@@ -510,12 +513,6 @@ impl GoogleAuthManager {
         let mut session = self
             .load_session(credentials, account_id)?
             .ok_or_else(google_reconnect_error)?;
-        if session.account.account_type != GoogleAccountType::Workspace {
-            return Err(AppError::new(
-                "google_project_not_required",
-                "A Google Cloud project can be configured here only for a Workspace account.",
-            ));
-        }
         session.cloud_project_id = project_id.to_owned();
         session.account.cloud_project_id = Some(project_id.to_owned());
         self.save_session(credentials, &session)?;
@@ -532,7 +529,24 @@ impl GoogleAuthManager {
         let current = database.provider_account(&self.provider.id)?;
         let (method, label, state, error_code) = match auth_type {
             GoogleAuthType::GoogleOAuth => {
-                return Err(google_code_assist_unsupported_error());
+                let account_id = database
+                    .selected_google_account_id()?
+                    .ok_or_else(google_reconnect_error)?;
+                let session = self
+                    .load_session(credentials, &account_id)?
+                    .ok_or_else(google_reconnect_error)?;
+                if !has_required_scopes(&session.granted_scopes) {
+                    return Err(google_gemini_api_scope_error());
+                }
+                if session.cloud_project_id.trim().is_empty() {
+                    return Err(google_gemini_project_required_error());
+                }
+                (
+                    ProviderAuthMethod::GoogleOAuth,
+                    "Google account · Gemini API (Cloud project)".into(),
+                    ProviderAuthState::Connected,
+                    None,
+                )
             }
             GoogleAuthType::GeminiApiKey => {
                 if !self.has_api_key(credentials)? {
@@ -588,7 +602,7 @@ impl GoogleAuthManager {
                     stored.state = ProviderAuthState::NotConnected;
                     stored.auth_method = None;
                     stored.account_label = account.email.or_else(|| Some("Google account".into()));
-                    stored.last_error_code = Some("google_code_assist_unsupported".into());
+                    stored.last_error_code = None;
                     stored.available_methods = self.available_auth_methods();
                     database.save_provider_account(&stored)?;
                 } else {
@@ -620,7 +634,8 @@ impl GoogleAuthManager {
         }
         validate_redirect_uri(redirect_uri)?;
         let client_id = self.client_id.clone().expect("configured Google client ID");
-        let cloud_project_id = self.cloud_project_id.clone().unwrap_or_default();
+        // A billing project is chosen per account after login. Never silently
+        // attach a global app project to a user's Google API requests.
         let state = fresh_random_value();
         let nonce = fresh_random_value();
         let (code_verifier, code_challenge) = create_pkce_pair();
@@ -647,7 +662,6 @@ impl GoogleAuthManager {
             authorization_url,
             expires_at,
             client_id,
-            cloud_project_id,
             expected_account_id,
         })
     }
@@ -702,8 +716,16 @@ impl GoogleAuthManager {
         let granted_scopes: Vec<String> =
             scopes.split_ascii_whitespace().map(str::to_owned).collect();
         if !has_required_scopes(&granted_scopes) {
-            return Err(google_scope_error());
+            return Err(google_gemini_api_scope_error());
         }
+        let existing_project_id = match pending.expected_account_id.as_deref() {
+            Some(account_id) => self
+                .load_session(credentials, account_id)?
+                .map(|session| session.cloud_project_id.clone())
+                .filter(|value| !value.trim().is_empty()),
+            None => None,
+        };
+        let cloud_project_id = existing_project_id.unwrap_or_default();
         let expires_at =
             (Utc::now() + ChronoDuration::seconds(response.expires_in as i64)).to_rfc3339();
         let account = GoogleAccount {
@@ -712,8 +734,7 @@ impl GoogleAuthManager {
             display_name: identity.name,
             auth_type: GoogleAuthType::GoogleOAuth,
             account_type: identity.account_type,
-            cloud_project_id: (!pending.cloud_project_id.is_empty())
-                .then(|| pending.cloud_project_id.clone()),
+            cloud_project_id: (!cloud_project_id.is_empty()).then(|| cloud_project_id.clone()),
             connected: true,
             requires_reconnect: false,
             expires_at: Some(expires_at.clone()),
@@ -722,7 +743,7 @@ impl GoogleAuthManager {
         let session = GoogleAuthSession {
             account: account.clone(),
             client_id: pending.client_id.clone(),
-            cloud_project_id: pending.cloud_project_id.clone(),
+            cloud_project_id: cloud_project_id.clone(),
             access_token: std::mem::take(&mut response.access_token),
             refresh_token: response
                 .refresh_token
@@ -742,19 +763,31 @@ impl GoogleAuthManager {
             .as_ref()
             .is_some_and(|saved| saved.auth_method == Some(ProviderAuthMethod::ApiKey))
             && self.has_api_key(credentials)?;
+        let retained_google_oauth = previous
+            .as_ref()
+            .is_some_and(|saved| saved.auth_method == Some(ProviderAuthMethod::GoogleOAuth))
+            && !cloud_project_id.is_empty();
         database.save_provider_account(&ProviderAccount {
             provider_id: self.provider.id.clone(),
             provider_name: self.provider.name.clone(),
-            state: if retained_api_key {
+            state: if retained_api_key || retained_google_oauth {
                 ProviderAuthState::Connected
             } else {
                 ProviderAuthState::NotConnected
             },
-            auth_method: retained_api_key.then_some(ProviderAuthMethod::ApiKey),
+            auth_method: if retained_api_key {
+                Some(ProviderAuthMethod::ApiKey)
+            } else if retained_google_oauth {
+                Some(ProviderAuthMethod::GoogleOAuth)
+            } else {
+                None
+            },
             account_label: if retained_api_key {
                 previous
                     .as_ref()
                     .and_then(|saved| saved.account_label.clone())
+            } else if retained_google_oauth {
+                Some("Google account · Gemini API (Cloud project)".into())
             } else {
                 account
                     .email
@@ -765,7 +798,7 @@ impl GoogleAuthManager {
                 .as_ref()
                 .and_then(|saved| saved.connected_at.clone())
                 .or_else(|| Some(Utc::now().to_rfc3339())),
-            last_validated_at: if retained_api_key {
+            last_validated_at: if retained_api_key || retained_google_oauth {
                 previous
                     .as_ref()
                     .and_then(|saved| saved.last_validated_at.clone())
@@ -783,25 +816,84 @@ impl GoogleAuthManager {
         credentials: &CredentialStore,
         database: &Database,
     ) -> AppResult<GoogleRequestCredential> {
+        let selection = self.request_auth_selection(credentials, database)?;
+        self.request_credential_for_selection(&selection, credentials, database)
+            .await
+    }
+
+    pub(crate) fn request_auth_selection(
+        &self,
+        _credentials: &CredentialStore,
+        database: &Database,
+    ) -> AppResult<GoogleRequestAuthSelection> {
         let stored = database.provider_account(&self.provider.id)?;
         let selected = stored
             .as_ref()
             .and_then(|account| account.auth_method.as_ref());
-        let saved_session_exists = !database.google_accounts()?.is_empty();
-        let wants_oauth = selected == Some(&ProviderAuthMethod::GoogleOAuth)
-            || (selected.is_none() && saved_session_exists);
-        if wants_oauth {
-            return Err(google_code_assist_unsupported_error());
-        }
-        if selected == Some(&ProviderAuthMethod::ApiKey) || selected.is_none() {
-            if let Some(secret) = credentials.get("gemini")? {
-                return Ok(GoogleRequestCredential::ApiKey(Zeroizing::new(secret)));
+        match selected {
+            Some(ProviderAuthMethod::GoogleOAuth) => {
+                let account_id = database
+                    .selected_google_account_id()?
+                    .ok_or_else(google_reconnect_error)?;
+                let project_id = database
+                    .google_account(&account_id)?
+                    .and_then(|account| account.cloud_project_id)
+                    .filter(|value| !value.trim().is_empty());
+                Ok(GoogleRequestAuthSelection::OAuth {
+                    account_id,
+                    project_id,
+                })
             }
+            Some(ProviderAuthMethod::ApiKey) => Ok(GoogleRequestAuthSelection::ApiKey),
+            _ => Ok(GoogleRequestAuthSelection::Unselected),
         }
-        Err(AppError::new(
-            "credentials_required",
-            "Connect Google Gemini with a Gemini API key or Google account before running a task.",
-        ))
+    }
+
+    pub(crate) async fn request_credential_for_selection(
+        &self,
+        selection: &GoogleRequestAuthSelection,
+        credentials: &CredentialStore,
+        database: &Database,
+    ) -> AppResult<GoogleRequestCredential> {
+        match selection {
+            GoogleRequestAuthSelection::ApiKey => credentials
+                .get("gemini")?
+                .map(|secret| GoogleRequestCredential::ApiKey(Zeroizing::new(secret)))
+                .ok_or_else(|| {
+                    AppError::new(
+                        "credentials_required",
+                        "The selected Gemini API key is no longer available. Reconnect it in Settings.",
+                    )
+                }),
+            GoogleRequestAuthSelection::OAuth {
+                account_id,
+                project_id: selected_project_id,
+            } => {
+                let session = self
+                    .load_session(credentials, account_id)?
+                    .ok_or_else(google_reconnect_error)?;
+                if !has_required_scopes(&session.granted_scopes) {
+                    return Err(google_gemini_api_scope_error());
+                }
+                let selected_project_id = selected_project_id
+                    .as_deref()
+                    .filter(|value| valid_project_id(value))
+                    .ok_or_else(google_gemini_project_required_error)?;
+                let (access_token, _) = self
+                    .access_token(credentials, database, account_id, false)
+                    .await?;
+                Ok(GoogleRequestCredential::OAuth {
+                    access_token,
+                    // Use the route snapshot captured when the task started. A
+                    // settings change applies to future tasks, not this one.
+                    project_id: selected_project_id.to_owned(),
+                })
+            }
+            GoogleRequestAuthSelection::Unselected => Err(AppError::new(
+                "credentials_required",
+                "Choose a Gemini API key or Google Account + Gemini API in Settings before running a task.",
+            )),
+        }
     }
 
     pub(crate) async fn refresh_account(
@@ -821,9 +913,19 @@ impl GoogleAuthManager {
         credentials: &CredentialStore,
         database: &Database,
     ) -> AppResult<Vec<Model>> {
-        let GoogleRequestCredential::ApiKey(secret) =
-            self.request_credential(credentials, database).await?;
-        self.api_key.get_available_models(&secret).await
+        match self.request_credential(credentials, database).await? {
+            GoogleRequestCredential::ApiKey(secret) => {
+                self.api_key.get_available_models(&secret).await
+            }
+            GoogleRequestCredential::OAuth {
+                access_token,
+                project_id,
+            } => {
+                self.api_key
+                    .get_available_models_with_google_oauth(&access_token, &project_id)
+                    .await
+            }
+        }
     }
 
     pub(crate) async fn logout(
@@ -860,10 +962,10 @@ impl GoogleAuthManager {
             },
             ProviderAuthMethodOption {
                 method: ProviderAuthMethod::GoogleOAuth,
-                label: "Google account (identity only)".into(),
+                label: "Google Account + Gemini API (Cloud project)".into(),
                 available: self.oauth_configured(),
                 unavailable_reason: (!self.oauth_configured())
-                    .then(|| "Register a Desktop OAuth client ID for JevCode.".into()),
+                    .then(|| "Register a Desktop OAuth client ID and configure the Gemini API OAuth consent screen for JevCode.".into()),
             },
         ]
     }
@@ -1321,9 +1423,15 @@ fn validate_refresh_token_response(response: &GoogleTokenResponse) -> AppResult<
 }
 
 fn has_required_scopes(scopes: &[String]) -> bool {
-    ["openid", "email", "profile"]
-        .iter()
-        .all(|required| scopes.iter().any(|scope| scope == required))
+    [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/cloud-platform",
+        "https://www.googleapis.com/auth/generative-language.retriever",
+    ]
+    .iter()
+    .all(|required| scopes.iter().any(|scope| scope == required))
 }
 
 fn valid_scope_list(value: &str) -> bool {
@@ -1507,13 +1615,23 @@ fn google_token_error() -> AppError {
 }
 
 fn google_scope_error() -> AppError {
-    AppError::new("google_scope_denied", "Google did not grant the basic account identity permissions required by JevCode. Review the requested permissions and try again.")
+    AppError::new(
+        "google_scope_denied",
+        "Google did not grant all permissions JevCode needs for Gemini API access. Review the requested permissions and try again.",
+    )
 }
 
-fn google_code_assist_unsupported_error() -> AppError {
+fn google_gemini_api_scope_error() -> AppError {
     AppError::new(
-        "google_code_assist_unsupported",
-        "Google account sign-in is available for account identification only. Google has not documented a supported third-party Gemini Code Assist inference API, so JevCode will not send this OAuth token to another Gemini service. Use a Gemini API key for model requests.",
+        "google_gemini_api_scope_required",
+        "Reconnect this Google account and grant Gemini API access before using it for model requests.",
+    )
+}
+
+fn google_gemini_project_required_error() -> AppError {
+    AppError::new(
+        "google_gemini_project_required",
+        "Choose a Google Cloud project for Gemini API usage. Requests and quota will use that project's billing and permissions.",
     )
 }
 
@@ -1832,7 +1950,6 @@ mod tests {
         GoogleAuthManager::with_test_dependencies(
             provider(),
             Some(TEST_CLIENT_ID.into()),
-            Some("jevcode-test-project".into()),
             oauth,
             session_storage,
         )
@@ -2235,12 +2352,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let database = Database::open(&root.path().join("google-auth.sqlite")).unwrap();
         let credentials = CredentialStore;
-        let session_creator = GoogleAuthManager::with_config(
-            provider(),
-            Some(TEST_CLIENT_ID.into()),
-            Some("jevcode-test-project".into()),
-        )
-        .unwrap();
+        let session_creator =
+            GoogleAuthManager::with_config(provider(), Some(TEST_CLIENT_ID.into())).unwrap();
         let redirect_uri = "http://127.0.0.1:43123";
         let pending = session_creator
             .create_authentication_session(redirect_uri)
@@ -2334,12 +2447,8 @@ mod tests {
         let database_path = root.path().join("multi-google-auth.sqlite");
         let database = Database::open(&database_path).unwrap();
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
-        let creator = GoogleAuthManager::with_config(
-            provider(),
-            Some(TEST_CLIENT_ID.into()),
-            Some("jevcode-test-project".into()),
-        )
-        .unwrap();
+        let creator =
+            GoogleAuthManager::with_config(provider(), Some(TEST_CLIENT_ID.into())).unwrap();
         let redirect_uri = "http://127.0.0.1:43123";
         let first_pending = creator.create_authentication_session(redirect_uri).unwrap();
         let second_pending = creator.create_authentication_session(redirect_uri).unwrap();
@@ -2402,6 +2511,35 @@ mod tests {
         }
         assert!(storage.get_google_session(&first.id).unwrap().is_some());
         assert!(storage.get_google_session(&second.id).unwrap().is_some());
+
+        first_manager
+            .set_cloud_project_id("first-project-123", &first.id, &CredentialStore, &database)
+            .unwrap();
+        second_manager
+            .set_cloud_project_id(
+                "second-project-123",
+                &second.id,
+                &CredentialStore,
+                &database,
+            )
+            .unwrap();
+        first_manager
+            .select_auth_method(GoogleAuthType::GoogleOAuth, &CredentialStore, &database)
+            .unwrap();
+        let first_task_route = first_manager
+            .request_auth_selection(&CredentialStore, &database)
+            .unwrap();
+        database.select_google_account(&second.id).unwrap();
+        match first_manager
+            .request_credential_for_selection(&first_task_route, &CredentialStore, &database)
+            .await
+            .unwrap()
+        {
+            GoogleRequestCredential::OAuth { project_id, .. } => {
+                assert_eq!(project_id, "first-project-123");
+            }
+            GoogleRequestCredential::ApiKey(_) => panic!("task switched away from Google OAuth"),
+        }
 
         database.select_google_account(&first.id).unwrap();
         let first_status = first_manager
@@ -2528,7 +2666,6 @@ mod tests {
         let manager = GoogleAuthManager::with_config(
             provider(),
             Some("jevcode-client.apps.googleusercontent.com".into()),
-            Some("jevcode-project-123".into()),
         )
         .unwrap();
         let first = manager
@@ -2595,7 +2732,6 @@ mod tests {
         let manager = GoogleAuthManager::with_config(
             provider(),
             Some("jevcode-client.apps.googleusercontent.com".into()),
-            Some("jevcode-project-123".into()),
         )
         .unwrap();
         let pending = manager
@@ -2628,7 +2764,6 @@ mod tests {
         let manager = GoogleAuthManager::with_config(
             provider(),
             Some("jevcode-client.apps.googleusercontent.com".into()),
-            Some("jevcode-project-123".into()),
         )
         .unwrap();
         let pending = manager
@@ -2761,7 +2896,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_project_is_validated_and_stays_in_the_native_session() {
+    fn cloud_project_is_validated_per_account_and_stays_in_the_native_session() {
         let root = tempfile::tempdir().unwrap();
         let database = Database::open(&root.path().join("workspace-google.sqlite")).unwrap();
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
@@ -2777,12 +2912,22 @@ mod tests {
         serialized.zeroize();
         let individual_manager =
             test_oauth_manager(refresh_mock(MockRefreshBehavior::Success), storage.clone());
-        let error = individual_manager
-            .set_cloud_project_id("team-project-123", &account_id, &CredentialStore, &database)
-            .unwrap_err();
-        assert_eq!(error.code, "google_project_not_required");
+        let individual_project = individual_manager
+            .set_cloud_project_id(
+                "personal-project-123",
+                &account_id,
+                &CredentialStore,
+                &database,
+            )
+            .unwrap();
+        assert_eq!(
+            individual_project.cloud_project_id.as_deref(),
+            Some("personal-project-123")
+        );
 
         session.account.account_type = GoogleAccountType::Workspace;
+        session.account.cloud_project_id = Some("personal-project-123".into());
+        session.cloud_project_id = "personal-project-123".into();
         let mut serialized = serde_json::to_string(&session).unwrap();
         storage.save_serialized(&serialized);
         serialized.zeroize();
@@ -2815,7 +2960,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn google_oauth_identity_is_never_promoted_to_a_gemini_model_credential() {
+    async fn google_oauth_requires_scopes_and_project_before_gemini_api_access() {
         let root = tempfile::tempdir().unwrap();
         let database = Database::open(&root.path().join("google-identity-route.sqlite")).unwrap();
         save_test_provider_account(&database);
@@ -2827,20 +2972,143 @@ mod tests {
             TEST_REFRESH_TOKEN,
         );
         persist_test_account(&database, &storage);
-        let oauth = refresh_mock(MockRefreshBehavior::Success);
-        let manager = test_oauth_manager(oauth.clone(), storage);
+        let manager =
+            test_oauth_manager(refresh_mock(MockRefreshBehavior::Success), storage.clone());
+        let credential = manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .unwrap();
+        match credential {
+            GoogleRequestCredential::OAuth {
+                access_token,
+                project_id,
+            } => {
+                assert_eq!(access_token.as_str(), "existing-google-access-token");
+                assert_eq!(project_id, "jevcode-test-project");
+            }
+            GoogleRequestCredential::ApiKey(_) => panic!("OAuth selection used API-key billing"),
+        }
+
+        let mut serialized = storage.single_session().unwrap();
+        let mut session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
+        serialized.zeroize();
+        session.granted_scopes = ["openid", "email", "profile"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        session.account.granted_scopes = session.granted_scopes.clone();
+        let mut serialized = serde_json::to_string(&session).unwrap();
+        storage.save_serialized(&serialized);
+        serialized.zeroize();
+        let error = match manager
+            .request_credential(&CredentialStore, &database)
+            .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("OAuth scopes must be present before model access"),
+        };
+        assert_eq!(error.code, "google_gemini_api_scope_required");
+        assert!(!error.message.contains(TEST_ACCESS_TOKEN));
+        assert!(!error.message.contains(TEST_REFRESH_TOKEN));
+    }
+
+    #[tokio::test]
+    async fn google_oauth_requires_a_project_for_every_account_type() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("google-project-required.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            "personal-without-project",
+            Utc::now() + ChronoDuration::minutes(10),
+            TEST_REFRESH_TOKEN,
+        );
+        let mut serialized = storage.single_session().unwrap();
+        let mut session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
+        serialized.zeroize();
+        session.cloud_project_id.clear();
+        session.account.cloud_project_id = None;
+        let mut serialized = serde_json::to_string(&session).unwrap();
+        storage.save_serialized(&serialized);
+        serialized.zeroize();
+        let account_id = persist_test_account(&database, &storage);
+        let manager = test_oauth_manager(refresh_mock(MockRefreshBehavior::Success), storage);
 
         let error = match manager
             .request_credential(&CredentialStore, &database)
             .await
         {
             Err(error) => error,
-            Ok(_) => panic!("OAuth identity must not be accepted as Gemini inference auth"),
+            Ok(_) => panic!("Google API OAuth must not run without a Cloud project"),
         };
-        assert_eq!(error.code, "google_code_assist_unsupported");
-        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
-        assert!(!error.message.contains(TEST_ACCESS_TOKEN));
-        assert!(!error.message.contains(TEST_REFRESH_TOKEN));
+        assert_eq!(error.code, "google_gemini_project_required");
+        let error = match manager.select_auth_method(
+            GoogleAuthType::GoogleOAuth,
+            &CredentialStore,
+            &database,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("the OAuth route must not be selectable without a project"),
+        };
+        assert_eq!(error.code, "google_gemini_project_required");
+
+        let project = manager
+            .set_cloud_project_id(
+                "personal-project-123",
+                &account_id,
+                &CredentialStore,
+                &database,
+            )
+            .unwrap();
+        assert_eq!(project.account_type, GoogleAccountType::Individual);
+        assert_eq!(
+            project.cloud_project_id.as_deref(),
+            Some("personal-project-123")
+        );
+        let selected = manager
+            .select_auth_method(GoogleAuthType::GoogleOAuth, &CredentialStore, &database)
+            .unwrap();
+        assert_eq!(
+            selected.selected_auth_type,
+            Some(GoogleAuthType::GoogleOAuth)
+        );
+    }
+
+    #[test]
+    fn gemini_auth_route_requires_an_explicit_selection() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("google-explicit-route.sqlite")).unwrap();
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        let mut manager = test_oauth_manager(refresh_mock(MockRefreshBehavior::Success), storage);
+        manager.api_key_connected_override = Some(true);
+
+        assert!(matches!(
+            manager
+                .request_auth_selection(&CredentialStore, &database)
+                .unwrap(),
+            GoogleRequestAuthSelection::Unselected
+        ));
+
+        database
+            .save_provider_account(&ProviderAccount {
+                provider_id: "gemini".into(),
+                provider_name: "Google Gemini".into(),
+                state: ProviderAuthState::Connected,
+                auth_method: Some(ProviderAuthMethod::ApiKey),
+                account_label: Some("Gemini API key".into()),
+                connected_at: None,
+                last_validated_at: None,
+                last_error_code: None,
+                available_methods: vec![],
+            })
+            .unwrap();
+        assert!(matches!(
+            manager
+                .request_auth_selection(&CredentialStore, &database)
+                .unwrap(),
+            GoogleRequestAuthSelection::ApiKey
+        ));
     }
 
     #[test]
