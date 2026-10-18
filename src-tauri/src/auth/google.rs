@@ -169,6 +169,29 @@ pub(crate) trait GoogleOAuthTransport: Send + Sync {
     async fn revoke_token(&self, token: &str) -> AppResult<()>;
 }
 
+/// OAuth sessions are routed to the platform credential store in production.
+/// Keeping this boundary explicit lets the exchange and logout path be tested
+/// with an in-memory store without reading or modifying a developer's keychain.
+pub(crate) trait GoogleSessionStorage: Send + Sync {
+    fn save_google_session(&self, session: &str) -> AppResult<()>;
+    fn get_google_session(&self) -> AppResult<Option<String>>;
+    fn delete_google_session(&self) -> AppResult<()>;
+}
+
+impl GoogleSessionStorage for CredentialStore {
+    fn save_google_session(&self, session: &str) -> AppResult<()> {
+        CredentialStore::save_google_session(self, session)
+    }
+
+    fn get_google_session(&self) -> AppResult<Option<String>> {
+        CredentialStore::get_google_session(self)
+    }
+
+    fn delete_google_session(&self) -> AppResult<()> {
+        CredentialStore::delete_google_session(self)
+    }
+}
+
 struct ReqwestGoogleOAuthTransport {
     client: Client,
 }
@@ -183,6 +206,26 @@ impl ReqwestGoogleOAuthTransport {
             .map_err(|_| google_network_error())?;
         Ok(Self { client })
     }
+
+    fn build_exchange_request(
+        &self,
+        client_id: &str,
+        redirect_uri: &str,
+        code: &str,
+        verifier: &str,
+    ) -> AppResult<reqwest::Request> {
+        self.client
+            .post(GOOGLE_TOKEN_URL)
+            .form(&[
+                ("client_id", client_id),
+                ("code", code),
+                ("code_verifier", verifier),
+                ("grant_type", "authorization_code"),
+                ("redirect_uri", redirect_uri),
+            ])
+            .build()
+            .map_err(|_| google_network_error())
+    }
 }
 
 #[async_trait]
@@ -194,17 +237,10 @@ impl GoogleOAuthTransport for ReqwestGoogleOAuthTransport {
         code: &str,
         verifier: &str,
     ) -> AppResult<GoogleTokenResponse> {
+        let request = self.build_exchange_request(client_id, redirect_uri, code, verifier)?;
         let response = self
             .client
-            .post(GOOGLE_TOKEN_URL)
-            .form(&[
-                ("client_id", client_id),
-                ("code", code),
-                ("code_verifier", verifier),
-                ("grant_type", "authorization_code"),
-                ("redirect_uri", redirect_uri),
-            ])
-            .send()
+            .execute(request)
             .await
             .map_err(|_| google_network_error())?;
         read_google_json(response).await
@@ -338,6 +374,9 @@ pub struct GoogleAuthManager {
     client_id: Option<String>,
     cloud_project_id: Option<String>,
     oauth: Arc<dyn GoogleOAuthTransport>,
+    session_storage: Option<Arc<dyn GoogleSessionStorage>>,
+    #[cfg(test)]
+    api_key_connected_override: Option<bool>,
 }
 
 impl GoogleAuthManager {
@@ -371,7 +410,25 @@ impl GoogleAuthManager {
             client_id: client_id.filter(|value| !value.trim().is_empty()),
             cloud_project_id: cloud_project_id.filter(|value| !value.trim().is_empty()),
             oauth: Arc::new(ReqwestGoogleOAuthTransport::new()?),
+            session_storage: None,
+            #[cfg(test)]
+            api_key_connected_override: None,
         })
+    }
+
+    #[cfg(test)]
+    fn with_test_dependencies(
+        provider: Provider,
+        client_id: Option<String>,
+        cloud_project_id: Option<String>,
+        oauth: Arc<dyn GoogleOAuthTransport>,
+        session_storage: Arc<dyn GoogleSessionStorage>,
+    ) -> AppResult<Self> {
+        let mut manager = Self::with_config(provider, client_id, cloud_project_id)?;
+        manager.oauth = oauth;
+        manager.session_storage = Some(session_storage);
+        manager.api_key_connected_override = Some(false);
+        Ok(manager)
     }
 
     pub fn status(
@@ -382,7 +439,7 @@ impl GoogleAuthManager {
         let account = self
             .load_session(credentials)?
             .map(|session| session.account.clone());
-        let api_key_connected = credentials.has("gemini")?;
+        let api_key_connected = self.has_api_key(credentials)?;
         let selected_auth_type = match stored.as_ref().and_then(|value| value.auth_method.as_ref())
         {
             Some(ProviderAuthMethod::GoogleOAuth) => Some(GoogleAuthType::GoogleOAuth),
@@ -552,7 +609,7 @@ impl GoogleAuthManager {
                 .load_session(credentials)?
                 .ok_or_else(google_reconnect_error)?;
             return Ok(GoogleRequestCredential::OAuth {
-                access_token: Zeroizing::new(token),
+                access_token: token,
                 cloud_project_id: session.cloud_project_id.clone(),
             });
         }
@@ -658,10 +715,10 @@ impl GoogleAuthManager {
         } else {
             false
         };
-        credentials.delete_google_session()?;
+        self.delete_session(credentials)?;
         if let Some(mut account) = database.provider_account(&self.provider.id)? {
             if account.auth_method == Some(ProviderAuthMethod::GoogleOAuth) {
-                if credentials.has("gemini")? {
+                if self.has_api_key(credentials)? {
                     account.state = ProviderAuthState::Connected;
                     account.auth_method = Some(ProviderAuthMethod::ApiKey);
                     account.account_label = Some("API key".into());
@@ -711,7 +768,7 @@ impl GoogleAuthManager {
         credentials: &CredentialStore,
         database: &Database,
         force_refresh: bool,
-    ) -> AppResult<(String, GoogleAccount)> {
+    ) -> AppResult<(Zeroizing<String>, GoogleAccount)> {
         let mut session = self
             .load_session(credentials)?
             .ok_or_else(google_reconnect_error)?;
@@ -724,7 +781,10 @@ impl GoogleAuthManager {
             .ok_or_else(google_reconnect_error)?;
         let expires_at = parse_timestamp(&session.expires_at).ok_or_else(google_reconnect_error)?;
         if !force_refresh && expires_at > Utc::now() + REFRESH_SKEW {
-            return Ok((session.access_token.clone(), session.account.clone()));
+            return Ok((
+                Zeroizing::new(session.access_token.clone()),
+                session.account.clone(),
+            ));
         }
         match self
             .oauth
@@ -756,7 +816,7 @@ impl GoogleAuthManager {
                 session.account.expires_at = Some(session.expires_at.clone());
                 session.account.requires_reconnect = false;
                 session.account.connected = true;
-                let token = session.access_token.clone();
+                let token = Zeroizing::new(session.access_token.clone());
                 self.save_session(credentials, &session)?;
                 if let Some(mut account) = database.provider_account(&self.provider.id)? {
                     if account.auth_method == Some(ProviderAuthMethod::GoogleOAuth) {
@@ -788,7 +848,11 @@ impl GoogleAuthManager {
     }
 
     fn load_session(&self, credentials: &CredentialStore) -> AppResult<Option<GoogleAuthSession>> {
-        let Some(mut serialized) = credentials.get_google_session()? else {
+        let stored = match &self.session_storage {
+            Some(storage) => storage.get_google_session()?,
+            None => credentials.get_google_session()?,
+        };
+        let Some(mut serialized) = stored else {
             return Ok(None);
         };
         let parsed = serde_json::from_str(&serialized);
@@ -805,9 +869,27 @@ impl GoogleAuthManager {
         session: &GoogleAuthSession,
     ) -> AppResult<()> {
         let mut serialized = serde_json::to_string(session)?;
-        let result = credentials.save_google_session(&serialized);
+        let result = match &self.session_storage {
+            Some(storage) => storage.save_google_session(&serialized),
+            None => credentials.save_google_session(&serialized),
+        };
         serialized.zeroize();
         result
+    }
+
+    fn delete_session(&self, credentials: &CredentialStore) -> AppResult<()> {
+        match &self.session_storage {
+            Some(storage) => storage.delete_google_session(),
+            None => credentials.delete_google_session(),
+        }
+    }
+
+    fn has_api_key(&self, credentials: &CredentialStore) -> AppResult<bool> {
+        #[cfg(test)]
+        if let Some(connected) = self.api_key_connected_override {
+            return Ok(connected);
+        }
+        credentials.has("gemini")
     }
 }
 
@@ -1321,6 +1403,17 @@ fn decode_component(value: &str) -> AppResult<Zeroizing<String>> {
 mod tests {
     use super::*;
     use crate::domain::ProviderProtocol;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use rand::thread_rng;
+    use rsa::{pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts, RsaPrivateKey, RsaPublicKey};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
+
+    const TEST_CLIENT_ID: &str = "jevcode-test.apps.googleusercontent.com";
+    const TEST_ACCESS_TOKEN: &str = "test-google-access-token";
+    const TEST_REFRESH_TOKEN: &str = "test-google-refresh-token";
 
     fn provider() -> Provider {
         Provider {
@@ -1331,6 +1424,299 @@ mod tests {
             models: vec![],
             connected: false,
         }
+    }
+
+    #[derive(Default)]
+    struct MemoryGoogleSessionStorage {
+        serialized: Mutex<Option<String>>,
+    }
+
+    impl GoogleSessionStorage for MemoryGoogleSessionStorage {
+        fn save_google_session(&self, session: &str) -> AppResult<()> {
+            *self.serialized.lock().map_err(AppError::internal)? = Some(session.to_owned());
+            Ok(())
+        }
+
+        fn get_google_session(&self) -> AppResult<Option<String>> {
+            Ok(self.serialized.lock().map_err(AppError::internal)?.clone())
+        }
+
+        fn delete_google_session(&self) -> AppResult<()> {
+            if let Some(mut serialized) = self.serialized.lock().map_err(AppError::internal)?.take()
+            {
+                serialized.zeroize();
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, PartialEq, Eq)]
+    struct ExchangeArguments {
+        client_id: String,
+        redirect_uri: String,
+        code: String,
+        verifier: String,
+    }
+
+    struct MockGoogleOAuthTransport {
+        jwks: JwkSet,
+        id_token: String,
+        exchange_arguments: Mutex<Option<ExchangeArguments>>,
+        revoke_calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl GoogleOAuthTransport for MockGoogleOAuthTransport {
+        async fn exchange_code(
+            &self,
+            client_id: &str,
+            redirect_uri: &str,
+            code: &str,
+            verifier: &str,
+        ) -> AppResult<GoogleTokenResponse> {
+            *self.exchange_arguments.lock().map_err(AppError::internal)? =
+                Some(ExchangeArguments {
+                    client_id: client_id.to_owned(),
+                    redirect_uri: redirect_uri.to_owned(),
+                    code: code.to_owned(),
+                    verifier: verifier.to_owned(),
+                });
+            Ok(GoogleTokenResponse {
+                access_token: TEST_ACCESS_TOKEN.into(),
+                refresh_token: Some(TEST_REFRESH_TOKEN.into()),
+                id_token: Some(self.id_token.clone()),
+                token_type: "Bearer".into(),
+                expires_in: 3600,
+                scope: Some(GOOGLE_SCOPES.into()),
+            })
+        }
+
+        async fn refresh_token(
+            &self,
+            _client_id: &str,
+            _refresh_token: &str,
+        ) -> AppResult<GoogleTokenResponse> {
+            Err(google_network_error())
+        }
+
+        async fn discovery(&self) -> AppResult<GoogleOidcDiscovery> {
+            Ok(GoogleOidcDiscovery {
+                issuer: "https://accounts.google.com".into(),
+                jwks_uri: "https://www.googleapis.com/oauth2/v3/certs".into(),
+                id_token_signing_alg_values_supported: vec!["RS256".into()],
+            })
+        }
+
+        async fn jwks(&self, url: &str) -> AppResult<JwkSet> {
+            assert_eq!(url, "https://www.googleapis.com/oauth2/v3/certs");
+            Ok(self.jwks.clone())
+        }
+
+        async fn revoke_token(&self, token: &str) -> AppResult<()> {
+            assert_eq!(token, TEST_REFRESH_TOKEN);
+            self.revoke_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn test_signing_key() -> (EncodingKey, JwkSet) {
+        let private = RsaPrivateKey::new(&mut thread_rng(), 2048).unwrap();
+        let public = RsaPublicKey::from(&private);
+        let private_der = private.to_pkcs1_der().unwrap();
+        let encoding = EncodingKey::from_rsa_der(private_der.as_bytes());
+        let jwks = serde_json::from_value(serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "jevcode-google-test-key",
+                "use": "sig",
+                "alg": "RS256",
+                "n": URL_SAFE_NO_PAD.encode(public.n().to_bytes_be()),
+                "e": URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())
+            }]
+        }))
+        .unwrap();
+        (encoding, jwks)
+    }
+
+    fn sign_test_id_token(encoding: &EncodingKey, nonce: &str) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("jevcode-google-test-key".into());
+        encode(
+            &header,
+            &serde_json::json!({
+                "iss": "https://accounts.google.com",
+                "sub": "google-subject-42",
+                "aud": TEST_CLIENT_ID,
+                "iat": Utc::now().timestamp() as u64,
+                "exp": (Utc::now() + ChronoDuration::minutes(5)).timestamp() as u64,
+                "nonce": nonce,
+                "email": "verified@example.test",
+                "email_verified": true,
+                "name": "JevCode Test Account"
+            }),
+            encoding,
+        )
+        .unwrap()
+    }
+
+    fn test_manager(
+        oauth: Arc<dyn GoogleOAuthTransport>,
+        session_storage: Arc<dyn GoogleSessionStorage>,
+    ) -> GoogleAuthManager {
+        GoogleAuthManager::with_test_dependencies(
+            provider(),
+            Some(TEST_CLIENT_ID.into()),
+            Some("jevcode-test-project".into()),
+            oauth,
+            session_storage,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn code_exchange_request_uses_google_token_endpoint_and_exact_pkce_fields() {
+        let transport = ReqwestGoogleOAuthTransport::new().unwrap();
+        let request = transport
+            .build_exchange_request(
+                TEST_CLIENT_ID,
+                "http://127.0.0.1:43123",
+                "test-auth-code",
+                "test-code-verifier",
+            )
+            .unwrap();
+
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(request.url().as_str(), GOOGLE_TOKEN_URL);
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .unwrap(),
+            "application/x-www-form-urlencoded"
+        );
+        let form = std::str::from_utf8(
+            request
+                .body()
+                .and_then(reqwest::Body::as_bytes)
+                .expect("form body is buffered"),
+        )
+        .unwrap();
+        for field in [
+            "client_id=jevcode-test.apps.googleusercontent.com",
+            "code=test-auth-code",
+            "code_verifier=test-code-verifier",
+            "grant_type=authorization_code",
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A43123",
+        ] {
+            assert!(form.contains(field), "missing {field}");
+        }
+        assert!(!form.contains("client_secret"));
+    }
+
+    #[tokio::test]
+    async fn authorization_code_exchange_validates_identity_and_keeps_tokens_native() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("google-auth.sqlite")).unwrap();
+        let credentials = CredentialStore;
+        let session_creator = GoogleAuthManager::with_config(
+            provider(),
+            Some(TEST_CLIENT_ID.into()),
+            Some("jevcode-test-project".into()),
+        )
+        .unwrap();
+        let redirect_uri = "http://127.0.0.1:43123";
+        let pending = session_creator
+            .create_authentication_session(redirect_uri)
+            .unwrap();
+        let (encoding, jwks) = test_signing_key();
+        let oauth = Arc::new(MockGoogleOAuthTransport {
+            jwks,
+            id_token: sign_test_id_token(&encoding, &pending.nonce),
+            exchange_arguments: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+        });
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        let manager = test_manager(oauth.clone(), storage.clone());
+
+        let account = manager
+            .complete_authentication(
+                &pending,
+                "authorization-code-for-test",
+                &credentials,
+                &database,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(account.id, "google-subject-42");
+        assert_eq!(account.email.as_deref(), Some("verified@example.test"));
+        assert_eq!(
+            account.display_name.as_deref(),
+            Some("JevCode Test Account")
+        );
+        assert!(account.connected);
+        let exchange = oauth
+            .exchange_arguments
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("authorization code was exchanged");
+        assert_eq!(exchange.client_id, TEST_CLIENT_ID);
+        assert_eq!(exchange.redirect_uri, redirect_uri);
+        assert_eq!(exchange.code, "authorization-code-for-test");
+        assert_eq!(exchange.verifier, pending.code_verifier);
+
+        let serialized_session = storage.serialized.lock().unwrap().clone().unwrap();
+        assert!(serialized_session.contains(TEST_ACCESS_TOKEN));
+        assert!(serialized_session.contains(TEST_REFRESH_TOKEN));
+        let stored_account = database.provider_account("gemini").unwrap().unwrap();
+        let safe_metadata = serde_json::to_string(&stored_account).unwrap();
+        for secret in [TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, "id_token"] {
+            assert!(!safe_metadata.contains(secret));
+        }
+        let connection =
+            rusqlite::Connection::open(root.path().join("google-auth.sqlite")).unwrap();
+        let persisted: String = connection
+            .query_row(
+                "SELECT data FROM provider_accounts WHERE provider_id = 'gemini'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        for secret in [TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, "id_token"] {
+            assert!(!persisted.contains(secret));
+        }
+        let status = manager.status(&credentials, Some(stored_account)).unwrap();
+        let safe_status = serde_json::to_string(&status).unwrap();
+        for secret in [TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, "id_token"] {
+            assert!(!safe_status.contains(secret));
+        }
+
+        assert!(manager.logout(&credentials, &database).await.unwrap());
+        assert_eq!(oauth.revoke_calls.load(Ordering::SeqCst), 1);
+        assert!(storage.serialized.lock().unwrap().is_none());
+        assert!(database.provider_account("gemini").unwrap().is_none());
+        assert!(manager
+            .status(&credentials, None)
+            .unwrap()
+            .account
+            .is_none());
+    }
+
+    #[test]
+    fn malformed_token_responses_fail_with_redacted_errors() {
+        let malformed = GoogleTokenResponse {
+            access_token: TEST_ACCESS_TOKEN.into(),
+            refresh_token: None,
+            id_token: Some("test-id-token".into()),
+            token_type: "Bearer".into(),
+            expires_in: 3600,
+            scope: Some(GOOGLE_SCOPES.into()),
+        };
+        let error = validate_initial_token_response(&malformed).unwrap_err();
+        assert_eq!(error.code, "invalid_auth_response");
+        assert!(!error.message.contains(TEST_ACCESS_TOKEN));
+        assert!(!error.message.contains("test-id-token"));
     }
 
     #[test]

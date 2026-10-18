@@ -449,9 +449,18 @@ Authentication is intentionally separated by product entitlement:
   it does not request the Gemini CLI's Code Assist scopes or call its service.
   The native layer validates the callback, granted scopes, and signed ID token
   (issuer, audience, signature, expiry and nonce) before saving the session in
-  the OS credential store. Refreshes are
-  serialized and replace the secure session in place. Tauri returns only safe
-  account metadata; React never receives access, refresh, or ID tokens.
+  the OS credential store. After the callback, Rust sends a form-encoded POST
+  to Google's official `https://oauth2.googleapis.com/token` endpoint with the
+  app's `client_id`, the returned authorization `code`, the original loopback
+  `redirect_uri`, the matching PKCE `code_verifier`, and
+  `grant_type=authorization_code`. The desktop app does not send or embed a
+  client secret. JevCode validates the bearer token response, expiry, required
+  granted scopes, and Google's signed OIDC identity before marking the account
+  connected. Refreshes are serialized and replace the secure session in place.
+  `google_auth_status` returns only account metadata and connection state;
+  `google_auth_logout` revokes where possible, removes the local keychain
+  session, and resets Gemini's selected auth state. React never receives
+  access, refresh, or ID tokens.
   OAuth requests use the configured Cloud project for quota attribution. This
   is Gemini Developer API OAuth with the documented API scopes; JevCode does not
   read Gemini CLI or other Google application credentials, and this does not
