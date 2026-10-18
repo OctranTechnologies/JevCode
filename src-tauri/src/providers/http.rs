@@ -13,12 +13,11 @@ pub struct HttpProvider {
     secret: Zeroizing<String>,
     client: reqwest::Client,
     chatgpt_plan: bool,
-    google_oauth_project: Option<String>,
 }
 
 impl HttpProvider {
     pub fn new(provider: Provider, secret: Option<String>) -> AppResult<Self> {
-        Self::with_mode(provider, secret, false, None)
+        Self::with_mode(provider, secret, false)
     }
 
     pub(crate) fn new_chatgpt_plan(provider: Provider, access_token: String) -> AppResult<Self> {
@@ -31,42 +30,18 @@ impl HttpProvider {
                 "ChatGPT sign-in is restricted to OpenAI’s public Responses API host.",
             ));
         }
-        Self::with_mode(provider, Some(access_token), true, None)
-    }
-
-    pub(crate) fn new_google_oauth(
-        provider: Provider,
-        access_token: String,
-        cloud_project_id: String,
-    ) -> AppResult<Self> {
-        if provider.id != "gemini"
-            || provider.protocol != ProviderProtocol::Gemini
-            || provider.base_url.as_deref()
-                != Some("https://generativelanguage.googleapis.com/v1beta")
-            || cloud_project_id.is_empty()
-            || cloud_project_id.len() > 128
-            || !cloud_project_id
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        {
-            return Err(AppError::new(
-                "google_route_unsupported",
-                "Google sign-in is restricted to the official Gemini API and a configured Cloud project.",
-            ));
-        }
-        Self::with_mode(provider, Some(access_token), false, Some(cloud_project_id))
+        Self::with_mode(provider, Some(access_token), true)
     }
 
     #[cfg(test)]
     fn new_chatgpt_plan_for_test(provider: Provider, access_token: String) -> AppResult<Self> {
-        Self::with_mode(provider, Some(access_token), true, None)
+        Self::with_mode(provider, Some(access_token), true)
     }
 
     fn with_mode(
         provider: Provider,
         secret: Option<String>,
         chatgpt_plan: bool,
-        google_oauth_project: Option<String>,
     ) -> AppResult<Self> {
         let secret = secret.ok_or_else(|| {
             AppError::new(
@@ -85,7 +60,6 @@ impl HttpProvider {
             secret: Zeroizing::new(secret),
             client,
             chatgpt_plan,
-            google_oauth_project,
         })
     }
 }
@@ -110,12 +84,6 @@ impl LlmProvider for HttpProvider {
             ProviderProtocol::Anthropic => builder
                 .header("x-api-key", self.secret.as_str())
                 .header("anthropic-version", "2023-06-01"),
-            ProviderProtocol::Gemini if self.google_oauth_project.is_some() => {
-                builder.bearer_auth(self.secret.as_str()).header(
-                    "x-goog-user-project",
-                    self.google_oauth_project.as_deref().unwrap_or_default(),
-                )
-            }
             ProviderProtocol::Gemini => builder.header("x-goog-api-key", self.secret.as_str()),
             _ => builder.bearer_auth(self.secret.as_str()),
         };
@@ -172,12 +140,6 @@ impl LlmProvider for HttpProvider {
             ProviderProtocol::Anthropic => builder
                 .header("x-api-key", self.secret.as_str())
                 .header("anthropic-version", "2023-06-01"),
-            ProviderProtocol::Gemini if self.google_oauth_project.is_some() => {
-                builder.bearer_auth(self.secret.as_str()).header(
-                    "x-goog-user-project",
-                    self.google_oauth_project.as_deref().unwrap_or_default(),
-                )
-            }
             ProviderProtocol::Gemini => builder.header("x-goog-api-key", self.secret.as_str()),
             _ => builder.bearer_auth(self.secret.as_str()),
         };

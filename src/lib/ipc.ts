@@ -73,6 +73,7 @@ interface Commands {
   google_auth_start: { args: undefined; result: GoogleAuthStart };
   google_auth_cancel: { args: { attemptId: string }; result: null };
   google_auth_status: { args: undefined; result: GoogleAuthStatus };
+  google_auth_set_cloud_project: { args: { projectId: string }; result: GoogleAccount };
   google_auth_logout: { args: undefined; result: GoogleLogoutResult };
   google_auth_refresh: { args: undefined; result: GoogleAccount };
   google_auth_select_method: { args: { authType: GoogleAuthType }; result: GoogleAuthStatus };
@@ -101,6 +102,7 @@ const responses = {
   google_auth_start: googleAuthStartSchema,
   google_auth_cancel: z.null(),
   google_auth_status: googleAuthStatusSchema,
+  google_auth_set_cloud_project: googleAccountSchema,
   google_auth_logout: googleLogoutResultSchema,
   google_auth_refresh: googleAccountSchema,
   google_auth_select_method: googleAuthStatusSchema,
@@ -179,6 +181,11 @@ export function cancelGoogleAuth(attemptId: string): Promise<null> {
 
 export function getGoogleAuthStatus(): Promise<GoogleAuthStatus> {
   return command('google_auth_status', undefined);
+}
+
+/** Store the Workspace Code Assist project ID alongside the native Google session. */
+export function setGoogleCloudProject(projectId: string): Promise<GoogleAccount> {
+  return command('google_auth_set_cloud_project', { projectId });
 }
 
 export function refreshGoogleAuth(): Promise<GoogleAccount> {

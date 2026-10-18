@@ -333,13 +333,13 @@ catalog endpoint, so a connection check does not issue a billable model request.
 `src-tauri/src/auth` defines the provider-neutral `ProviderAuthAdapter` contract
 for connect, disconnect, refresh, validation, account info, model discovery and
 status. `OpenAIAuthManager` owns OpenAI API keys, ChatGPT sessions, model discovery,
-and token refresh. `GoogleAuthManager` owns Google OAuth sessions and Gemini API
-keys. `OpenAIProvider` and `GeminiProvider` are distinct native transport
-adapters; the generic agent runtime asks the provider factory for an
+and token refresh. `GoogleAuthManager` owns Google OAuth identity sessions and
+Gemini API keys. `OpenAIProvider` and `GeminiProvider` are distinct native
+transport adapters; the generic agent runtime asks the provider factory for an
 `LlmProvider` and never reads a key or token. OpenAI and OpenCode use bearer
-authorization, Anthropic uses `x-api-key`, and Gemini uses `x-goog-api-key` for
-AI Studio keys or Bearer authorization plus `x-goog-user-project` for Google
-OAuth. Other API-key providers continue through the shared adapter.
+authorization, Anthropic uses `x-api-key`, and Gemini model requests use
+`x-goog-api-key` only. A Google account OAuth session is never used as a Gemini
+model credential. Other API-key providers continue through the shared adapter.
 Zen and Go model catalog URLs are taken from their official docs. Safe account
 metadata is stored in SQLite; credentials stay in the OS keychain under service
 `dev.jevcode.desktop` (OpenAI ChatGPT and Google OAuth sessions each use a
@@ -419,22 +419,29 @@ Authentication is intentionally separated by product entitlement:
   model picker, and safe profile/selection metadata is restored on app restart.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
-- Gemini API keys are supported. Google OAuth is for the Gemini Developer API
-  only; it does not sign into Gemini Code Assist or provide Gemini CLI/subscription
-  access. It is enabled only when the app configuration includes a Desktop OAuth
-  client ID registered for JevCode and a Google Cloud project. Create JevCode's
-  own Desktop app OAuth client in Google Cloud Console, enable the Generative
-  Language API, and add these values to the existing `config.json` in the app
-  configuration directory:
+- Gemini API keys are the supported model-request route. Google sign-in stores a
+  separate Google account identity session; that session is not an inference
+  credential. Google's public Cloud AI Companion REST reference documents
+  project/location, repository-index and settings operations, but not a
+  third-party chat or streaming generation API. The open-source Gemini CLI
+  Code Assist client currently calls `cloudcode-pa.googleapis.com/v1internal`;
+  JevCode does not call that private endpoint or send Google OAuth tokens to the
+  Gemini Developer API. Until Google publishes a supported third-party Code
+  Assist inference interface, Google sign-in does not add OAuth-backed models to
+  the model picker. Connect a Gemini API key and explicitly select that route to
+  use Gemini models.
+
+  To enable Google account identity sign-in, create JevCode's own Desktop app
+  OAuth client in Google Cloud Console and add its public client ID to the
+  existing `config.json` in the app configuration directory:
 
   ```json
   {
-    "googleOAuthClientId": "YOUR_CLIENT_ID.apps.googleusercontent.com",
-    "googleCloudProjectId": "your-google-cloud-project"
+    "googleOAuthClientId": "YOUR_CLIENT_ID.apps.googleusercontent.com"
   }
   ```
 
-  These are public configuration values; do not add a client secret or copy
+  The client ID is public configuration; do not add a client secret or copy
   Gemini CLI credentials. Sign-in opens the system browser and uses Google's
   documented random-port IPv4 loopback redirect in the form
   `http://127.0.0.1:<port>` with the root path. The callback listener binds
@@ -444,9 +451,9 @@ Authentication is intentionally separated by product entitlement:
   port without an `/oauth2callback` path; JevCode uses that documented form to
   avoid redirect mismatches. Callback pages never show authorization codes or
   tokens. Sign-in also uses fresh `state` and `nonce`, and PKCE S256. JevCode
-  requests `openid email profile` for safe account identity
-  and the Gemini API scopes `cloud-platform` and `generative-language.retriever`;
-  it does not request the Gemini CLI's Code Assist scopes or call its service.
+  requests only `openid email profile` for safe identity metadata. It does not
+  request broad Cloud permissions because no documented third-party Code Assist
+  generation API is available to JevCode.
   The native layer validates the callback, granted scopes, and signed ID token
   (issuer, audience, signature, expiry and nonce) before saving the session in
   the OS credential store. After the callback, Rust sends a form-encoded POST
@@ -455,29 +462,42 @@ Authentication is intentionally separated by product entitlement:
   `redirect_uri`, the matching PKCE `code_verifier`, and
   `grant_type=authorization_code`. The desktop app does not send or embed a
   client secret. JevCode validates the bearer token response, expiry, required
-  granted scopes, and Google's signed OIDC identity before marking the account
+  identity scopes, and Google's signed OIDC identity before marking the account
   connected. Refreshes are serialized and replace the secure session in place.
   `google_auth_status` returns only account metadata and connection state;
   `google_auth_logout` revokes where possible, removes the local keychain
   session, and selects a separately connected Gemini API key if one remains.
   The provider settings card makes the active route visible. React never receives
   access, refresh, or ID tokens.
-  The OS credential-store session is loaded again after app restart;
-  SQLite keeps only safe account and connection metadata. Before a Gemini OAuth
-  request, the native auth manager checks the saved access-token expiry and
-  refreshes when it is expired or within five minutes of expiry. A per-account
-  async lock makes concurrent requests reuse the first refreshed token, and
-  rotated credentials are saved back to the OS credential store. Revoked grants,
-  missing refresh credentials when refresh is needed, or missing Gemini API
-  scopes set the account to **Needs attention** and return “Google account needs
-  reconnecting.” Later requests do not retry a revoked refresh grant. Temporary
-  network failures preserve the existing session and return a retryable network
-  error without an internal retry loop. An expired access token without a
-  refresh token triggers reconnect; a still-valid access token remains usable
-  until it needs renewal.
+  The OS credential-store session is loaded again after app restart; SQLite
+  keeps only safe account and connection metadata. The native auth manager
+  refreshes an expired token or one within five minutes of expiry. A per-account
+  async lock serializes refreshes, and rotated credentials are stored back in
+  the OS credential store. Revoked grants or missing refresh credentials mark
+  the linked account **Needs attention**. Network failures preserve the saved
+  session and do not trigger an internal retry loop. Refresh maintains Google
+  identity only; it does not authorize a Gemini model request.
+
+  Google account classification uses only a verified ID-token `hd` claim. A
+  consumer account is identified as individual, but OAuth does not expose
+  whether it has Google AI Pro or Ultra. Consumer Gemini Code Assist access in
+  Gemini CLI ended on June 18, 2026. Existing Gemini Code Assist Standard and
+  Enterprise subscriptions can continue under their active contracts, but new
+  subscriptions stopped being available on October 9, 2026. JevCode's
+  identity-only OAuth scopes do not reveal these product entitlements, so it
+  does not claim that a Workspace account has a Code Assist license. Workspace
+  Code Assist setup requires a Cloud project with the Gemini for Google Cloud
+  API enabled and the required IAM roles. Settings asks for a project ID for a
+  Workspace account and marks eligibility as unverified; entering an ID saves
+  configuration only and does not test or activate Code Assist. JevCode does
+  not import `gcloud` credentials or Gemini CLI data.
+
   Settings → Providers → Google Gemini offers **Continue with Google** and
-  **Use Gemini API Key** when disconnected, and keeps Google Account and API key
-  routes independently selectable and removable if both are configured.
+  **Use Gemini API Key** as separate choices. The API key remains the model
+  request route. Connecting or selecting Google OAuth never changes billing or
+  falls back to another credential. Vertex AI / ADC remains unavailable until
+  a separate authentication mode is implemented. Only one Google OAuth account
+  is currently displayed; account-specific Google profiles remain a limitation.
   Sign-in progress and cancellation appear in the settings card; cancellation,
   timeout, denied consent, browser launch, network, OAuth and reconnect failures
   use friendly messages. Unsupported accounts or Workspace policy restrictions
@@ -487,11 +507,6 @@ Authentication is intentionally separated by product entitlement:
   tokens. Vertex AI / ADC is labeled unavailable until a later release. These
   controls use the shared semantic surface, border and status tokens, so they
   follow both warm-light and dark themes.
-  OAuth requests use the configured Cloud project for quota attribution. This
-  is Gemini Developer API OAuth with the documented API scopes; JevCode does not
-  read Gemini CLI or other Google application credentials, and this does not
-  reuse Gemini CLI subscription entitlements. Vertex AI / ADC is reserved for a
-  future auth type and is not active.
 - OpenCode Zen and OpenCode Go use their respective API keys.
 
 The UI receives no secret on reads: account status, account info, logout results
@@ -526,9 +541,13 @@ Official authentication references: [OpenAI API authentication](https://develope
 [OpenAI OIDC discovery and ID-token verification](https://developers.openai.com/siwc/website),
 [Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),
-[Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth),
 [Google Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app),
 [Gemini CLI authentication choices](https://geminicli.com/docs/get-started/authentication/),
+[Gemini Code Assist setup](https://docs.cloud.google.com/gemini/docs/codeassist/set-up-gemini),
+[Gemini Code Assist subscription changes](https://docs.cloud.google.com/gemini/docs/codeassist/sunset),
+[Gemini for Google Cloud API reference](https://docs.cloud.google.com/gemini/docs/api/reference/rest),
+[Gemini CLI Code Assist OAuth source](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/oauth2.ts),
+[Gemini CLI Code Assist server source](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/server.ts),
 [OpenCode Zen](https://opencode.ai/docs/zen/) and
 [OpenCode Go](https://opencode.ai/docs/go/).
 

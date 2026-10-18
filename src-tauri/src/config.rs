@@ -49,13 +49,7 @@ impl AppConfig {
             || self
                 .google_cloud_project_id
                 .as_deref()
-                .is_some_and(|project| {
-                    project.is_empty()
-                        || project.len() > 128
-                        || !project.bytes().all(|byte| {
-                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
-                        })
-                })
+                .is_some_and(|project| !valid_google_cloud_project_id(project))
         {
             return Err(AppError::new(
                 "configuration",
@@ -123,6 +117,15 @@ impl AppConfig {
     }
 }
 
+fn valid_google_cloud_project_id(value: &str) -> bool {
+    (6..=30).contains(&value.len())
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +137,14 @@ mod tests {
         assert!(config.providers[1].models.is_empty());
         config.providers[1].base_url = Some("http://example.com".into());
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn google_cloud_project_id_uses_google_project_id_format() {
+        assert!(valid_google_cloud_project_id("team-project-123"));
+        assert!(!valid_google_cloud_project_id("short"));
+        assert!(!valid_google_cloud_project_id("-team-123"));
+        assert!(!valid_google_cloud_project_id("team-123-"));
+        assert!(!valid_google_cloud_project_id("Team-project"));
     }
 }

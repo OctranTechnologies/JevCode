@@ -7,8 +7,8 @@ use crate::{
 };
 use async_trait::async_trait;
 
-/// Gemini transport adapter. API-key and Google OAuth resolution stay in the
-/// native auth manager; the provider-neutral agent runtime sees only LlmProvider.
+/// Gemini Developer API transport. Only API keys are accepted here; Google
+/// OAuth accounts are managed separately and are never sent to this API.
 pub struct GeminiProvider {
     provider: Provider,
     state: SharedState,
@@ -32,23 +32,11 @@ impl GeminiProvider {
     }
 
     async fn transport(&self) -> AppResult<HttpProvider> {
-        match self
+        let GoogleRequestCredential::ApiKey(key) = self
             .auth
             .request_credential(&self.state.credentials, &self.state.database)
-            .await?
-        {
-            GoogleRequestCredential::ApiKey(key) => {
-                HttpProvider::new(self.provider.clone(), Some(key.to_string()))
-            }
-            GoogleRequestCredential::OAuth {
-                access_token,
-                cloud_project_id,
-            } => HttpProvider::new_google_oauth(
-                self.provider.clone(),
-                access_token.to_string(),
-                cloud_project_id,
-            ),
-        }
+            .await?;
+        HttpProvider::new(self.provider.clone(), Some(key.to_string()))
     }
 
     pub async fn get_available_models(&self) -> AppResult<Vec<Model>> {

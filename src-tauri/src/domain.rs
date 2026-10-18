@@ -825,6 +825,40 @@ pub enum GoogleAuthType {
     VertexAdc,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAccountType {
+    Individual,
+    Workspace,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleCodeAssistAvailability {
+    NotConnected,
+    ConsumerAccessRetired,
+    ProjectRequired,
+    EligibilityUnknown,
+}
+
+/// Account classification derived only from Google's verified OIDC identity.
+/// It does not claim that an account has a Code Assist license or entitlement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleCodeAssistStatus {
+    pub account_type: GoogleAccountType,
+    pub availability: GoogleCodeAssistAvailability,
+    pub requires_cloud_project: bool,
+    pub cloud_project_id: Option<String>,
+    /// Google does not expose this tier through the documented OAuth identity flow.
+    pub user_tier: Option<String>,
+    /// JevCode deliberately keeps this false until Google documents a supported
+    /// third-party Code Assist inference API.
+    pub inference_available: bool,
+}
+
 /// Safe Google account metadata. OAuth token values are intentionally absent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -833,6 +867,10 @@ pub struct GoogleAccount {
     pub email: Option<String>,
     pub display_name: Option<String>,
     pub auth_type: GoogleAuthType,
+    #[serde(default)]
+    pub account_type: GoogleAccountType,
+    #[serde(default)]
+    pub cloud_project_id: Option<String>,
     pub connected: bool,
     pub requires_reconnect: bool,
     pub expires_at: Option<String>,
@@ -844,6 +882,7 @@ pub struct GoogleAccount {
 #[serde(rename_all = "camelCase")]
 pub struct GoogleAuthStatus {
     pub account: Option<GoogleAccount>,
+    pub code_assist: GoogleCodeAssistStatus,
     pub selected_auth_type: Option<GoogleAuthType>,
     pub api_key_connected: bool,
     pub oauth_available: bool,

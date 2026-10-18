@@ -53,7 +53,14 @@ describe('desktop contracts', () => {
     const safeAttempt = { attemptId: '5b5b0e1a-8127-4e62-9fb7-f3a3dd9d09ce', expiresAt: '2026-10-14T12:00:00+00:00' };
     expect(googleAuthStartSchema.parse(safeAttempt)).toEqual(safeAttempt);
     expect(googleAuthStartSchema.safeParse({ ...safeAttempt, authorizationUrl: 'https://accounts.google.com/?state=private' }).success).toBe(false);
-    const safeStatus = { account: { id: 'google-profile', email: 'user@gmail.com', displayName: 'Google User', authType: 'google_oauth', connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: ['openid', 'email'] }, selectedAuthType: 'google_oauth', apiKeyConnected: false, oauthAvailable: true, unavailableReason: null };
+    const safeStatus = {
+      account: { id: 'google-profile', email: 'user@gmail.com', displayName: 'Google User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: ['openid', 'email'] },
+      codeAssist: { accountType: 'individual', availability: 'consumer_access_retired', requiresCloudProject: false, cloudProjectId: null, userTier: null, inferenceAvailable: false },
+      selectedAuthType: null,
+      apiKeyConnected: false,
+      oauthAvailable: true,
+      unavailableReason: null,
+    };
     expect(googleAuthStatusSchema.parse(safeStatus).account?.email).toBe('user@gmail.com');
     expect(googleAuthStatusSchema.safeParse({ ...safeStatus, accessToken: 'must-not-cross-ipc' }).success).toBe(false);
     expect(googleAuthStatusSchema.safeParse({ ...safeStatus, account: { ...safeStatus.account, refreshToken: 'must-not-cross-ipc' } }).success).toBe(false);

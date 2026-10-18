@@ -2177,6 +2177,16 @@ pub fn google_auth_status(state: State<'_, SharedState>) -> AppResult<GoogleAuth
 }
 
 #[tauri::command]
+pub fn google_auth_set_cloud_project(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<GoogleAccount> {
+    let provider = state.config.provider("gemini")?.clone();
+    crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
+        .set_cloud_project_id(&project_id, &state.credentials)
+}
+
+#[tauri::command]
 pub async fn google_auth_refresh(state: State<'_, SharedState>) -> AppResult<GoogleAccount> {
     let provider = state.config.provider("gemini")?.clone();
     crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?

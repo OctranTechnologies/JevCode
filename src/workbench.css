@@ -781,6 +781,13 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .google-provider-mark { color: var(--wb-accent); }
 .google-method-list { margin-top: 14px; }
 .google-account-details { margin-bottom: 11px; }
+.google-code-assist-note { margin: 12px 0 0 42px; }
+.google-project-setup { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1.2fr) auto; align-items: end; gap: 10px; margin: 0 0 12px 42px; padding: 11px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 7px; }
+.google-project-setup .account-form-copy { display: flex; flex-direction: column; gap: 4px; }
+.google-project-setup .account-form-copy strong { color: var(--wb-ink); font-size: 11px; }
+.google-project-setup .account-form-copy span { color: var(--wb-muted); font-size: 10px; line-height: 1.45; }
+.google-project-setup input { min-width: 0; height: 31px; padding: 0 9px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 6px; outline: none; font: inherit; font-size: 11px; }
+.google-project-setup input:focus { border-color: var(--wb-accent-line); box-shadow: 0 0 0 2px var(--wb-accent-soft); }
 .google-vertex-row { color: var(--wb-muted); }
 .google-vertex-row .openai-method-account > span { color: var(--wb-muted); }
 .google-vertex-row .account-button:disabled { opacity: .6; }
@@ -916,7 +923,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .account-connect-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .account-form-actions { flex-wrap: wrap; }
   .account-method-note, .account-model-list { margin-left: 0; }
-  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-auth-routing-note, .openai-connection-choices, .openai-method-list, .openai-key-form, .google-key-form { margin-inline-start: 0; }
+  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-auth-routing-note, .openai-connection-choices, .openai-method-list, .openai-key-form, .google-key-form, .google-code-assist-note, .google-project-setup { margin-inline-start: 0; }
+  .google-project-setup { grid-template-columns: minmax(0, 1fr); }
   .openai-catalog-actions { align-items: flex-start; flex-direction: column; }
   .openai-connection-choices { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .openai-choice-divider { padding: 1px 0; }

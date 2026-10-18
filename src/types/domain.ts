@@ -74,8 +74,11 @@ export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied
 export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }
 export type GoogleAuthType = 'google_oauth' | 'gemini_api_key' | 'vertex_adc';
 /** Safe account metadata only. OAuth tokens exist only in the native Rust session type. */
-export interface GoogleAccount { id: string; email: string | null; displayName: string | null; authType: GoogleAuthType; connected: boolean; requiresReconnect: boolean; expiresAt: string | null; grantedScopes: string[] }
-export interface GoogleAuthStatus { account: GoogleAccount | null; selectedAuthType: GoogleAuthType | null; apiKeyConnected: boolean; oauthAvailable: boolean; unavailableReason: string | null }
+export type GoogleAccountType = 'individual' | 'workspace' | 'unknown';
+export type GoogleCodeAssistAvailability = 'not_connected' | 'consumer_access_retired' | 'project_required' | 'eligibility_unknown';
+export interface GoogleCodeAssistStatus { accountType: GoogleAccountType; availability: GoogleCodeAssistAvailability; requiresCloudProject: boolean; cloudProjectId: string | null; userTier: string | null; inferenceAvailable: boolean }
+export interface GoogleAccount { id: string; email: string | null; displayName: string | null; authType: GoogleAuthType; accountType: GoogleAccountType; cloudProjectId: string | null; connected: boolean; requiresReconnect: boolean; expiresAt: string | null; grantedScopes: string[] }
+export interface GoogleAuthStatus { account: GoogleAccount | null; codeAssist: GoogleCodeAssistStatus; selectedAuthType: GoogleAuthType | null; apiKeyConnected: boolean; oauthAvailable: boolean; unavailableReason: string | null }
 /** Opaque native flow handle; the authorization URL and PKCE values are never exposed. */
 export interface GoogleAuthStart { attemptId: string; expiresAt: string }
 export interface GoogleLogoutResult { revocationConfirmed: boolean }

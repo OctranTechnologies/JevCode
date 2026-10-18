@@ -22,6 +22,14 @@ function event(state: GoogleAuthAttemptEvent['state'], failureReason: GoogleAuth
 function status(overrides: Partial<GoogleAuthStatus> = {}): GoogleAuthStatus {
   return {
     account: null,
+    codeAssist: {
+      accountType: 'unknown',
+      availability: 'not_connected',
+      requiresCloudProject: false,
+      cloudProjectId: null,
+      userTier: null,
+      inferenceAvailable: false,
+    },
     selectedAuthType: null,
     apiKeyConnected: false,
     oauthAvailable: true,
@@ -69,7 +77,7 @@ describe('Google Gemini auth settings states', () => {
     expect(googleAuthFailureMessage('permission_denied')).toContain('unsupported');
     expect(googleAuthFailureMessage('permission_denied')).toContain('Workspace');
     expect(googleAuthUnavailableMessage('Google Cloud project ID is required')).toContain('Cloud project');
-    expect(googleAuthStartErrorMessage('google_cloud_project_required')).toContain('Gemini API enabled');
+    expect(googleAuthStartErrorMessage('google_cloud_project_required')).toContain('project ID');
   });
 
   it('finishes only the active attempt and clears its handle', () => {
@@ -82,11 +90,11 @@ describe('Google Gemini auth settings states', () => {
   });
 
   it('distinguishes Google Account, Gemini API Key, Vertex AI and reconnect status', () => {
-    expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth', account: { id: 'google-id', email: 'user@gmail.com', displayName: 'User', authType: 'google_oauth', connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: [] } }))).toEqual({ label: 'Connected', tone: 'connected' });
+    expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth', account: { id: 'google-id', email: 'user@gmail.com', displayName: 'User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: [] } }))).toEqual({ label: 'Account linked', tone: 'needs_attention' });
     expect(googleAuthStatusSummary(status({ selectedAuthType: 'gemini_api_key', apiKeyConnected: true }))).toEqual({ label: 'Connected', tone: 'connected' });
     expect(googleAuthStatusSummary(status())).toEqual({ label: 'Not connected', tone: 'not_connected' });
     expect(googleAuthStatusSummary(status({ selectedAuthType: 'google_oauth' })).tone).toBe('needs_attention');
-    expect(googleAccountNeedsReconnect({ id: 'google-id', email: null, displayName: null, authType: 'google_oauth', connected: false, requiresReconnect: true, expiresAt: null, grantedScopes: [] })).toBe(true);
+    expect(googleAccountNeedsReconnect({ id: 'google-id', email: null, displayName: null, authType: 'google_oauth', accountType: 'unknown', cloudProjectId: null, connected: false, requiresReconnect: true, expiresAt: null, grantedScopes: [] })).toBe(true);
     expect(googleProviderErrorMessage('google_auth_method_unavailable', 'Vertex AI authentication is not available yet.')).toContain('Vertex AI authentication is not available yet');
   });
 

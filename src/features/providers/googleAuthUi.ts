@@ -64,9 +64,10 @@ export function googleAuthStartErrorMessage(code: string): string {
       return googleAuthFailureMessage('browser_unavailable');
     case 'auth_callback_unavailable':
       return 'JevCode could not start the local sign-in listener. Restart the app and try again.';
-    case 'google_cloud_project_required':
     case 'google_oauth_not_configured':
-      return 'Google sign-in needs a Google Cloud project with the Gemini API enabled. Use a Gemini API key for now.';
+      return 'Google account sign-in is not configured. Register a Desktop OAuth client ID for JevCode, or use a Gemini API key for model requests.';
+    case 'google_cloud_project_required':
+      return 'This Workspace account needs a Google Cloud project ID for Code Assist setup. JevCode cannot use Code Assist models through a supported third-party API yet.';
     case 'google_reconnect_required':
       return 'This Google account needs reconnecting. Start sign-in again to restore access.';
     case 'network_error':
@@ -111,19 +112,17 @@ export function googleAccountNeedsReconnect(account: GoogleAccount): boolean {
 
 export function googleAuthStatusSummary(status: GoogleAuthStatus): { label: string; tone: 'connected' | 'needs_attention' | 'not_connected' } {
   if (status.selectedAuthType === 'google_oauth') {
-    if (status.account && !googleAccountNeedsReconnect(status.account)) return { label: 'Connected', tone: 'connected' };
+    if (status.account && !googleAccountNeedsReconnect(status.account)) return { label: 'Account linked', tone: 'needs_attention' };
     return { label: 'Reconnect needed', tone: 'needs_attention' };
   }
   if (status.selectedAuthType === 'gemini_api_key') return { label: status.apiKeyConnected ? 'Connected' : 'Reconnect needed', tone: status.apiKeyConnected ? 'connected' : 'needs_attention' };
   if (status.account?.requiresReconnect) return { label: 'Reconnect needed', tone: 'needs_attention' };
+  if (status.account?.connected) return { label: 'Account linked', tone: 'needs_attention' };
   return { label: 'Not connected', tone: 'not_connected' };
 }
 
 export function googleAuthUnavailableMessage(reason: string | null): string {
   if (!reason) return 'Google sign-in is unavailable. Use a Gemini API key or try again later.';
-  if (/project|cloud|generative language api|gemini api/i.test(reason)) {
-    return 'Google sign-in needs a Google Cloud project with the Gemini API enabled. Use a Gemini API key for now.';
-  }
   return reason;
 }
 
@@ -136,6 +135,10 @@ export function googleProviderErrorMessage(code: string, message: string): strin
     case 'google_oauth_not_configured':
     case 'google_auth_method_unavailable':
       return googleAuthUnavailableMessage(message);
+    case 'google_code_assist_unsupported':
+      return 'Google sign-in identifies your account, but Google has not documented a supported third-party Code Assist inference API. Use a Gemini API key for model requests.';
+    case 'google_invalid_cloud_project':
+      return 'Enter a valid Google Cloud project ID.';
     case 'invalid_credential':
       return 'Google rejected this credential. Check the account or API key and try again.';
     case 'quota_exhausted':
