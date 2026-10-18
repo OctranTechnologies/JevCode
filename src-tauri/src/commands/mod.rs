@@ -2058,7 +2058,7 @@ pub async fn google_auth_start(
     let provider = state.config.provider("gemini")?.clone();
     let manager = crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?;
     // Google desktop OAuth requires a registered Desktop client. Binding first
-    // ensures the exact loopback port is included in the registered redirect.
+    // lets the request use this listener's exact ephemeral loopback URI.
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|_| {
         AppError::new(
             "auth_callback_unavailable",
@@ -2094,6 +2094,7 @@ pub async fn google_auth_start(
             &pending,
             cancel_receiver,
             &managed_state,
+            GOOGLE_AUTH_TIMEOUT,
         )
         .await;
         if let Some(completion) = completion {
@@ -2217,8 +2218,9 @@ async fn wait_for_google_callback(
     pending: &crate::auth::google::PendingGoogleAuth,
     mut cancellation: watch::Receiver<bool>,
     state: &SharedState,
+    timeout_duration: Duration,
 ) -> Option<GoogleAuthCompletion> {
-    let timeout = tokio::time::sleep(GOOGLE_AUTH_TIMEOUT);
+    let timeout = tokio::time::sleep(timeout_duration);
     tokio::pin!(timeout);
     loop {
         tokio::select! {
@@ -2376,7 +2378,7 @@ async fn handle_google_callback(
             let _ = respond_to_google_callback(
                 &mut stream,
                 200,
-                "Authentication successful. You can return to JevCode.",
+                "Google authentication successful. You can close this window and return to JevCode.",
             )
             .await;
             Some(GoogleAuthCompletion::new(
@@ -3089,6 +3091,184 @@ fn safe_frontend_event(event: &str) -> Option<&'static str> {
         "bootstrap_failed" => Some("bootstrap_failed"),
         "ipc_event_invalid" => Some("ipc_event_invalid"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod google_auth_callback_tests {
+    use super::*;
+    use std::{net::SocketAddr, sync::Arc};
+
+    fn context(root: &tempfile::TempDir) -> (SharedState, crate::auth::google::GoogleAuthManager) {
+        let mut config: crate::config::AppConfig =
+            serde_json::from_str(include_str!("../providers/defaults.json")).unwrap();
+        config.google_oauth_client_id = Some("jevcode-test.apps.googleusercontent.com".into());
+        config.google_cloud_project_id = Some("jevcode-test-project".into());
+        let provider = config.provider("gemini").unwrap().clone();
+        let manager =
+            crate::auth::google::GoogleAuthManager::with_app_config(provider, &config).unwrap();
+        let database =
+            crate::persistence::Database::open(&root.path().join("google-auth.sqlite")).unwrap();
+        let state = Arc::new(crate::state::AppState::new(
+            database,
+            config,
+            crate::credentials::CredentialStore,
+        ));
+        (state, manager)
+    }
+
+    async fn run_callback_request(
+        request_for: impl FnOnce(SocketAddr, &str) -> String,
+    ) -> (String, Option<GoogleAuthCompletion>, SocketAddr) {
+        let root = tempfile::tempdir().unwrap();
+        let (state, manager) = context(&root);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let pending = manager
+            .create_authentication_session(&format!("http://127.0.0.1:{}", address.port()))
+            .unwrap();
+        let state_value = pending
+            .authorization_url
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let request = request_for(address, &state_value);
+        let (_cancel_sender, cancellation) = watch::channel(false);
+        let server = tokio::spawn(async move {
+            wait_for_google_callback(
+                listener,
+                &manager,
+                &pending,
+                cancellation,
+                &state,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        let completion = server.await.unwrap();
+        (response, completion, address)
+    }
+
+    #[tokio::test]
+    async fn oauth_error_callback_returns_a_safe_page_and_closes_the_listener() {
+        let (response, completion, address) = run_callback_request(|address, state| {
+            format!(
+                "GET /?error=access_denied&state={state} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+                address.port()
+            )
+        })
+        .await;
+
+        assert!(response.starts_with("HTTP/1.1 200"));
+        assert!(response.contains("Sign-in was cancelled. You can return to JevCode."));
+        assert_eq!(
+            completion,
+            Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Denied,
+                None
+            ))
+        );
+        assert!(TcpListener::bind(address).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn wrong_state_missing_code_and_malformed_requests_are_rejected() {
+        for (target, method) in [
+            ("/?code=private-code&state=wrong", "GET"),
+            ("/?state={state}", "GET"),
+            ("/?code=private-code&state={state}", "POST"),
+        ] {
+            let (response, completion, address) = run_callback_request(|address, state| {
+                let target = target.replace("{state}", state);
+                format!(
+                    "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+                    address.port()
+                )
+            })
+            .await;
+
+            assert!(response.starts_with("HTTP/1.1 400") || response.starts_with("HTTP/1.1 405"));
+            assert!(!response.contains("private-code"));
+            assert_eq!(
+                completion.map(|value| value.state),
+                Some(GoogleAuthAttemptState::Failed)
+            );
+            assert!(TcpListener::bind(address).await.is_ok());
+        }
+
+        let (response, completion, address) = run_callback_request(|_address, state| {
+            format!("GET /?state={state} HTTP/1.1\r\nmalformed header\r\nConnection: close\r\n\r\n")
+        })
+        .await;
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert_eq!(
+            completion.map(|value| value.state),
+            Some(GoogleAuthAttemptState::Failed)
+        );
+        assert!(TcpListener::bind(address).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn callback_listener_shuts_down_on_cancellation_and_timeout() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, manager) = context(&root);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let cancelled_address = listener.local_addr().unwrap();
+        let pending = manager
+            .create_authentication_session(&format!(
+                "http://127.0.0.1:{}",
+                cancelled_address.port()
+            ))
+            .unwrap();
+        let (cancel_sender, cancellation) = watch::channel(false);
+        let cancelled_server = tokio::spawn(async move {
+            wait_for_google_callback(
+                listener,
+                &manager,
+                &pending,
+                cancellation,
+                &state,
+                Duration::from_secs(5),
+            )
+            .await
+        });
+        cancel_sender.send(true).unwrap();
+        assert_eq!(cancelled_server.await.unwrap(), None);
+        assert!(TcpListener::bind(cancelled_address).await.is_ok());
+
+        let root = tempfile::tempdir().unwrap();
+        let (state, manager) = context(&root);
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let timeout_address = listener.local_addr().unwrap();
+        let pending = manager
+            .create_authentication_session(&format!("http://127.0.0.1:{}", timeout_address.port()))
+            .unwrap();
+        let (_cancel_sender, cancellation) = watch::channel(false);
+        let completion = wait_for_google_callback(
+            listener,
+            &manager,
+            &pending,
+            cancellation,
+            &state,
+            Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(
+            completion,
+            Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::TimedOut,
+                None
+            ))
+        );
+        assert!(TcpListener::bind(timeout_address).await.is_ok());
     }
 }
 

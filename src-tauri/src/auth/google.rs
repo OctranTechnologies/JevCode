@@ -1157,7 +1157,7 @@ fn validate_redirect_uri(value: &str) -> AppResult<()> {
     if url.scheme() != "http"
         || url.host_str() != Some("127.0.0.1")
         || url.port().is_none()
-        || !matches!(url.path(), "/auth/callback" | "/")
+        || url.path() != "/"
         || url.query().is_some()
         || url.fragment().is_some()
     {
@@ -1376,6 +1376,11 @@ mod tests {
         );
         assert_eq!(query.get("response_type").map(String::as_str), Some("code"));
         assert_eq!(
+            query.get("redirect_uri").map(String::as_str),
+            Some(first.redirect_uri.as_str())
+        );
+        assert_eq!(first.redirect_uri, "http://127.0.0.1:43123");
+        assert_eq!(
             query.get("client_id").map(String::as_str),
             Some("jevcode-client.apps.googleusercontent.com")
         );
@@ -1445,6 +1450,49 @@ mod tests {
         assert!(parse_authorization_callback(&pending, &missing_code, "127.0.0.1:43123").is_err());
         assert!(parse_authorization_callback(&pending, &valid, "localhost:43123").is_err());
         assert!(parse_authorization_callback(&pending, &valid, "127.0.0.1:43124").is_err());
+        assert!(manager
+            .create_authentication_session("http://127.0.0.1:43123/oauth2callback")
+            .is_err());
+    }
+
+    #[test]
+    fn oauth_errors_require_the_matching_state_and_are_not_treated_as_codes() {
+        let manager = GoogleAuthManager::with_config(
+            provider(),
+            Some("jevcode-client.apps.googleusercontent.com".into()),
+            Some("jevcode-project-123".into()),
+        )
+        .unwrap();
+        let pending = manager
+            .create_authentication_session("http://127.0.0.1:43123")
+            .unwrap();
+
+        let denied = format!("/?error=access_denied&state={}", pending.state);
+        assert!(
+            parse_authorization_callback(&pending, &denied, "127.0.0.1:43123")
+                .unwrap()
+                .is_none()
+        );
+
+        let provider_error = format!("/?error=server_error&state={}", pending.state);
+        assert!(
+            parse_authorization_callback(&pending, &provider_error, "127.0.0.1:43123").is_err()
+        );
+        assert!(parse_authorization_callback(
+            &pending,
+            "/?error=access_denied&state=wrong",
+            "127.0.0.1:43123"
+        )
+        .is_err());
+        assert!(parse_authorization_callback(
+            &pending,
+            &format!(
+                "/?error=access_denied&state={}&code=unexpected",
+                pending.state
+            ),
+            "127.0.0.1:43123"
+        )
+        .is_err());
     }
 
     #[test]

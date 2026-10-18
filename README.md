@@ -436,8 +436,15 @@ Authentication is intentionally separated by product entitlement:
 
   These are public configuration values; do not add a client secret or copy
   Gemini CLI credentials. Sign-in opens the system browser and uses Google's
-  documented random-port IPv4 loopback redirect, fresh `state` and `nonce`, and
-  PKCE S256. JevCode requests `openid email profile` for safe account identity
+  documented random-port IPv4 loopback redirect in the form
+  `http://127.0.0.1:<port>` with the root path. The callback listener binds
+  only to `127.0.0.1`, accepts one callback whose host, path, and state match
+  the authorization request, then closes on success, provider error,
+  cancellation, or timeout. Google documents the loopback redirect as host and
+  port without an `/oauth2callback` path; JevCode uses that documented form to
+  avoid redirect mismatches. Callback pages never show authorization codes or
+  tokens. Sign-in also uses fresh `state` and `nonce`, and PKCE S256. JevCode
+  requests `openid email profile` for safe account identity
   and the Gemini API scopes `cloud-platform` and `generative-language.retriever`;
   it does not request the Gemini CLI's Code Assist scopes or call its service.
   The native layer validates the callback, granted scopes, and signed ID token
