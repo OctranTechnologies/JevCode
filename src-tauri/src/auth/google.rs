@@ -30,6 +30,9 @@ use zeroize::{Zeroize, Zeroizing};
 const GOOGLE_AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_DISCOVERY_URL: &str = "https://accounts.google.com/.well-known/openid-configuration";
+// OIDC identity scopes support verified account metadata. The remaining scopes
+// are the documented Gemini Developer API OAuth scopes, not Gemini Code Assist
+// CLI scopes or credentials.
 const GOOGLE_SCOPES: &str = "openid email profile https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/generative-language.retriever";
 const REFRESH_SKEW: ChronoDuration = ChronoDuration::minutes(5);
 type RefreshLock = Arc<tokio::sync::Mutex<()>>;
@@ -432,7 +435,7 @@ impl GoogleAuthManager {
             .append_pair("code_challenge", &code_challenge)
             .append_pair("code_challenge_method", "S256")
             .append_pair("access_type", "offline")
-            .append_pair("prompt", "consent select_account");
+            .append_pair("prompt", "select_account");
         Ok(PendingGoogleAuth {
             attempt_id: uuid::Uuid::new_v4().to_string(),
             state,
@@ -1346,7 +1349,7 @@ mod tests {
     #[test]
     fn oauth_is_unavailable_without_a_registered_desktop_client_and_cloud_project() {
         let manager = GoogleAuthManager::new(provider()).unwrap();
-        match manager.create_authentication_session("http://127.0.0.1:43123/auth/callback") {
+        match manager.create_authentication_session("http://127.0.0.1:43123") {
             Err(error) => assert_eq!(error.code, "google_oauth_not_configured"),
             Ok(_) => panic!("OAuth must remain disabled without registered Google configuration"),
         }
@@ -1361,10 +1364,10 @@ mod tests {
         )
         .unwrap();
         let first = manager
-            .create_authentication_session("http://127.0.0.1:43123/auth/callback")
+            .create_authentication_session("http://127.0.0.1:43123")
             .unwrap();
         let second = manager
-            .create_authentication_session("http://127.0.0.1:43124/auth/callback")
+            .create_authentication_session("http://127.0.0.1:43124")
             .unwrap();
         let query: HashMap<_, _> = first.authorization_url.query_pairs().into_owned().collect();
         assert_eq!(
@@ -1372,6 +1375,20 @@ mod tests {
             Some("accounts.google.com")
         );
         assert_eq!(query.get("response_type").map(String::as_str), Some("code"));
+        assert_eq!(
+            query.get("client_id").map(String::as_str),
+            Some("jevcode-client.apps.googleusercontent.com")
+        );
+        assert!(!query.contains_key("client_secret"));
+        assert_eq!(
+            query.get("access_type").map(String::as_str),
+            Some("offline")
+        );
+        assert_eq!(
+            query.get("prompt").map(String::as_str),
+            Some("select_account")
+        );
+        assert_eq!(query.get("scope").map(String::as_str), Some(GOOGLE_SCOPES));
         assert_eq!(
             query.get("code_challenge_method").map(String::as_str),
             Some("S256")
@@ -1395,6 +1412,9 @@ mod tests {
         assert_ne!(first.state, second.state);
         assert_ne!(first.nonce, second.nonce);
         assert_ne!(first.code_verifier, second.code_verifier);
+        assert_eq!(first.state.len(), 64);
+        assert_eq!(first.code_verifier.len(), 64);
+        assert_eq!(query.get("code_challenge").unwrap().len(), 43);
     }
 
     #[test]
@@ -1406,22 +1426,22 @@ mod tests {
         )
         .unwrap();
         let pending = manager
-            .create_authentication_session("http://127.0.0.1:43123/auth/callback")
+            .create_authentication_session("http://127.0.0.1:43123")
             .unwrap();
-        let valid = format!("/auth/callback?code=auth-code-123&state={}", pending.state);
+        let valid = format!("/?code=auth-code-123&state={}", pending.state);
         let parsed_code = parse_authorization_callback(&pending, &valid, "127.0.0.1:43123")
             .unwrap()
             .unwrap();
         assert_eq!(parsed_code.as_str(), "auth-code-123");
         assert!(parse_authorization_callback(
             &pending,
-            &valid.replacen("/auth/callback", "", 1),
+            &valid.replacen('/', "/auth/callback", 1),
             "127.0.0.1:43123"
         )
         .is_err());
-        let wrong_state = "/auth/callback?code=auth-code-123&state=wrong";
+        let wrong_state = "/?code=auth-code-123&state=wrong";
         assert!(parse_authorization_callback(&pending, wrong_state, "127.0.0.1:43123").is_err());
-        let missing_code = format!("/auth/callback?state={}", pending.state);
+        let missing_code = format!("/?state={}", pending.state);
         assert!(parse_authorization_callback(&pending, &missing_code, "127.0.0.1:43123").is_err());
         assert!(parse_authorization_callback(&pending, &valid, "localhost:43123").is_err());
         assert!(parse_authorization_callback(&pending, &valid, "127.0.0.1:43124").is_err());

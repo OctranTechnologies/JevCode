@@ -2074,7 +2074,7 @@ pub async fn google_auth_start(
             )
         })?
         .port();
-    let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
+    let redirect_uri = format!("http://127.0.0.1:{port}");
     let pending = manager.create_authentication_session(&redirect_uri)?;
     let result = GoogleAuthStart {
         attempt_id: pending.attempt_id.clone(),
@@ -2294,7 +2294,7 @@ async fn handle_google_callback(
             Some(GoogleAuthFailureReason::OauthFailure),
         ));
     }
-    if target.split('?').next() != Some("/auth/callback") {
+    if target.split('?').next() != Some("/") {
         let _ =
             respond_to_google_callback(&mut stream, 404, "This sign-in callback is not available.")
                 .await;
@@ -2430,7 +2430,7 @@ async fn respond_to_google_callback(
     stream.shutdown().await
 }
 
-fn open_google_system_browser(url: &reqwest::Url) -> AppResult<()> {
+fn google_system_browser_command(url: &reqwest::Url) -> AppResult<Command> {
     if url.scheme() != "https"
         || url.host_str() != Some("accounts.google.com")
         || url.path() != "/o/oauth2/v2/auth"
@@ -2441,19 +2441,19 @@ fn open_google_system_browser(url: &reqwest::Url) -> AppResult<()> {
         ));
     }
     #[cfg(target_os = "windows")]
-    let mut command = {
+    let command = {
         let mut command = Command::new("rundll32.exe");
         command.args(["url.dll,FileProtocolHandler", url.as_str()]);
         command
     };
     #[cfg(target_os = "macos")]
-    let mut command = {
+    let command = {
         let mut command = Command::new("open");
         command.arg(url.as_str());
         command
     };
     #[cfg(target_os = "linux")]
-    let mut command = {
+    let command = {
         let mut command = Command::new("xdg-open");
         command.arg(url.as_str());
         command
@@ -2464,6 +2464,12 @@ fn open_google_system_browser(url: &reqwest::Url) -> AppResult<()> {
         "Opening the system browser is not supported on this platform.",
     ));
 
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    Ok(command)
+}
+
+fn open_google_system_browser(url: &reqwest::Url) -> AppResult<()> {
+    let mut command = google_system_browser_command(url)?;
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     command
         .stdin(Stdio::null())
@@ -2846,6 +2852,45 @@ mod openai_auth_start_tests {
             open_system_browser(&hostile).unwrap_err().code,
             "auth_configuration"
         );
+    }
+
+    #[test]
+    fn google_browser_launcher_uses_the_system_handler_only_for_google_oauth() {
+        let url = reqwest::Url::parse(
+            "https://accounts.google.com/o/oauth2/v2/auth?client_id=jevcode-test.apps.googleusercontent.com&response_type=code&code_challenge_method=S256",
+        )
+        .unwrap();
+        let command = google_system_browser_command(&url).unwrap();
+        let args: Vec<_> = command.get_args().collect();
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(command.get_program(), "rundll32.exe");
+            assert_eq!(args[0], "url.dll,FileProtocolHandler");
+            assert_eq!(args[1], url.as_str());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(command.get_program(), "open");
+            assert_eq!(args[0], url.as_str());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(command.get_program(), "xdg-open");
+            assert_eq!(args[0], url.as_str());
+        }
+
+        for invalid in [
+            "https://example.com/o/oauth2/v2/auth?client_id=client",
+            "https://accounts.google.com.evil.example/o/oauth2/v2/auth?client_id=client",
+            "http://accounts.google.com/o/oauth2/v2/auth?client_id=client",
+        ] {
+            assert_eq!(
+                google_system_browser_command(&reqwest::Url::parse(invalid).unwrap())
+                    .unwrap_err()
+                    .code,
+                "auth_configuration"
+            );
+        }
     }
 
     #[tokio::test]

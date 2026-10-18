@@ -419,11 +419,13 @@ Authentication is intentionally separated by product entitlement:
   model picker, and safe profile/selection metadata is restored on app restart.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
-- Gemini API keys are supported. Google OAuth is implemented as an installed-app
-  flow and is enabled when the app configuration includes a registered Desktop
-  OAuth client ID and Google Cloud project ID. Create a Desktop app OAuth client
-  in Google Cloud Console, enable the Generative Language API, and add these
-  values to the existing `config.json` in the app configuration directory:
+- Gemini API keys are supported. Google OAuth is for the Gemini Developer API
+  only; it does not sign into Gemini Code Assist or provide Gemini CLI/subscription
+  access. It is enabled only when the app configuration includes a Desktop OAuth
+  client ID registered for JevCode and a Google Cloud project. Create JevCode's
+  own Desktop app OAuth client in Google Cloud Console, enable the Generative
+  Language API, and add these values to the existing `config.json` in the app
+  configuration directory:
 
   ```json
   {
@@ -432,11 +434,15 @@ Authentication is intentionally separated by product entitlement:
   }
   ```
 
-  These are public configuration values; do not add a client secret. Sign-in
-  opens the system browser, uses a random IPv4 loopback callback, fresh `state`
-  and `nonce`, and PKCE S256. The native layer validates the callback, granted
-  scopes, and signed ID token (issuer, audience, signature, expiry and nonce)
-  before saving the session in the OS credential store. Refreshes are
+  These are public configuration values; do not add a client secret or copy
+  Gemini CLI credentials. Sign-in opens the system browser and uses Google's
+  documented random-port IPv4 loopback redirect, fresh `state` and `nonce`, and
+  PKCE S256. JevCode requests `openid email profile` for safe account identity
+  and the Gemini API scopes `cloud-platform` and `generative-language.retriever`;
+  it does not request the Gemini CLI's Code Assist scopes or call its service.
+  The native layer validates the callback, granted scopes, and signed ID token
+  (issuer, audience, signature, expiry and nonce) before saving the session in
+  the OS credential store. Refreshes are
   serialized and replace the secure session in place. Tauri returns only safe
   account metadata; React never receives access, refresh, or ID tokens.
   OAuth requests use the configured Cloud project for quota attribution. This
