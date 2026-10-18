@@ -421,16 +421,18 @@ Authentication is intentionally separated by product entitlement:
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
 - Gemini API keys are the supported model-request route. Google sign-in stores a
-  separate Google account identity session; that session is not an inference
-  credential. Google's public Cloud AI Companion REST reference documents
-  project/location, repository-index and settings operations, but not a
-  third-party chat or streaming generation API. The open-source Gemini CLI
-  Code Assist client currently calls `cloudcode-pa.googleapis.com/v1internal`;
-  JevCode does not call that private endpoint or send Google OAuth tokens to the
-  Gemini Developer API. Until Google publishes a supported third-party Code
-  Assist inference interface, Google sign-in does not add OAuth-backed models to
-  the model picker. Connect a Gemini API key and explicitly select that route to
-  use Gemini models.
+  separate Google account identity session; JevCode requests only the OIDC
+  identity scopes `openid email profile`, so that session cannot authorize
+  Gemini model requests. Google's public Cloud AI Companion REST reference
+  documents project/location, repository-index and settings operations, but not
+  the third-party chat or streaming API used by Gemini CLI. The CLI uses the
+  first-party `cloudcode-pa.googleapis.com/v1internal` service. JevCode does
+  not call that private endpoint or send account OAuth tokens to the Gemini
+  Developer API.
+  Google's Gemini API OAuth quickstart describes a simplified testing flow and
+  directs production apps to choose appropriate credentials. JevCode therefore
+  uses an explicitly connected Gemini API key for coding tasks; Google account
+  sign-in does not add OAuth-backed models to the model picker.
 
   To enable Google account identity sign-in, create JevCode's own Desktop app
   OAuth client in Google Cloud Console and add its public client ID to the
@@ -441,6 +443,13 @@ Authentication is intentionally separated by product entitlement:
     "googleOAuthClientId": "YOUR_CLIENT_ID.apps.googleusercontent.com"
   }
   ```
+
+  In Google Auth Platform, configure the OAuth consent screen and create an
+  OAuth client whose application type is **Desktop app**. While the consent
+  screen is in Testing, add the accounts you intend to use as test users. A
+  desktop client is a public client: configure only its client ID in JevCode;
+  do not ship or enter a client secret. The callback port is chosen at runtime,
+  so do not register a fixed web redirect URI.
 
   The client ID is public configuration; do not add a client secret or copy
   Gemini CLI credentials. Sign-in opens the system browser and uses Google's
@@ -453,8 +462,8 @@ Authentication is intentionally separated by product entitlement:
   avoid redirect mismatches. Callback pages never show authorization codes or
   tokens. Sign-in also uses fresh `state` and `nonce`, and PKCE S256. JevCode
   requests only `openid email profile` for safe identity metadata. It does not
-  request broad Cloud permissions because no documented third-party Code Assist
-  generation API is available to JevCode.
+  request broad Cloud permissions because its account-linking feature does not
+  call Gemini APIs.
   The native layer validates the callback, granted scopes, and signed ID token
   (issuer, audience, signature, expiry and nonce) before saving the session in
   the OS credential store. After the callback, Rust sends a form-encoded POST
@@ -496,24 +505,36 @@ Authentication is intentionally separated by product entitlement:
 
   Google account classification uses only a verified ID-token `hd` claim. A
   consumer account is identified as individual, but OAuth does not expose
-  whether it has Google AI Pro or Ultra. Consumer Gemini Code Assist access in
-  Gemini CLI ended on June 18, 2026. Existing Gemini Code Assist Standard and
-  Enterprise subscriptions can continue under their active contracts, but new
-  subscriptions stopped being available on October 9, 2026. JevCode's
-  identity-only OAuth scopes do not reveal these product entitlements, so it
-  does not claim that a Workspace account has a Code Assist license. Workspace
-  Code Assist setup requires a Cloud project with the Gemini for Google Cloud
-  API enabled and the required IAM roles. Settings asks for a project ID for a
-  Workspace account and marks eligibility as unverified; entering an ID saves
-  configuration only and does not test or activate Code Assist. JevCode does
-  not import `gcloud` credentials or Gemini CLI data.
+  whether it has Google AI Pro or Ultra. Google's current Gemini CLI guide says
+  Gemini CLI was replaced by Antigravity CLI for unpaid-tier and Google One
+  users on June 18, 2026. Existing Gemini Code Assist Standard and Enterprise
+  subscriptions can continue under active contracts, but new subscriptions
+  stopped being available on October 9, 2026. These are product-specific
+  eligibility rules; JevCode's identity-only scopes cannot verify product
+  entitlements or prove a Workspace license. A Workspace project ID can be
+  recorded in Settings as setup metadata, but entering it does not test or
+  activate Code Assist or authorize JevCode model requests. JevCode does not
+  import `gcloud` credentials or Gemini CLI data.
+
+  **Troubleshooting:** If Google sign-in is unavailable, check that the client
+  ID is present in JevCode's app `config.json` and belongs to a Desktop OAuth
+  client. If Google rejects the account before returning to JevCode, check the
+  consent-screen audience, test-user list, and Workspace administrator policy.
+  A callback verification error means the one-time attempt expired or failed
+  state validation; restart sign-in instead of reusing the old browser URL. If
+  the account links but no Gemini models appear, connect and explicitly select
+  a Gemini API key: account linking does not provide model access. A Workspace
+  project ID is saved as setup metadata only and cannot resolve account
+  entitlement or enable requests in JevCode.
 
   Settings → Providers → Google Gemini offers **Continue with Google** and
   **Use Gemini API Key** as separate choices. The API key remains the model
   request route. Connecting or selecting Google OAuth never changes billing or
   falls back to another credential. Vertex AI / ADC remains unavailable until
-  a separate authentication mode is implemented. Only one Google OAuth account
-  is currently displayed; account-specific Google profiles remain a limitation.
+  a separate authentication mode is implemented. Multiple Google OAuth
+  profiles are supported with isolated keychain entries; switching the selected
+  identity persists across restart and does not affect an API-key request in
+  progress. API-key credentials remain independently stored and selectable.
   Sign-in progress and cancellation appear in the settings card; cancellation,
   timeout, denied consent, browser launch, network, OAuth and reconnect failures
   use friendly messages. Unsupported accounts or Workspace policy restrictions
@@ -547,7 +568,11 @@ failures map to stable categories:
 invalid credential, expired authentication, quota exhausted, subscription
 unavailable, network error and provider outage.
 
-Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
+Official authentication references: [Google OAuth 2.0 for desktop apps](https://developers.google.com/identity/protocols/oauth2/native-app),
+[Gemini API OAuth quickstart](https://ai.google.dev/gemini-api/docs/oauth),
+[Gemini CLI authentication and account/project guidance](https://geminicli.com/docs/get-started/authentication/),
+[Gemini Code Assist subscription transition](https://docs.cloud.google.com/gemini/docs/codeassist/sunset),
+[OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
 [OpenAI Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
 [OpenAI accounts, sessions and token refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions),
 [OpenAI ChatGPT-plan models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference),

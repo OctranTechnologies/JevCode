@@ -13,7 +13,8 @@ pub struct AppConfig {
     /// Public OAuth client ID for Google's registered desktop application.
     #[serde(default, rename = "googleOAuthClientId")]
     pub google_oauth_client_id: Option<String>,
-    /// Google Cloud project used for Gemini API OAuth quota attribution.
+    /// Optional project ID copied into Google account setup metadata. It does
+    /// not authorize or configure Gemini model requests.
     #[serde(default)]
     pub google_cloud_project_id: Option<String>,
 }
