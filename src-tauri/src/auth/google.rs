@@ -470,6 +470,98 @@ impl GoogleAuthManager {
         })
     }
 
+    pub(crate) fn select_auth_method(
+        &self,
+        auth_type: GoogleAuthType,
+        credentials: &CredentialStore,
+        database: &Database,
+    ) -> AppResult<GoogleAuthStatus> {
+        let current = database.provider_account(&self.provider.id)?;
+        let (method, label, state, error_code) = match auth_type {
+            GoogleAuthType::GoogleOAuth => {
+                let status = self.status(credentials, current.clone())?;
+                let account = status.account.ok_or_else(google_reconnect_error)?;
+                if !account.connected || account.requires_reconnect {
+                    return Err(google_reconnect_error());
+                }
+                (
+                    ProviderAuthMethod::GoogleOAuth,
+                    account.email.unwrap_or_else(|| "Google account".into()),
+                    ProviderAuthState::Connected,
+                    None,
+                )
+            }
+            GoogleAuthType::GeminiApiKey => {
+                if !self.has_api_key(credentials)? {
+                    return Err(AppError::new(
+                        "credentials_required",
+                        "Connect a Gemini API key before selecting that sign-in method.",
+                    ));
+                }
+                (
+                    ProviderAuthMethod::ApiKey,
+                    "Gemini API key".into(),
+                    ProviderAuthState::Connected,
+                    None,
+                )
+            }
+            GoogleAuthType::VertexAdc => {
+                return Err(AppError::new(
+                    "google_auth_method_unavailable",
+                    "Vertex AI authentication is not available in JevCode yet.",
+                ));
+            }
+        };
+        let account = ProviderAccount {
+            provider_id: self.provider.id.clone(),
+            provider_name: self.provider.name.clone(),
+            state,
+            auth_method: Some(method),
+            account_label: Some(label),
+            connected_at: current
+                .as_ref()
+                .and_then(|account| account.connected_at.clone())
+                .or_else(|| Some(Utc::now().to_rfc3339())),
+            last_validated_at: current
+                .as_ref()
+                .and_then(|account| account.last_validated_at.clone()),
+            last_error_code: error_code,
+            available_methods: self.available_auth_methods(),
+        };
+        database.save_provider_account(&account)?;
+        self.status(credentials, Some(account))
+    }
+
+    pub(crate) fn disconnect_api_key(
+        &self,
+        credentials: &CredentialStore,
+        database: &Database,
+    ) -> AppResult<()> {
+        credentials.delete(&self.provider.id)?;
+        if let Some(mut stored) = database.provider_account(&self.provider.id)? {
+            if stored.auth_method == Some(ProviderAuthMethod::ApiKey) {
+                let status = self.status(credentials, Some(stored.clone()))?;
+                if let Some(account) = status.account {
+                    stored.state = if account.requires_reconnect {
+                        ProviderAuthState::NeedsAttention
+                    } else {
+                        ProviderAuthState::Connected
+                    };
+                    stored.auth_method = Some(ProviderAuthMethod::GoogleOAuth);
+                    stored.account_label = account.email.or_else(|| Some("Google account".into()));
+                    stored.last_error_code = account
+                        .requires_reconnect
+                        .then(|| "google_reconnect_required".into());
+                    stored.available_methods = self.available_auth_methods();
+                    database.save_provider_account(&stored)?;
+                } else {
+                    database.delete_provider_account(&self.provider.id)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn create_authentication_session(
         &self,
         redirect_uri: &str,

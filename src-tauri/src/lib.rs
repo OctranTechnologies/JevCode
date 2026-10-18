@@ -124,6 +124,8 @@ pub fn run() {
             commands::google_auth_status,
             commands::google_auth_logout,
             commands::google_auth_refresh,
+            commands::google_auth_select_method,
+            commands::google_auth_disconnect_api_key,
             commands::get_provider_account_info,
             commands::get_provider_available_models,
             commands::frontend_log,

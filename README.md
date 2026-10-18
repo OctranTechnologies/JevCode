@@ -459,7 +459,8 @@ Authentication is intentionally separated by product entitlement:
   connected. Refreshes are serialized and replace the secure session in place.
   `google_auth_status` returns only account metadata and connection state;
   `google_auth_logout` revokes where possible, removes the local keychain
-  session, and resets Gemini's selected auth state. React never receives
+  session, and selects a separately connected Gemini API key if one remains.
+  The provider settings card makes the active route visible. React never receives
   access, refresh, or ID tokens.
   The OS credential-store session is loaded again after app restart;
   SQLite keeps only safe account and connection metadata. Before a Gemini OAuth
@@ -474,6 +475,18 @@ Authentication is intentionally separated by product entitlement:
   error without an internal retry loop. An expired access token without a
   refresh token triggers reconnect; a still-valid access token remains usable
   until it needs renewal.
+  Settings → Providers → Google Gemini offers **Continue with Google** and
+  **Use Gemini API Key** when disconnected, and keeps Google Account and API key
+  routes independently selectable and removable if both are configured.
+  Sign-in progress and cancellation appear in the settings card; cancellation,
+  timeout, denied consent, browser launch, network, OAuth and reconnect failures
+  use friendly messages. Unsupported accounts or Workspace policy restrictions
+  are identified as possible causes when Google denies consent. Missing Cloud
+  project or Gemini API setup is explained before sign-in. The connected view
+  shows verified email metadata and the selected sign-in method, never OAuth
+  tokens. Vertex AI / ADC is labeled unavailable until a later release. These
+  controls use the shared semantic surface, border and status tokens, so they
+  follow both warm-light and dark themes.
   OAuth requests use the configured Cloud project for quota attribution. This
   is Gemini Developer API OAuth with the documented API scopes; JevCode does not
   read Gemini CLI or other Google application credentials, and this does not

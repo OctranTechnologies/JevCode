@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
 import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
@@ -75,6 +75,8 @@ interface Commands {
   google_auth_status: { args: undefined; result: GoogleAuthStatus };
   google_auth_logout: { args: undefined; result: GoogleLogoutResult };
   google_auth_refresh: { args: undefined; result: GoogleAccount };
+  google_auth_select_method: { args: { authType: GoogleAuthType }; result: GoogleAuthStatus };
+  google_auth_disconnect_api_key: { args: undefined; result: ProviderAccount };
   get_provider_account_info: { args: { providerId: string }; result: ProviderAccountInfo };
   get_provider_available_models: { args: { providerId: string }; result: Model[] };
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
@@ -101,6 +103,8 @@ const responses = {
   google_auth_status: googleAuthStatusSchema,
   google_auth_logout: googleLogoutResultSchema,
   google_auth_refresh: googleAccountSchema,
+  google_auth_select_method: googleAuthStatusSchema,
+  google_auth_disconnect_api_key: providerAccountSchema,
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),
   frontend_log: z.null(),
 } satisfies { [K in keyof Commands]: z.ZodType<Commands[K]['result']> };
@@ -183,6 +187,16 @@ export function refreshGoogleAuth(): Promise<GoogleAccount> {
 
 export function logoutGoogleAuth(): Promise<GoogleLogoutResult> {
   return command('google_auth_logout', undefined);
+}
+
+/** Select a pre-existing credential route; raw credentials never cross this boundary. */
+export function selectGoogleAuthMethod(authType: GoogleAuthType): Promise<GoogleAuthStatus> {
+  return command('google_auth_select_method', { authType });
+}
+
+/** Remove only the Gemini key, preserving any connected Google account. */
+export function disconnectGoogleApiKey(): Promise<ProviderAccount> {
+  return command('google_auth_disconnect_api_key', undefined);
 }
 
 export async function subscribeGoogleAuthAttempts(onAttempt: (attempt: GoogleAuthAttemptEvent) => void): Promise<UnlistenFn> {

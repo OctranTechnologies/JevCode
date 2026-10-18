@@ -777,6 +777,14 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .openai-account-details small { color: var(--wb-muted); font-size: 9px; }
 .openai-account-details strong { overflow: hidden; color: var(--wb-ink); font-size: 10px; font-weight: 540; text-overflow: ellipsis; }
 .openai-key-form { grid-template-columns: minmax(160px, .8fr) minmax(180px, 1fr) auto; margin: 0 0 0 42px; }
+.google-provider-card { grid-column: 1 / -1; padding: 17px; }
+.google-provider-mark { color: var(--wb-accent); }
+.google-method-list { margin-top: 14px; }
+.google-account-details { margin-bottom: 11px; }
+.google-vertex-row { color: var(--wb-muted); }
+.google-vertex-row .openai-method-account > span { color: var(--wb-muted); }
+.google-vertex-row .account-button:disabled { opacity: .6; }
+.google-key-form { grid-template-columns: minmax(160px, .8fr) minmax(180px, 1fr) auto; margin: 0 0 0 42px; }
 .accounts-feedback { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 12px; padding: 9px 10px; font-size: 10px; line-height: 1.5; border: 1px solid var(--wb-border); border-radius: 6px; }
 .accounts-feedback svg { flex: 0 0 auto; margin-top: 1px; }
 .accounts-feedback.success { color: var(--wb-accent); background: var(--wb-accent-soft); border-color: var(--wb-accent-line); }
@@ -908,7 +916,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .account-connect-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .account-form-actions { flex-wrap: wrap; }
   .account-method-note, .account-model-list { margin-left: 0; }
-  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-auth-routing-note, .openai-connection-choices, .openai-method-list, .openai-key-form { margin-inline-start: 0; }
+  .openai-status-loading, .openai-auth-feedback, .openai-auth-waiting, .openai-auth-routing-note, .openai-connection-choices, .openai-method-list, .openai-key-form, .google-key-form { margin-inline-start: 0; }
   .openai-catalog-actions { align-items: flex-start; flex-direction: column; }
   .openai-connection-choices { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .openai-choice-divider { padding: 1px 0; }

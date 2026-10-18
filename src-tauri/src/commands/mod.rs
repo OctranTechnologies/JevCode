@@ -2195,6 +2195,24 @@ pub async fn google_auth_logout(state: State<'_, SharedState>) -> AppResult<Goog
     })
 }
 
+#[tauri::command]
+pub fn google_auth_select_method(
+    auth_type: GoogleAuthType,
+    state: State<'_, SharedState>,
+) -> AppResult<GoogleAuthStatus> {
+    let provider = state.config.provider("gemini")?.clone();
+    crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
+        .select_auth_method(auth_type, &state.credentials, &state.database)
+}
+
+#[tauri::command]
+pub fn google_auth_disconnect_api_key(state: State<'_, SharedState>) -> AppResult<ProviderAccount> {
+    let provider = state.config.provider("gemini")?.clone();
+    crate::auth::google::GoogleAuthManager::with_app_config(provider.clone(), &state.config)?
+        .disconnect_api_key(&state.credentials, &state.database)?;
+    account_status(&state, &provider)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GoogleAuthCompletion {
     state: GoogleAuthAttemptState,
