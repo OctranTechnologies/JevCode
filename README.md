@@ -666,8 +666,6 @@ OS/architecture fallback. The manifest contract for the artifacts we publish is:
 | --- | --- | --- | --- |
 | Windows x64 MSI | `windows-x86_64` | `windows-x86_64-msi` | MSI |
 | Windows x64 NSIS | `windows-x86_64` | `windows-x86_64-nsis` | NSIS setup executable |
-| macOS Apple Silicon | `darwin-aarch64` | `darwin-aarch64-app` | `.app.tar.gz` |
-| macOS Intel | `darwin-x86_64` | `darwin-x86_64-app` | `.app.tar.gz` |
 | Linux x64 AppImage | `linux-x86_64` | `linux-x86_64-appimage` | AppImage |
 | Linux x64 Debian | — | `linux-x86_64-deb` | `.deb` |
 | Linux x64 RPM | — | `linux-x86_64-rpm` | `.rpm` |
@@ -677,7 +675,7 @@ the app's installed bundle type selects the corresponding installer-specific
 entry when available. Tauri selects `{os}-{arch}-{bundle_type}` before its
 generic `{os}-{arch}` fallback, so AppImage, Debian, and RPM installations use
 their own signed update bundles. The generic Linux entry points to AppImage as
-the fallback. The release validator requires exactly these eleven targets,
+the fallback. The release validator requires exactly these seven Windows and Linux targets,
 checks that their HTTPS GitHub API asset URLs belong to the release, confirms
 each asset has the expected bundle type and an uploaded `.sig` file, and checks
 that generic entries match their configured preferred targets. Tauri performs
@@ -689,7 +687,7 @@ a tag that is not newer than every published stable release.
 After the release quality gate and updater-key preflight pass, the workflow creates
 a stable draft. A test, signing, platform bundle, or manifest failure prevents the
 publish job from running, leaving the draft out of the production endpoint. A
-draft is promoted only after all platforms pass.
+draft is promoted only after Windows and Linux pass.
 See the official [Tauri updater guide](https://v2.tauri.app/plugin/updater/),
 [GitHub pipeline guide](https://v2.tauri.app/distribute/pipelines/github/),
 and [tauri-action manifest generator](https://github.com/tauri-apps/tauri-action/blob/dev/src/upload-version-json.ts)
@@ -725,7 +723,7 @@ the tag. The tag starts `.github/workflows/release.yml`:
 npm run release:patch
   → version files synchronized and checks pass
   → version commit and vX.Y.Z tag pushed
-  → GitHub Actions builds Windows, macOS, and Linux
+  → GitHub Actions builds Windows and Linux
   → signed updater artifacts and signatures generated
   → complete GitHub Release published
   → existing installations detect the update
@@ -755,14 +753,13 @@ preflight and Tauri build steps and is never printed. Keep the private key out o
 configuration, logs, and checked-in `.env` files. The public verification key in
 `src-tauri/tauri.conf.json` is safe to commit.
 
-The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
-installers with the official `tauri-apps/tauri-action@v1`. Its Linux quality job
+The pipeline builds Windows x64 and Linux x64 installers with the official
+`tauri-apps/tauri-action@v1`. Its Linux quality job
 runs `npm run check` (formatting, lint, type checks, frontend tests, Rust checks,
 Rust tests and Clippy) before a draft is created. Each platform job must produce
 its installer and every updater bundle/signature it needs. The Windows job
 installs and verifies the VBScript Windows capability required by WiX MSI
-packaging. macOS artifact checks use the target-specific Rust output directory.
-The action uploads installers,
+packaging. The action uploads installers,
 updater packages, `.sig` files, and `latest.json` to the draft. Platform jobs run
 one at a time so the action can merge entries without racing on `latest.json`.
 The final job finds the draft in the authenticated release collection (GitHub's
@@ -796,23 +793,21 @@ remain in OS credential storage. The updater replaces application bundles and
 does not migrate or delete these stores. SQLite migrations run when the updated
 app starts; updater failures do not issue project or session deletion commands.
 
-For a full hosted upgrade test, publish two sequential stable versions using the
-same signing key, install the first version, then update to the next. Verify the
-version, release notes, progress, restart, and that existing projects and tasks
-remain available. This checkout produced a signed Windows installer, and its
-updater signature was verified against the configured public key; a modified
-copy was rejected. The hosted v0.1.0 → v0.1.1 installation path is still pending:
-the first GitHub run found that the repository Actions secret
-`TAURI_SIGNING_PRIVATE_KEY` is unset, and the Windows runner uses the newer
-VBScript capability mechanism. No stable release was published. Configure the
-secret, then rerun the `v0.1.0` tag workflow before attempting `v0.1.1`.
-Automated tests and CI gates cover release
+For the hosted release check, signed stable releases `v0.1.0` and `v0.1.1` were
+built and published successfully. The `v0.1.0` Windows installer download matched
+the GitHub asset SHA-256 and installed into an isolated test folder. Launching it
+from the Codex execution sandbox failed before the UI opened because that sandbox
+grants read-only access to the Windows app-data directory used by SQLite. The
+user database hash remained unchanged. The installed-app update, restart, and
+data-retention path therefore still needs a run outside that sandbox. These first
+test releases used the previous Windows/macOS/Linux matrix; future releases build
+Windows and Linux only. Automated tests and CI gates cover release
 metadata, downgrade rejection, interrupted downloads, signature failures,
 active-task protection, and publication preconditions; these checks do not
 substitute for a hosted installation test.
 
-macOS notarization/signing and Windows installer signing still require maintainer
-certificates and are not configured here.
+Windows Authenticode installer signing requires a maintainer certificate and is
+not configured here. Updater artifact signing remains enabled independently.
 
 For a local signed Windows build in PowerShell, point the documented environment
 variable at the private key file outside the repository, then run the Tauri build:
@@ -833,9 +828,7 @@ periodically confirm the backup can be restored without copying the key into the
 repository. Losing or replacing this key requires rotating the configured public
 key and will prevent existing installations from accepting releases signed with
 the old key. A GitHub draft release becomes available to the updater only after
-publication. Updater package signing is separate from Windows Authenticode and
-Apple Developer ID/notarization. Those platform certificates still require
-maintainer configuration if signed installers and notarized macOS apps are desired.
+publication. Updater package signing is separate from Windows Authenticode.
 
 Provider adapters are covered by offline protocol fixtures. Live API calls require
 user credentials and have not been certified against every provider account/model.

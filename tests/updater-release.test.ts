@@ -15,8 +15,6 @@ function makeRelease() {
   }]));
   const preferredTargets: Record<string, string> = {
     'windows-x86_64': 'windows-x86_64-msi',
-    'darwin-aarch64': 'darwin-aarch64-app',
-    'darwin-x86_64': 'darwin-x86_64-app',
     'linux-x86_64': 'linux-x86_64-appimage',
   };
   for (const [baseTarget, preferredTarget] of Object.entries(preferredTargets)) {
@@ -25,8 +23,6 @@ function makeRelease() {
   const expectedNames: Record<string, string> = {
     'windows-x86_64-msi': 'JevCode_0.1.1_x64_en-US.msi',
     'windows-x86_64-nsis': 'JevCode_0.1.1_x64-setup.exe',
-    'darwin-aarch64-app': 'JevCode_0.1.1_aarch64.app.tar.gz',
-    'darwin-x86_64-app': 'JevCode_0.1.1_x64.app.tar.gz',
     'linux-x86_64-appimage': 'jevcode_0.1.1_amd64.AppImage',
     'linux-x86_64-deb': 'JevCode_0.1.1_amd64.deb',
     'linux-x86_64-rpm': 'JevCode-0.1.1-1.x86_64.rpm',
@@ -66,9 +62,19 @@ describe('updater release manifest validation', () => {
 
   it('rejects an incomplete platform set', () => {
     const release = makeRelease();
-    delete release.manifest.platforms['darwin-aarch64'];
+    delete release.manifest.platforms['linux-x86_64-rpm'];
 
-    expect(validateUpdaterRelease(release).join(' ')).toContain('exactly these supported platform and updater targets');
+    expect(validateUpdaterRelease(release).join(' ')).toContain('exactly these supported Windows and Linux updater targets');
+  });
+
+  it('rejects Apple platform targets because this app ships only for Windows and Linux', () => {
+    const release = makeRelease();
+    release.manifest.platforms['darwin-aarch64'] = {
+      url: `${apiUrl}/999`,
+      signature: 'x'.repeat(64),
+    };
+
+    expect(validateUpdaterRelease(release).join(' ')).toContain('exactly these supported Windows and Linux updater targets');
   });
 
   it('rejects HTTP links and URLs that point to assets outside this release', () => {

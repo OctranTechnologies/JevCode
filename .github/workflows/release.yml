@@ -121,16 +121,6 @@ jobs:
             os: windows
             rust-target: ""
             args: ""
-          - platform: macos-latest
-            label: macOS Apple Silicon
-            os: macos
-            rust-target: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin
-          - platform: macos-latest
-            label: macOS Intel
-            os: macos
-            rust-target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
           - platform: ubuntu-24.04
             label: Linux x64
             os: linux
@@ -241,11 +231,6 @@ jobs:
               require_file '*.msi.sig'
               require_file '*-setup.exe.sig'
               ;;
-            macos)
-              require_file '*.dmg'
-              require_file '*.app.tar.gz'
-              require_file '*.app.tar.gz.sig'
-              ;;
             linux)
               require_file '*.AppImage'
               require_file '*.AppImage.sig'
@@ -294,7 +279,6 @@ jobs:
             any(.[]; .name == "latest.json") and
             any(.[]; .name | ascii_downcase | endswith(".msi")) and
             any(.[]; .name | ascii_downcase | endswith("-setup.exe")) and
-            (map(select(.name | ascii_downcase | endswith(".dmg"))) | length >= 2) and
             any(.[]; .name | ascii_downcase | endswith(".deb")) and
             any(.[]; .name | ascii_downcase | endswith(".rpm")) and
             any(.[]; .name | ascii_downcase | endswith(".appimage")) and
@@ -314,7 +298,7 @@ jobs:
             --assets "$RUNNER_TEMP/release-assets.json" \
             --repository "$GITHUB_REPOSITORY" \
             --tag "$RELEASE_TAG" || {
-              echo "::error::latest.json does not contain valid signed updater assets for Windows x64, macOS Intel/Apple Silicon, and Linux x64. The draft will remain unpublished."
+              echo "::error::latest.json does not contain valid signed updater assets for Windows x64 and Linux x64. The draft will remain unpublished."
               exit 1
             }
 

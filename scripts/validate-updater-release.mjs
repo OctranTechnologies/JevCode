@@ -5,13 +5,9 @@ import process from 'node:process';
 
 export const requiredUpdaterTargets = [
   'windows-x86_64',
-  'darwin-aarch64',
-  'darwin-x86_64',
   'linux-x86_64',
   'windows-x86_64-msi',
   'windows-x86_64-nsis',
-  'darwin-aarch64-app',
-  'darwin-x86_64-app',
   'linux-x86_64-appimage',
   'linux-x86_64-deb',
   'linux-x86_64-rpm',
@@ -28,16 +24,12 @@ export function parseUpdaterManifest(json) {
 
 const preferredTargets = {
   'windows-x86_64': 'windows-x86_64-msi',
-  'darwin-aarch64': 'darwin-aarch64-app',
-  'darwin-x86_64': 'darwin-x86_64-app',
   'linux-x86_64': 'linux-x86_64-appimage',
 };
 
 const targetAssetSuffix = {
   'windows-x86_64-msi': '.msi',
   'windows-x86_64-nsis': '-setup.exe',
-  'darwin-aarch64-app': '.app.tar.gz',
-  'darwin-x86_64-app': '.app.tar.gz',
   'linux-x86_64-appimage': '.appimage',
   'linux-x86_64-deb': '.deb',
   'linux-x86_64-rpm': '.rpm',
@@ -65,7 +57,7 @@ export function validateUpdaterRelease({ manifest, assets, repository, tag }) {
   const actualTargets = Object.keys(manifest.platforms).sort();
   const expectedTargets = [...requiredUpdaterTargets].sort();
   if (JSON.stringify(actualTargets) !== JSON.stringify(expectedTargets)) {
-    errors.push(`Manifest must contain exactly these supported platform and updater targets: ${expectedTargets.join(', ')}. Found: ${actualTargets.length ? actualTargets.join(', ') : '(none)'}.`);
+    errors.push(`Manifest must contain exactly these supported Windows and Linux updater targets: ${expectedTargets.join(', ')}. Found: ${actualTargets.length ? actualTargets.join(', ') : '(none)'}.`);
   }
 
   if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
@@ -179,5 +171,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.error(error instanceof Error ? error.message : 'Updater release validation failed.');
     process.exit(1);
   }
-  console.log(`Validated signed updater manifest for ${tag} (${requiredUpdaterTargets.join(', ')}).`);
+  console.log(`Validated signed Windows and Linux updater manifest for ${tag} (${requiredUpdaterTargets.join(', ')}).`);
 }
