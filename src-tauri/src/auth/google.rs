@@ -436,9 +436,19 @@ impl GoogleAuthManager {
         credentials: &CredentialStore,
         stored: Option<ProviderAccount>,
     ) -> AppResult<GoogleAuthStatus> {
-        let account = self
-            .load_session(credentials)?
-            .map(|session| session.account.clone());
+        let account = self.load_session(credentials)?.map(|session| {
+            let mut account = session.account.clone();
+            let renewal_needed = parse_timestamp(&session.expires_at)
+                .is_none_or(|expires_at| expires_at <= Utc::now() + REFRESH_SKEW);
+            if account.requires_reconnect
+                || session.access_token.trim().is_empty()
+                || (renewal_needed && session.refresh_token.trim().is_empty())
+            {
+                account.connected = false;
+                account.requires_reconnect = true;
+            }
+            account
+        });
         let api_key_connected = self.has_api_key(credentials)?;
         let selected_auth_type = match stored.as_ref().and_then(|value| value.auth_method.as_ref())
         {
@@ -779,12 +789,23 @@ impl GoogleAuthManager {
         session = self
             .load_session(credentials)?
             .ok_or_else(google_reconnect_error)?;
-        let expires_at = parse_timestamp(&session.expires_at).ok_or_else(google_reconnect_error)?;
+        if session.account.requires_reconnect || session.access_token.trim().is_empty() {
+            self.mark_reconnect_required(credentials, database, &mut session)?;
+            return Err(google_reconnect_error());
+        }
+        let Some(expires_at) = parse_timestamp(&session.expires_at) else {
+            self.mark_reconnect_required(credentials, database, &mut session)?;
+            return Err(google_reconnect_error());
+        };
         if !force_refresh && expires_at > Utc::now() + REFRESH_SKEW {
             return Ok((
                 Zeroizing::new(session.access_token.clone()),
                 session.account.clone(),
             ));
+        }
+        if session.refresh_token.trim().is_empty() {
+            self.mark_reconnect_required(credentials, database, &mut session)?;
+            return Err(google_reconnect_error());
         }
         match self
             .oauth
@@ -807,7 +828,8 @@ impl GoogleAuthManager {
                     let scopes: Vec<String> =
                         scope.split_ascii_whitespace().map(str::to_owned).collect();
                     if !has_required_scopes(&scopes) {
-                        return Err(google_scope_error());
+                        self.mark_reconnect_required(credentials, database, &mut session)?;
+                        return Err(google_reconnect_error());
                     }
                     session.granted_scopes = scopes.clone();
                     session.account.granted_scopes = scopes;
@@ -830,16 +852,7 @@ impl GoogleAuthManager {
             }
             Err(error) => {
                 if is_revoked_grant(&error) {
-                    session.account.connected = false;
-                    session.account.requires_reconnect = true;
-                    let account = session.account.clone();
-                    self.save_session(credentials, &session)?;
-                    if let Some(mut stored) = database.provider_account(&self.provider.id)? {
-                        stored.state = ProviderAuthState::NeedsAttention;
-                        stored.last_error_code = Some("expired_authentication".into());
-                        database.save_provider_account(&stored)?;
-                    }
-                    let _ = account;
+                    self.mark_reconnect_required(credentials, database, &mut session)?;
                     return Err(google_reconnect_error());
                 }
                 Err(error)
@@ -882,6 +895,25 @@ impl GoogleAuthManager {
             Some(storage) => storage.delete_google_session(),
             None => credentials.delete_google_session(),
         }
+    }
+
+    fn mark_reconnect_required(
+        &self,
+        credentials: &CredentialStore,
+        database: &Database,
+        session: &mut GoogleAuthSession,
+    ) -> AppResult<()> {
+        session.account.connected = false;
+        session.account.requires_reconnect = true;
+        self.save_session(credentials, session)?;
+        if let Some(mut stored) = database.provider_account(&self.provider.id)? {
+            if stored.auth_method == Some(ProviderAuthMethod::GoogleOAuth) {
+                stored.state = ProviderAuthState::NeedsAttention;
+                stored.last_error_code = Some("google_reconnect_required".into());
+                database.save_provider_account(&stored)?;
+            }
+        }
+        Ok(())
     }
 
     fn has_api_key(&self, credentials: &CredentialStore) -> AppResult<bool> {
@@ -1358,7 +1390,7 @@ fn google_scope_error() -> AppError {
 fn google_reconnect_error() -> AppError {
     AppError::new(
         "google_reconnect_required",
-        "Your Google connection needs to be renewed. Reconnect Google in Settings.",
+        "Google account needs reconnecting. Reconnect Google in Settings.",
     )
 }
 
@@ -1463,6 +1495,16 @@ mod tests {
         id_token: String,
         exchange_arguments: Mutex<Option<ExchangeArguments>>,
         revoke_calls: AtomicUsize,
+        refresh_calls: AtomicUsize,
+        refresh_behavior: MockRefreshBehavior,
+    }
+
+    #[derive(Clone, Copy)]
+    enum MockRefreshBehavior {
+        Success,
+        Revoked,
+        Network,
+        MissingScopes,
     }
 
     #[async_trait]
@@ -1494,9 +1536,34 @@ mod tests {
         async fn refresh_token(
             &self,
             _client_id: &str,
-            _refresh_token: &str,
+            refresh_token: &str,
         ) -> AppResult<GoogleTokenResponse> {
-            Err(google_network_error())
+            assert_eq!(refresh_token, TEST_REFRESH_TOKEN);
+            self.refresh_calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            match self.refresh_behavior {
+                MockRefreshBehavior::Success => Ok(GoogleTokenResponse {
+                    access_token: "refreshed-google-access-token".into(),
+                    refresh_token: Some("rotated-google-refresh-token".into()),
+                    id_token: None,
+                    token_type: "Bearer".into(),
+                    expires_in: 3600,
+                    scope: Some(GOOGLE_SCOPES.into()),
+                }),
+                MockRefreshBehavior::Revoked => Err(AppError::new(
+                    "invalid_credential",
+                    "redacted test authentication failure",
+                )),
+                MockRefreshBehavior::Network => Err(google_network_error()),
+                MockRefreshBehavior::MissingScopes => Ok(GoogleTokenResponse {
+                    access_token: "refreshed-google-access-token".into(),
+                    refresh_token: None,
+                    id_token: None,
+                    token_type: "Bearer".into(),
+                    expires_in: 3600,
+                    scope: Some("openid email profile".into()),
+                }),
+            }
         }
 
         async fn discovery(&self) -> AppResult<GoogleOidcDiscovery> {
@@ -1573,6 +1640,348 @@ mod tests {
         .unwrap()
     }
 
+    fn refresh_mock(behavior: MockRefreshBehavior) -> Arc<MockGoogleOAuthTransport> {
+        Arc::new(MockGoogleOAuthTransport {
+            jwks: serde_json::from_value(serde_json::json!({ "keys": [] })).unwrap(),
+            id_token: String::new(),
+            exchange_arguments: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_behavior: behavior,
+        })
+    }
+
+    fn save_test_session(
+        storage: &MemoryGoogleSessionStorage,
+        account_id: &str,
+        expires_at: DateTime<Utc>,
+        refresh_token: &str,
+    ) {
+        let expires_at = expires_at.to_rfc3339();
+        let scopes = GOOGLE_SCOPES
+            .split_ascii_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let session = GoogleAuthSession {
+            account: GoogleAccount {
+                id: account_id.into(),
+                email: Some("persistent@example.test".into()),
+                display_name: Some("Persistent Test Account".into()),
+                auth_type: GoogleAuthType::GoogleOAuth,
+                connected: true,
+                requires_reconnect: false,
+                expires_at: Some(expires_at.clone()),
+                granted_scopes: scopes.clone(),
+            },
+            client_id: TEST_CLIENT_ID.into(),
+            cloud_project_id: "jevcode-test-project".into(),
+            access_token: "existing-google-access-token".into(),
+            refresh_token: refresh_token.into(),
+            id_token: "test-only-id-token".into(),
+            expires_at,
+            granted_scopes: scopes,
+        };
+        storage
+            .save_google_session(&serde_json::to_string(&session).unwrap())
+            .unwrap();
+    }
+
+    fn save_test_provider_account(database: &Database) {
+        database
+            .save_provider_account(&ProviderAccount {
+                provider_id: "gemini".into(),
+                provider_name: "Google Gemini".into(),
+                state: ProviderAuthState::Connected,
+                auth_method: Some(ProviderAuthMethod::GoogleOAuth),
+                account_label: Some("persistent@example.test".into()),
+                connected_at: Some(Utc::now().to_rfc3339()),
+                last_validated_at: Some(Utc::now().to_rfc3339()),
+                last_error_code: None,
+                available_methods: vec![],
+            })
+            .unwrap();
+    }
+
+    fn test_oauth_manager(
+        oauth: Arc<MockGoogleOAuthTransport>,
+        storage: Arc<MemoryGoogleSessionStorage>,
+    ) -> GoogleAuthManager {
+        test_manager(oauth, storage)
+    }
+
+    #[tokio::test]
+    async fn saved_google_session_is_restored_after_database_and_manager_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let database_path = root.path().join("restart-google-auth.sqlite");
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        let account_id = uuid::Uuid::new_v4().to_string();
+        save_test_session(
+            &storage,
+            &account_id,
+            Utc::now() + ChronoDuration::minutes(45),
+            TEST_REFRESH_TOKEN,
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Success);
+        {
+            let database = Database::open(&database_path).unwrap();
+            save_test_provider_account(&database);
+            let manager = test_oauth_manager(oauth.clone(), storage.clone());
+            let status = manager
+                .status(
+                    &CredentialStore,
+                    database.provider_account("gemini").unwrap(),
+                )
+                .unwrap();
+            let account = status.account.unwrap();
+            assert_eq!(account.id, account_id);
+            assert_eq!(account.email.as_deref(), Some("persistent@example.test"));
+        }
+
+        // A new manager and a reopened SQLite connection model a full app restart.
+        let database = Database::open(&database_path).unwrap();
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
+        let credential = manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .unwrap();
+        match credential {
+            GoogleRequestCredential::OAuth { access_token, .. } => {
+                assert_eq!(access_token.as_str(), "existing-google-access-token");
+            }
+            GoogleRequestCredential::ApiKey(_) => panic!("OAuth session was not restored"),
+        }
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
+        assert!(storage.get_google_session().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn expired_access_token_refreshes_and_rotates_secure_credentials() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("expired-google-auth.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() - ChronoDuration::seconds(1),
+            TEST_REFRESH_TOKEN,
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Success);
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
+
+        let credential = manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .unwrap();
+        match credential {
+            GoogleRequestCredential::OAuth { access_token, .. } => {
+                assert_eq!(access_token.as_str(), "refreshed-google-access-token");
+            }
+            GoogleRequestCredential::ApiKey(_) => panic!("Expected refreshed OAuth token"),
+        }
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
+        let serialized = storage.get_google_session().unwrap().unwrap();
+        let session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(session.access_token, "refreshed-google-access-token");
+        assert_eq!(session.refresh_token, "rotated-google-refresh-token");
+        assert!(session.account.connected);
+        assert!(!session.account.requires_reconnect);
+        assert_eq!(
+            database.provider_account("gemini").unwrap().unwrap().state,
+            ProviderAuthState::Connected
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_gemini_requests_share_one_refresh() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("concurrent-google-auth.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() - ChronoDuration::seconds(1),
+            TEST_REFRESH_TOKEN,
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Success);
+        let manager = test_oauth_manager(oauth.clone(), storage);
+
+        let results = futures_util::future::join_all(
+            (0..8).map(|_| manager.request_credential(&CredentialStore, &database)),
+        )
+        .await;
+        for result in results {
+            match result.unwrap() {
+                GoogleRequestCredential::OAuth { access_token, .. } => {
+                    assert_eq!(access_token.as_str(), "refreshed-google-access-token")
+                }
+                GoogleRequestCredential::ApiKey(_) => panic!("Expected OAuth credentials"),
+            }
+        }
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn revoked_refresh_marks_reconnect_and_does_not_retry_on_later_requests() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("revoked-google-auth.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() - ChronoDuration::seconds(1),
+            TEST_REFRESH_TOKEN,
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Revoked);
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
+
+        for _ in 0..2 {
+            let error = manager
+                .request_credential(&CredentialStore, &database)
+                .await
+                .err()
+                .expect("revoked authorization should require reconnection");
+            assert_eq!(error.code, "google_reconnect_required");
+            assert!(error
+                .message
+                .starts_with("Google account needs reconnecting."));
+        }
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
+        let serialized = storage.get_google_session().unwrap().unwrap();
+        let session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
+        assert!(!session.account.connected);
+        assert!(session.account.requires_reconnect);
+        let account = database.provider_account("gemini").unwrap().unwrap();
+        assert_eq!(account.state, ProviderAuthState::NeedsAttention);
+        assert_eq!(
+            account.last_error_code.as_deref(),
+            Some("google_reconnect_required")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_refresh_token_requires_reconnect_only_after_access_token_expires() {
+        let root = tempfile::tempdir().unwrap();
+        let database =
+            Database::open(&root.path().join("missing-refresh-google-auth.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let valid_storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &valid_storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() + ChronoDuration::minutes(15),
+            "",
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Success);
+        let valid_manager = test_oauth_manager(oauth.clone(), valid_storage.clone());
+        let credential = valid_manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .unwrap();
+        match credential {
+            GoogleRequestCredential::OAuth { access_token, .. } => {
+                assert_eq!(access_token.as_str(), "existing-google-access-token");
+            }
+            GoogleRequestCredential::ApiKey(_) => panic!("Expected the still-valid access token"),
+        }
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
+        let valid_session: GoogleAuthSession =
+            serde_json::from_str(&valid_storage.get_google_session().unwrap().unwrap()).unwrap();
+        assert!(!valid_session.account.requires_reconnect);
+
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() - ChronoDuration::seconds(1),
+            "",
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Success);
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
+        let status = manager
+            .status(
+                &CredentialStore,
+                database.provider_account("gemini").unwrap(),
+            )
+            .unwrap();
+        assert!(status.account.unwrap().requires_reconnect);
+
+        let error = manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .err()
+            .expect("missing refresh token should require reconnection");
+        assert_eq!(error.code, "google_reconnect_required");
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
+        let session: GoogleAuthSession =
+            serde_json::from_str(&storage.get_google_session().unwrap().unwrap()).unwrap();
+        assert!(session.account.requires_reconnect);
+    }
+
+    #[tokio::test]
+    async fn network_refresh_failure_preserves_session_for_a_later_user_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("network-google-auth.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() - ChronoDuration::seconds(1),
+            TEST_REFRESH_TOKEN,
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::Network);
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
+
+        let error = manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .err()
+            .expect("network failure should be reported");
+        assert_eq!(error.code, "network_error");
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
+        let session: GoogleAuthSession =
+            serde_json::from_str(&storage.get_google_session().unwrap().unwrap()).unwrap();
+        assert!(!session.account.requires_reconnect);
+        assert_eq!(
+            database.provider_account("gemini").unwrap().unwrap().state,
+            ProviderAuthState::Connected
+        );
+    }
+
+    #[tokio::test]
+    async fn lost_gemini_permissions_require_google_reconnection() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("scope-google-auth.sqlite")).unwrap();
+        save_test_provider_account(&database);
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        save_test_session(
+            &storage,
+            &uuid::Uuid::new_v4().to_string(),
+            Utc::now() - ChronoDuration::seconds(1),
+            TEST_REFRESH_TOKEN,
+        );
+        let oauth = refresh_mock(MockRefreshBehavior::MissingScopes);
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
+
+        let error = manager
+            .request_credential(&CredentialStore, &database)
+            .await
+            .err()
+            .expect("lost Gemini scopes should require reconnection");
+        assert_eq!(error.code, "google_reconnect_required");
+        assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
+        let session: GoogleAuthSession =
+            serde_json::from_str(&storage.get_google_session().unwrap().unwrap()).unwrap();
+        assert!(session.account.requires_reconnect);
+        assert_eq!(
+            database.provider_account("gemini").unwrap().unwrap().state,
+            ProviderAuthState::NeedsAttention
+        );
+    }
+
     #[test]
     fn code_exchange_request_uses_google_token_endpoint_and_exact_pkce_fields() {
         let transport = ReqwestGoogleOAuthTransport::new().unwrap();
@@ -1634,6 +2043,8 @@ mod tests {
             id_token: sign_test_id_token(&encoding, &pending.nonce),
             exchange_arguments: Mutex::new(None),
             revoke_calls: AtomicUsize::new(0),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_behavior: MockRefreshBehavior::Network,
         });
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         let manager = test_manager(oauth.clone(), storage.clone());

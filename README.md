@@ -461,6 +461,19 @@ Authentication is intentionally separated by product entitlement:
   `google_auth_logout` revokes where possible, removes the local keychain
   session, and resets Gemini's selected auth state. React never receives
   access, refresh, or ID tokens.
+  The OS credential-store session is loaded again after app restart;
+  SQLite keeps only safe account and connection metadata. Before a Gemini OAuth
+  request, the native auth manager checks the saved access-token expiry and
+  refreshes when it is expired or within five minutes of expiry. A per-account
+  async lock makes concurrent requests reuse the first refreshed token, and
+  rotated credentials are saved back to the OS credential store. Revoked grants,
+  missing refresh credentials when refresh is needed, or missing Gemini API
+  scopes set the account to **Needs attention** and return “Google account needs
+  reconnecting.” Later requests do not retry a revoked refresh grant. Temporary
+  network failures preserve the existing session and return a retryable network
+  error without an internal retry loop. An expired access token without a
+  refresh token triggers reconnect; a still-valid access token remains usable
+  until it needs renewal.
   OAuth requests use the configured Cloud project for quota attribution. This
   is Gemini Developer API OAuth with the documented API scopes; JevCode does not
   read Gemini CLI or other Google application credentials, and this does not
