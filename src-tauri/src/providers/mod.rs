@@ -1,3 +1,4 @@
+mod gemini;
 mod http;
 mod openai;
 mod preview;
@@ -56,6 +57,12 @@ pub fn adapter(provider: &Provider, state: SharedState) -> AppResult<Box<dyn Llm
             state,
         )?));
     }
+    if provider.id == "gemini" {
+        return Ok(Box::new(gemini::GeminiProvider::new(
+            provider.clone(),
+            state,
+        )?));
+    }
     Ok(Box::new(http::HttpProvider::new(
         provider.clone(),
         state.credentials.get(&provider.id)?,
@@ -67,6 +74,11 @@ pub fn adapter(provider: &Provider, state: SharedState) -> AppResult<Box<dyn Llm
 pub async fn available_models(provider: &Provider, state: SharedState) -> AppResult<Vec<Model>> {
     if provider.id == "openai" {
         return openai::OpenAIProvider::new(provider.clone(), state)?
+            .get_available_models()
+            .await;
+    }
+    if provider.id == "gemini" {
+        return gemini::GeminiProvider::new(provider.clone(), state)?
             .get_available_models()
             .await;
     }

@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
-import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export { openAIAuthAttemptEventSchema };
@@ -70,6 +70,11 @@ interface Commands {
   openai_auth_logout: { args: { accountId: string }; result: OpenAILogoutResult };
   openai_auth_select_account: { args: { accountId: string }; result: OpenAIAuthStatus };
   openai_auth_use_api_key: { args: undefined; result: OpenAIAuthStatus };
+  google_auth_start: { args: undefined; result: GoogleAuthStart };
+  google_auth_cancel: { args: { attemptId: string }; result: null };
+  google_auth_status: { args: undefined; result: GoogleAuthStatus };
+  google_auth_logout: { args: undefined; result: GoogleLogoutResult };
+  google_auth_refresh: { args: undefined; result: GoogleAccount };
   get_provider_account_info: { args: { providerId: string }; result: ProviderAccountInfo };
   get_provider_available_models: { args: { providerId: string }; result: Model[] };
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
@@ -91,6 +96,11 @@ const responses = {
   openai_auth_logout: z.object({ revocationConfirmed: z.boolean() }).strict(),
   openai_auth_select_account: openAIAuthStatusSchema,
   openai_auth_use_api_key: openAIAuthStatusSchema,
+  google_auth_start: googleAuthStartSchema,
+  google_auth_cancel: z.null(),
+  google_auth_status: googleAuthStatusSchema,
+  google_auth_logout: googleLogoutResultSchema,
+  google_auth_refresh: googleAccountSchema,
   get_provider_account_info: providerAccountInfoSchema, get_provider_available_models: z.array(modelSchema),
   frontend_log: z.null(),
 } satisfies { [K in keyof Commands]: z.ZodType<Commands[K]['result']> };
@@ -152,6 +162,36 @@ export function selectOpenAIAccount(accountId: string): Promise<OpenAIAuthStatus
 /** Explicitly route OpenAI requests through an already connected API key. */
 export function selectOpenAIAPIKey(): Promise<OpenAIAuthStatus> {
   return command('openai_auth_use_api_key', undefined);
+}
+
+/** Start Google OAuth in the system browser; protocol values remain native-only. */
+export function startGoogleAuth(): Promise<GoogleAuthStart> {
+  return command('google_auth_start', undefined);
+}
+
+export function cancelGoogleAuth(attemptId: string): Promise<null> {
+  return command('google_auth_cancel', { attemptId });
+}
+
+export function getGoogleAuthStatus(): Promise<GoogleAuthStatus> {
+  return command('google_auth_status', undefined);
+}
+
+export function refreshGoogleAuth(): Promise<GoogleAccount> {
+  return command('google_auth_refresh', undefined);
+}
+
+export function logoutGoogleAuth(): Promise<GoogleLogoutResult> {
+  return command('google_auth_logout', undefined);
+}
+
+export async function subscribeGoogleAuthAttempts(onAttempt: (attempt: GoogleAuthAttemptEvent) => void): Promise<UnlistenFn> {
+  if (!desktopAvailable) return () => {};
+  const unlisten = await listen<unknown>('google:auth-attempt', event => {
+    const parsed = googleAuthAttemptEventSchema.safeParse(event.payload);
+    if (parsed.success) onAttempt(parsed.data);
+  });
+  return unlisten;
 }
 
 /** Provider-neutral auth facade. Provider-specific protocol stays in Rust. */

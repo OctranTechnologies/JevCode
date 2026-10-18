@@ -12,7 +12,7 @@ impl OpenAiChatGptAdapter {
 }
 
 /// Google documents Gemini OAuth for applications with a registered desktop
-/// client and project. JevCode has no application OAuth client configured yet.
+/// client and project configured in JevCode's local app configuration.
 /// See https://ai.google.dev/gemini-api/docs/oauth and Google's native app guide.
 pub struct GoogleGeminiOAuthAdapter;
 
@@ -37,7 +37,7 @@ pub(super) fn google_method() -> ProviderAuthMethodOption {
         label: "Google account".into(),
         available: false,
         unavailable_reason: Some(
-            "Google Gemini OAuth needs a registered JevCode desktop client and Google Cloud project. Use a Gemini API key for now.".into(),
+            "Google sign-in needs a registered Desktop OAuth client ID and Google Cloud project in JevCode's configuration.".into(),
         ),
     }
 }

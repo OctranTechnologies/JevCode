@@ -121,6 +121,8 @@ fn catalog(state: &SharedState) -> AppResult<Vec<Provider>> {
                 } else {
                     state.credentials.get("openai")?.is_some()
                 }
+            } else if provider.id == "gemini" {
+                account_status(state, provider)?.state == ProviderAuthState::Connected
             } else {
                 state.credentials.get(&provider.id)?.is_some()
             };
@@ -130,7 +132,7 @@ fn catalog(state: &SharedState) -> AppResult<Vec<Provider>> {
 }
 
 fn account_status(state: &SharedState, provider: &Provider) -> AppResult<ProviderAccount> {
-    auth::adapter(provider)?.get_auth_status(
+    auth::adapter_with_config(provider, &state.config)?.get_auth_status(
         &state.credentials,
         state.database.provider_account(&provider.id)?,
     )
@@ -1766,10 +1768,10 @@ pub async fn connect_provider(
     state: State<'_, SharedState>,
 ) -> AppResult<ProviderAccount> {
     let provider = state.config.provider(&provider_id)?;
-    let adapter = auth::adapter(provider)?;
+    let adapter = auth::adapter_with_config(provider, &state.config)?;
     let info = adapter.connect(&secret, &state.credentials).await?;
     let timestamp = crate::domain::now();
-    let account = ProviderAccount {
+    let mut account = ProviderAccount {
         provider_id: provider.id.clone(),
         provider_name: provider.name.clone(),
         state: ProviderAuthState::Connected,
@@ -1780,6 +1782,9 @@ pub async fn connect_provider(
         last_error_code: None,
         available_methods: auth::available_methods(&provider.id),
     };
+    account.available_methods = adapter
+        .get_auth_status(&state.credentials, Some(account.clone()))?
+        .available_methods;
     state.database.save_provider_account(&account)?;
     if provider.id == "openai" {
         state
@@ -1790,15 +1795,23 @@ pub async fn connect_provider(
 }
 
 #[tauri::command]
-pub fn disconnect_provider(
+pub async fn disconnect_provider(
     provider_id: String,
     state: State<'_, SharedState>,
 ) -> AppResult<ProviderAccount> {
     let provider = state.config.provider(&provider_id)?;
-    let adapter = auth::adapter(provider)?;
-    adapter.disconnect(&state.credentials)?;
+    if provider_id == "gemini" {
+        let manager = crate::auth::google::GoogleAuthManager::with_app_config(
+            provider.clone(),
+            &state.config,
+        )?;
+        let _ = manager.logout(&state.credentials, &state.database).await?;
+        state.credentials.delete("gemini")?;
+    } else {
+        auth::adapter_with_config(provider, &state.config)?.disconnect(&state.credentials)?;
+    }
     state.database.delete_provider_account(&provider_id)?;
-    Ok(auth::initial_account(provider))
+    auth::adapter_with_config(provider, &state.config)?.get_auth_status(&state.credentials, None)
 }
 
 #[tauri::command]
@@ -1823,7 +1836,7 @@ async fn refresh_provider_auth_inner(
     refresh: bool,
 ) -> AppResult<ProviderAccount> {
     let provider = state.config.provider(provider_id)?;
-    let adapter = auth::adapter(provider)?;
+    let adapter = auth::adapter_with_config(provider, &state.config)?;
     let secret = state
         .credentials
         .get(provider_id)?
@@ -1916,6 +1929,9 @@ pub fn openai_auth_use_api_key(state: State<'_, SharedState>) -> AppResult<OpenA
 const OPENAI_AUTH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const OPENAI_CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_OPENAI_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
+const GOOGLE_AUTH_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const GOOGLE_CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_GOOGLE_CALLBACK_REQUEST_BYTES: usize = 16 * 1024;
 
 #[tauri::command]
 pub async fn openai_auth_start(
@@ -2030,6 +2046,437 @@ pub fn openai_auth_cancel(
             "The sign-in attempt was cancelled, but its status could not be delivered.",
         )
     })
+}
+
+/// Start the official Google Desktop OAuth flow. OAuth protocol values and the
+/// authorization URL stay in Rust; only the opaque attempt handle crosses IPC.
+#[tauri::command]
+pub async fn google_auth_start(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<GoogleAuthStart> {
+    let provider = state.config.provider("gemini")?.clone();
+    let manager = crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?;
+    // Google desktop OAuth requires a registered Desktop client. Binding first
+    // ensures the exact loopback port is included in the registered redirect.
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|_| {
+        AppError::new(
+            "auth_callback_unavailable",
+            "JevCode could not start the local Google sign-in callback listener.",
+        )
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|_| {
+            AppError::new(
+                "auth_callback_unavailable",
+                "The Google sign-in callback is unavailable.",
+            )
+        })?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
+    let pending = manager.create_authentication_session(&redirect_uri)?;
+    let result = GoogleAuthStart {
+        attempt_id: pending.attempt_id.clone(),
+        expires_at: pending.expires_at.to_rfc3339(),
+    };
+    let attempt_id = pending.attempt_id.clone();
+    let browser_url = pending.authorization_url.clone();
+    let (cancel_sender, cancel_receiver) = watch::channel(false);
+    state.register_google_auth_attempt(&attempt_id, cancel_sender)?;
+
+    let managed_state = Arc::clone(state.inner());
+    let event_app = app.clone();
+    tokio::spawn(async move {
+        let completion = wait_for_google_callback(
+            listener,
+            &manager,
+            &pending,
+            cancel_receiver,
+            &managed_state,
+        )
+        .await;
+        if let Some(completion) = completion {
+            let event = GoogleAuthAttemptEvent {
+                attempt_id: attempt_id.clone(),
+                state: completion.state,
+                failure_reason: completion.failure_reason,
+            };
+            if let Err(error) = event_app.emit("google:auth-attempt", event) {
+                tracing::warn!(%error, "Google sign-in status delivery failed");
+            }
+            if completion.connected {
+                if let Ok(provider) = managed_state.config.provider("gemini") {
+                    if let Ok(account) = account_status(&managed_state, provider) {
+                        let _ = event_app.emit("provider:account-updated", account);
+                    }
+                }
+            }
+        }
+        managed_state.release_google_auth_attempt(&attempt_id);
+    });
+
+    let launch_result =
+        match tokio::task::spawn_blocking(move || open_google_system_browser(&browser_url)).await {
+            Ok(result) => result,
+            Err(_) => Err(AppError::new(
+                "system_browser_unavailable",
+                "JevCode could not open the system browser.",
+            )),
+        };
+    if let Err(error) = launch_result {
+        let _ = state.cancel_google_auth_attempt(&result.attempt_id);
+        state.release_google_auth_attempt(&result.attempt_id);
+        let _ = app.emit(
+            "google:auth-attempt",
+            GoogleAuthAttemptEvent {
+                attempt_id: result.attempt_id.clone(),
+                state: GoogleAuthAttemptState::Failed,
+                failure_reason: Some(GoogleAuthFailureReason::BrowserUnavailable),
+            },
+        );
+        return Err(error);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn google_auth_cancel(
+    attempt_id: String,
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    state.cancel_google_auth_attempt(&attempt_id)?;
+    state.release_google_auth_attempt(&attempt_id);
+    app.emit(
+        "google:auth-attempt",
+        GoogleAuthAttemptEvent {
+            attempt_id,
+            state: GoogleAuthAttemptState::Cancelled,
+            failure_reason: None,
+        },
+    )
+    .map_err(|_| {
+        AppError::new(
+            "event_delivery_failed",
+            "The Google sign-in was cancelled, but its status could not be delivered.",
+        )
+    })
+}
+
+#[tauri::command]
+pub fn google_auth_status(state: State<'_, SharedState>) -> AppResult<GoogleAuthStatus> {
+    let provider = state.config.provider("gemini")?;
+    let manager =
+        crate::auth::google::GoogleAuthManager::with_app_config(provider.clone(), &state.config)?;
+    manager.status(
+        &state.credentials,
+        state.database.provider_account("gemini")?,
+    )
+}
+
+#[tauri::command]
+pub async fn google_auth_refresh(state: State<'_, SharedState>) -> AppResult<GoogleAccount> {
+    let provider = state.config.provider("gemini")?.clone();
+    crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
+        .refresh_account(&state.credentials, &state.database)
+        .await
+}
+
+#[tauri::command]
+pub async fn google_auth_logout(state: State<'_, SharedState>) -> AppResult<GoogleLogoutResult> {
+    let provider = state.config.provider("gemini")?.clone();
+    let revoked = crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
+        .logout(&state.credentials, &state.database)
+        .await?;
+    Ok(GoogleLogoutResult {
+        revocation_confirmed: revoked,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GoogleAuthCompletion {
+    state: GoogleAuthAttemptState,
+    failure_reason: Option<GoogleAuthFailureReason>,
+    connected: bool,
+}
+
+impl GoogleAuthCompletion {
+    fn new(state: GoogleAuthAttemptState, failure_reason: Option<GoogleAuthFailureReason>) -> Self {
+        Self {
+            connected: state == GoogleAuthAttemptState::Connected,
+            state,
+            failure_reason,
+        }
+    }
+}
+
+async fn wait_for_google_callback(
+    listener: TcpListener,
+    manager: &crate::auth::google::GoogleAuthManager,
+    pending: &crate::auth::google::PendingGoogleAuth,
+    mut cancellation: watch::Receiver<bool>,
+    state: &SharedState,
+) -> Option<GoogleAuthCompletion> {
+    let timeout = tokio::time::sleep(GOOGLE_AUTH_TIMEOUT);
+    tokio::pin!(timeout);
+    loop {
+        tokio::select! {
+            _ = &mut timeout => return Some(GoogleAuthCompletion::new(GoogleAuthAttemptState::TimedOut, None)),
+            changed = cancellation.changed() => {
+                if changed.is_err() || *cancellation.borrow() { return None; }
+            }
+            accepted = listener.accept() => {
+                let Ok((stream, peer)) = accepted else {
+                    return Some(GoogleAuthCompletion::new(GoogleAuthAttemptState::Failed, Some(GoogleAuthFailureReason::OauthFailure)));
+                };
+                if !peer.ip().is_loopback() { continue; }
+                let result = tokio::select! {
+                    result = handle_google_callback(stream, manager, pending, state) => result,
+                    _ = &mut timeout => return Some(GoogleAuthCompletion::new(GoogleAuthAttemptState::TimedOut, None)),
+                    changed = cancellation.changed() => {
+                        if changed.is_err() || *cancellation.borrow() { return None; }
+                        continue;
+                    }
+                };
+                if let Some(result) = result { return Some(result); }
+            }
+        }
+    }
+}
+
+async fn handle_google_callback(
+    mut stream: TcpStream,
+    manager: &crate::auth::google::GoogleAuthManager,
+    pending: &crate::auth::google::PendingGoogleAuth,
+    state: &SharedState,
+) -> Option<GoogleAuthCompletion> {
+    let mut request = Zeroizing::new(Vec::with_capacity(2048));
+    let mut buffer = Zeroizing::new([0_u8; 2048]);
+    let read = tokio::time::timeout(GOOGLE_CALLBACK_READ_TIMEOUT, async {
+        while request.len() < MAX_GOOGLE_CALLBACK_REQUEST_BYTES && !request.ends_with(b"\r\n\r\n") {
+            let limit = (MAX_GOOGLE_CALLBACK_REQUEST_BYTES - request.len()).min(buffer.len());
+            let count = stream.read(&mut buffer[..limit]).await?;
+            if count == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..count]);
+        }
+        Ok::<bool, std::io::Error>(request.ends_with(b"\r\n\r\n"))
+    })
+    .await;
+    if !matches!(read, Ok(Ok(true))) {
+        let _ = respond_to_google_callback(&mut stream, 400, "Invalid sign-in response.").await;
+        return Some(GoogleAuthCompletion::new(
+            GoogleAuthAttemptState::Failed,
+            Some(GoogleAuthFailureReason::OauthFailure),
+        ));
+    }
+    let text = match std::str::from_utf8(&request) {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = respond_to_google_callback(&mut stream, 400, "Invalid sign-in response.").await;
+            return Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Failed,
+                Some(GoogleAuthFailureReason::OauthFailure),
+            ));
+        }
+    };
+    let mut lines = text.lines();
+    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
+    let method = request_line.next().unwrap_or_default();
+    let target = request_line.next().unwrap_or_default();
+    let version = request_line.next().unwrap_or_default();
+    if request_line.next().is_some() || target.is_empty() {
+        let _ = respond_to_google_callback(&mut stream, 400, "Invalid sign-in response.").await;
+        return Some(GoogleAuthCompletion::new(
+            GoogleAuthAttemptState::Failed,
+            Some(GoogleAuthFailureReason::OauthFailure),
+        ));
+    }
+    if target.split('?').next() != Some("/auth/callback") {
+        let _ =
+            respond_to_google_callback(&mut stream, 404, "This sign-in callback is not available.")
+                .await;
+        return None;
+    }
+    if method != "GET" || version != "HTTP/1.1" {
+        let _ =
+            respond_to_google_callback(&mut stream, 405, "This sign-in callback is not available.")
+                .await;
+        return Some(GoogleAuthCompletion::new(
+            GoogleAuthAttemptState::Failed,
+            Some(GoogleAuthFailureReason::OauthFailure),
+        ));
+    }
+    let target = Zeroizing::new(target.to_owned());
+    let mut host = None;
+    for line in lines {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("host") {
+            if host.is_some() {
+                let _ =
+                    respond_to_google_callback(&mut stream, 400, "Invalid sign-in response.").await;
+                return Some(GoogleAuthCompletion::new(
+                    GoogleAuthAttemptState::Failed,
+                    Some(GoogleAuthFailureReason::OauthFailure),
+                ));
+            }
+            host = Some(value.trim().to_owned());
+        }
+    }
+    let host = match host {
+        Some(value) => value,
+        None => {
+            let _ = respond_to_google_callback(&mut stream, 400, "Invalid sign-in response.").await;
+            return Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Failed,
+                Some(GoogleAuthFailureReason::OauthFailure),
+            ));
+        }
+    };
+    let code = match crate::auth::google::parse_authorization_callback(pending, &target, &host) {
+        Ok(Some(code)) => code,
+        Ok(None) => {
+            let _ = respond_to_google_callback(
+                &mut stream,
+                200,
+                "Sign-in was cancelled. You can return to JevCode.",
+            )
+            .await;
+            return Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Denied,
+                None,
+            ));
+        }
+        Err(_) => {
+            let _ = respond_to_google_callback(
+                &mut stream,
+                400,
+                "JevCode could not verify this sign-in. Start a new attempt in the desktop app.",
+            )
+            .await;
+            return Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Failed,
+                Some(GoogleAuthFailureReason::OauthFailure),
+            ));
+        }
+    };
+    match manager
+        .complete_authentication(pending, &code, &state.credentials, &state.database)
+        .await
+    {
+        Ok(_) => {
+            let _ = respond_to_google_callback(
+                &mut stream,
+                200,
+                "Authentication successful. You can return to JevCode.",
+            )
+            .await;
+            Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Connected,
+                None,
+            ))
+        }
+        Err(error) => {
+            let _ = respond_to_google_callback(
+                &mut stream,
+                400,
+                "Sign-in could not be completed. Return to JevCode to see the next step.",
+            )
+            .await;
+            Some(GoogleAuthCompletion::new(
+                GoogleAuthAttemptState::Failed,
+                Some(google_auth_failure_reason(&error)),
+            ))
+        }
+    }
+}
+
+fn google_auth_failure_reason(error: &AppError) -> GoogleAuthFailureReason {
+    match error.code.as_str() {
+        "network_error" => GoogleAuthFailureReason::NetworkError,
+        "provider_outage" => GoogleAuthFailureReason::ProviderOutage,
+        "system_browser_unavailable" | "auth_callback_unavailable" => {
+            GoogleAuthFailureReason::BrowserUnavailable
+        }
+        "permission_denied" => GoogleAuthFailureReason::PermissionDenied,
+        _ => GoogleAuthFailureReason::OauthFailure,
+    }
+}
+
+async fn respond_to_google_callback(
+    stream: &mut TcpStream,
+    status: u16,
+    body: &str,
+) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        _ => "Bad Request",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'\r\nX-Content-Type-Options: nosniff\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await
+}
+
+fn open_google_system_browser(url: &reqwest::Url) -> AppResult<()> {
+    if url.scheme() != "https"
+        || url.host_str() != Some("accounts.google.com")
+        || url.path() != "/o/oauth2/v2/auth"
+    {
+        return Err(AppError::new(
+            "auth_configuration",
+            "The Google sign-in address is not valid.",
+        ));
+    }
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("rundll32.exe");
+        command.args(["url.dll,FileProtocolHandler", url.as_str()]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url.as_str());
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Err(AppError::new(
+        "system_browser_unavailable",
+        "Opening the system browser is not supported on this platform.",
+    ));
+
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| {
+            AppError::new(
+                "system_browser_unavailable",
+                "JevCode could not open the system browser.",
+            )
+        })
 }
 
 async fn wait_for_openai_callback(
@@ -2562,7 +3009,7 @@ pub fn get_provider_account_info(
             "Connect this provider first.",
         ));
     }
-    Ok(auth::adapter(provider)?.get_account_info())
+    Ok(auth::adapter_with_config(provider, &state.config)?.get_account_info())
 }
 
 #[tauri::command]

@@ -815,6 +815,83 @@ pub struct OpenAiAuthStatus {
     pub chatgpt: OpenAiChatGptAuthStatus,
 }
 
+/// Public Google authentication mode. Vertex AI is reserved for a later provider
+/// transport and is never inferred from local gcloud state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAuthType {
+    GoogleOAuth,
+    GeminiApiKey,
+    VertexAdc,
+}
+
+/// Safe Google account metadata. OAuth token values are intentionally absent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAccount {
+    pub id: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub auth_type: GoogleAuthType,
+    pub connected: bool,
+    pub requires_reconnect: bool,
+    pub expires_at: Option<String>,
+    pub granted_scopes: Vec<String>,
+}
+
+/// Safe status returned to the webview. Tokens remain in the native keychain.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAuthStatus {
+    pub account: Option<GoogleAccount>,
+    pub selected_auth_type: Option<GoogleAuthType>,
+    pub api_key_connected: bool,
+    pub oauth_available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+/// Safe handle for a native Google browser flow.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAuthStart {
+    pub attempt_id: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAuthAttemptState {
+    Connected,
+    Denied,
+    Cancelled,
+    TimedOut,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAuthFailureReason {
+    BrowserUnavailable,
+    PermissionDenied,
+    NetworkError,
+    ProviderOutage,
+    OauthFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAuthAttemptEvent {
+    pub attempt_id: String,
+    pub state: GoogleAuthAttemptState,
+    pub failure_reason: Option<GoogleAuthFailureReason>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleLogoutResult {
+    pub revocation_confirmed: bool,
+}
+
 /// Safe handle for an in-progress native sign-in attempt. OAuth values and the
 /// authorization URL intentionally never cross the IPC boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

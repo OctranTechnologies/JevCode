@@ -333,15 +333,17 @@ catalog endpoint, so a connection check does not issue a billable model request.
 `src-tauri/src/auth` defines the provider-neutral `ProviderAuthAdapter` contract
 for connect, disconnect, refresh, validation, account info, model discovery and
 status. `OpenAIAuthManager` owns OpenAI API keys, ChatGPT sessions, model discovery,
-and token refresh. `OpenAIProvider` is a distinct native transport adapter; the
-generic agent runtime asks the provider factory for an `LlmProvider` and never
-reads a key or token. Other API-key providers continue through the shared
-adapter. The current transports use bearer authorization for OpenAI and OpenCode,
-`x-api-key` for Anthropic, and `x-goog-api-key` for Gemini.
+and token refresh. `GoogleAuthManager` owns Google OAuth sessions and Gemini API
+keys. `OpenAIProvider` and `GeminiProvider` are distinct native transport
+adapters; the generic agent runtime asks the provider factory for an
+`LlmProvider` and never reads a key or token. OpenAI and OpenCode use bearer
+authorization, Anthropic uses `x-api-key`, and Gemini uses `x-goog-api-key` for
+AI Studio keys or Bearer authorization plus `x-goog-user-project` for Google
+OAuth. Other API-key providers continue through the shared adapter.
 Zen and Go model catalog URLs are taken from their official docs. Safe account
 metadata is stored in SQLite; credentials stay in the OS keychain under service
-`dev.jevcode.desktop` (OpenAI ChatGPT sessions use a separate namespaced
-keychain service and UUID-scoped entries).
+`dev.jevcode.desktop` (OpenAI ChatGPT and Google OAuth sessions each use a
+separate namespaced keychain service; OpenAI entries are UUID-scoped).
 
 Authentication is intentionally separated by product entitlement:
 
@@ -417,9 +419,31 @@ Authentication is intentionally separated by product entitlement:
   model picker, and safe profile/selection metadata is restored on app restart.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
-- Gemini API keys are supported. Google documents OAuth for Gemini with a
-  registered desktop client and Google Cloud project. That method remains gated
-  until JevCode has an app client configured.
+- Gemini API keys are supported. Google OAuth is implemented as an installed-app
+  flow and is enabled when the app configuration includes a registered Desktop
+  OAuth client ID and Google Cloud project ID. Create a Desktop app OAuth client
+  in Google Cloud Console, enable the Generative Language API, and add these
+  values to the existing `config.json` in the app configuration directory:
+
+  ```json
+  {
+    "googleOAuthClientId": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+    "googleCloudProjectId": "your-google-cloud-project"
+  }
+  ```
+
+  These are public configuration values; do not add a client secret. Sign-in
+  opens the system browser, uses a random IPv4 loopback callback, fresh `state`
+  and `nonce`, and PKCE S256. The native layer validates the callback, granted
+  scopes, and signed ID token (issuer, audience, signature, expiry and nonce)
+  before saving the session in the OS credential store. Refreshes are
+  serialized and replace the secure session in place. Tauri returns only safe
+  account metadata; React never receives access, refresh, or ID tokens.
+  OAuth requests use the configured Cloud project for quota attribution. This
+  is Gemini Developer API OAuth with the documented API scopes; JevCode does not
+  read Gemini CLI or other Google application credentials, and this does not
+  reuse Gemini CLI subscription entitlements. Vertex AI / ADC is reserved for a
+  future auth type and is not active.
 - OpenCode Zen and OpenCode Go use their respective API keys.
 
 The UI receives no secret on reads: account status, account info, logout results
@@ -430,15 +454,16 @@ or request removal. Secrets are not serialized to SQLite, localStorage, JSON
 configuration, source code, diagnostics or logs. Frontend log commands accept
 only a small allowlist of fixed event names. Provider response bodies are never
 included in errors or logs, and OAuth authorization URLs are not logged. The
-loopback listener binds only to IPv4 `127.0.0.1`, accepts one correctly hosted
-callback with fresh one-time state, and shuts down on success, failure,
-cancellation or timeout. Discovery URLs are pinned to OpenAI's issuer, token,
-authorization and JWKS endpoints; revocation metadata is constrained to HTTPS
-on `auth.openai.com` with redirects disabled. ID tokens require supported
-asymmetric signatures, matching issuer/audience/authorized party, expiry,
-not-before, nonce, and a nonempty subject. Refresh and logout serialize per
-account to protect rotating refresh tokens. No crash-report upload service is
-configured; local diagnostics expose app/platform metadata only. Connection
+loopback listeners bind only to IPv4 `127.0.0.1`, accept one correctly hosted
+callback with fresh one-time state, and shut down on success, failure,
+cancellation or timeout. OpenAI discovery and revocation stay constrained to
+documented OpenAI hosts. Google OAuth uses Google's fixed authorization and
+token endpoints; OIDC discovery and signing keys are fetched over HTTPS only
+from official Google identity hosts. Both ID-token flows require supported
+signatures, matching issuer and audience, expiry, nonce, and a nonempty subject.
+Refresh and logout serialize per account to protect rotating refresh tokens. No
+crash-report upload service is configured; local diagnostics expose app/platform
+metadata only. Connection
 failures map to stable categories:
 invalid credential, expired authentication, quota exhausted, subscription
 unavailable, network error and provider outage.
@@ -454,6 +479,8 @@ Official authentication references: [OpenAI API authentication](https://develope
 [Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),
 [Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth),
+[Google Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app),
+[Gemini CLI authentication choices](https://geminicli.com/docs/get-started/authentication/),
 [OpenCode Zen](https://opencode.ai/docs/zen/) and
 [OpenCode Go](https://opencode.ai/docs/go/).
 

@@ -10,6 +10,12 @@ use std::path::Path;
 pub struct AppConfig {
     pub providers: Vec<Provider>,
     pub max_tool_rounds: u32,
+    /// Public OAuth client ID for Google's registered desktop application.
+    #[serde(default, rename = "googleOAuthClientId")]
+    pub google_oauth_client_id: Option<String>,
+    /// Google Cloud project used for Gemini API OAuth quota attribution.
+    #[serde(default)]
+    pub google_cloud_project_id: Option<String>,
 }
 
 impl AppConfig {
@@ -34,6 +40,26 @@ impl AppConfig {
             return Err(AppError::new(
                 "configuration",
                 "Configure providers and a tool-round limit between 1 and 32.",
+            ));
+        }
+        if self
+            .google_oauth_client_id
+            .as_deref()
+            .is_some_and(|id| id.len() > 256 || !id.ends_with(".apps.googleusercontent.com"))
+            || self
+                .google_cloud_project_id
+                .as_deref()
+                .is_some_and(|project| {
+                    project.is_empty()
+                        || project.len() > 128
+                        || !project.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                        })
+                })
+        {
+            return Err(AppError::new(
+                "configuration",
+                "Google OAuth settings must contain a desktop OAuth client ID and a valid Cloud project ID.",
             ));
         }
         let mut ids = std::collections::HashSet::new();

@@ -72,6 +72,16 @@ export interface OpenAILogoutResult { revocationConfirmed: boolean }
 export type OpenAIAuthAttemptState = 'callback_received' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
 export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
 export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }
+export type GoogleAuthType = 'google_oauth' | 'gemini_api_key' | 'vertex_adc';
+/** Safe account metadata only. OAuth tokens exist only in the native Rust session type. */
+export interface GoogleAccount { id: string; email: string | null; displayName: string | null; authType: GoogleAuthType; connected: boolean; requiresReconnect: boolean; expiresAt: string | null; grantedScopes: string[] }
+export interface GoogleAuthStatus { account: GoogleAccount | null; selectedAuthType: GoogleAuthType | null; apiKeyConnected: boolean; oauthAvailable: boolean; unavailableReason: string | null }
+/** Opaque native flow handle; the authorization URL and PKCE values are never exposed. */
+export interface GoogleAuthStart { attemptId: string; expiresAt: string }
+export interface GoogleLogoutResult { revocationConfirmed: boolean }
+export type GoogleAuthAttemptState = 'connected' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
+export type GoogleAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
+export interface GoogleAuthAttemptEvent { attemptId: string; state: GoogleAuthAttemptState; failureReason: GoogleAuthFailureReason | null }
 export interface Model {
   id: string;
   provider: string;

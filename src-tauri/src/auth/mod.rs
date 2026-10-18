@@ -11,6 +11,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use std::time::Duration;
 
+pub(crate) mod google;
 mod oauth;
 pub(crate) mod openai;
 
@@ -165,7 +166,7 @@ impl ApiKeyAuthAdapter {
     }
 }
 
-fn normalize_model(provider: &Provider, item: Value) -> Option<Model> {
+pub(crate) fn normalize_model(provider: &Provider, item: Value) -> Option<Model> {
     let raw_id = item.get("id").or_else(|| item.get("name"))?.as_str()?;
     let id = raw_id.strip_prefix("models/").unwrap_or(raw_id);
     if id.is_empty() || id.len() > 160 || !is_generating_model(provider, id, &item) {
@@ -475,7 +476,23 @@ pub fn adapter(provider: &Provider) -> AppResult<Box<dyn ProviderAuthAdapter>> {
     if provider.id == "openai" {
         return Ok(Box::new(openai::OpenAIAuthManager::new(provider.clone())?));
     }
+    if provider.id == "gemini" {
+        return Ok(Box::new(google::GoogleAuthManager::new(provider.clone())?));
+    }
     Ok(Box::new(ApiKeyAuthAdapter::new(provider.clone())?))
+}
+
+pub fn adapter_with_config(
+    provider: &Provider,
+    config: &crate::config::AppConfig,
+) -> AppResult<Box<dyn ProviderAuthAdapter>> {
+    if provider.id == "gemini" {
+        return Ok(Box::new(google::GoogleAuthManager::with_app_config(
+            provider.clone(),
+            config,
+        )?));
+    }
+    adapter(provider)
 }
 
 pub fn openai_auth_status(
@@ -508,20 +525,6 @@ pub fn available_methods(provider_id: &str) -> Vec<ProviderAuthMethodOption> {
         _ => {}
     }
     methods
-}
-
-pub fn initial_account(provider: &Provider) -> ProviderAccount {
-    ProviderAccount {
-        provider_id: provider.id.clone(),
-        provider_name: provider.name.clone(),
-        state: ProviderAuthState::NotConnected,
-        auth_method: None,
-        account_label: None,
-        connected_at: None,
-        last_validated_at: None,
-        last_error_code: None,
-        available_methods: available_methods(&provider.id),
-    }
 }
 
 pub(crate) async fn read_limited(response: &mut reqwest::Response, limit: usize) -> Vec<u8> {
