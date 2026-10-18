@@ -2,7 +2,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { Check, CircleAlert, CircleCheck, CircleX, ExternalLink, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
 import type { GoogleAuthAttemptEvent, GoogleAuthStatus, Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
-import { cancelGoogleAuth, cancelOpenAIAuth, desktopAvailable, disconnectGoogleApiKey, getGoogleAuthStatus, getOpenAIAuthStatus, logoutGoogleAuth, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectGoogleAuthMethod, selectOpenAIAPIKey, selectOpenAIAccount, setGoogleCloudProject, startGoogleAuth, startOpenAIAuth, subscribeGoogleAuthAttempts } from '../../lib/ipc';
+import { cancelGoogleAuth, cancelOpenAIAuth, desktopAvailable, disconnectGoogleApiKey, getGoogleAuthStatus, getOpenAIAuthStatus, logoutGoogleAuth, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectGoogleAccount, selectGoogleAuthMethod, selectOpenAIAPIKey, selectOpenAIAccount, setGoogleCloudProject, startGoogleAuth, startOpenAIAuth, subscribeGoogleAuthAttempts } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import { initialOpenAIAuthFlow, openAIAccountNeedsReconnect, openAIAccountStatus, openAIAuthFlowReducer, openAIAuthStartErrorMessage } from './openaiAuthUi';
 import { googleAccountNeedsReconnect, googleAuthFlowReducer, googleAuthStartErrorMessage, googleAuthStatusSummary, googleProviderErrorMessage, initialGoogleAuthFlow } from './googleAuthUi';
@@ -136,7 +136,9 @@ export function ProviderSettings({
     setBusyId('gemini');
     resetFeedback();
     try {
-      await setGoogleCloudProject(projectId);
+      const accountId = googleStatus?.selectedAccountId;
+      if (!accountId) throw new Error('Select a Google account first.');
+      await setGoogleCloudProject(projectId, accountId);
       const status = await getGoogleAuthStatus();
       setGoogleStatus(status);
       setNotice('Google Cloud project ID saved with this account. JevCode cannot verify Code Assist eligibility or send model requests through a supported third-party API yet.');
@@ -182,7 +184,7 @@ export function ProviderSettings({
           if (!active) return;
           setModels(current => ({ ...current, gemini: available.map(model => model.displayName) }));
           googleCallbacksRef.current.onModels('gemini', available);
-          setNotice(`${available.length} Gemini models loaded for the selected Google account.`);
+          setNotice(`${available.length} Gemini models loaded for the selected Gemini API key.`);
           setError(null);
         } catch (cause) {
           if (active) setError(`Google sign-in succeeded, but Gemini models could not be loaded. ${googleProviderErrorMessage(normalizeError(cause).code, normalizeError(cause).message)}`);
@@ -364,13 +366,13 @@ export function ProviderSettings({
     finally { setBusyId(null); }
   }
 
-  async function connectGoogleAccount() {
+  async function connectGoogleAccount(reconnectAccountId: string | null = null) {
     pendingGoogleEventsRef.current.clear();
     googleAttemptIdRef.current = null;
     googleStartPendingRef.current = true;
     dispatchGoogleFlow({ type: 'begin' });
     try {
-      const started = await startGoogleAuth();
+      const started = await startGoogleAuth(reconnectAccountId);
       googleStartPendingRef.current = false;
       googleAttemptIdRef.current = started.attemptId;
       dispatchGoogleFlow({ type: 'started', attemptId: started.attemptId });
@@ -386,6 +388,28 @@ export function ProviderSettings({
       googleAttemptIdRef.current = null;
       dispatchGoogleFlow({ type: 'start-failed', message: googleAuthStartErrorMessage(normalizeError(cause).code) });
     }
+  }
+
+  async function chooseGoogleAccount(accountId: string) {
+    if (accountId === googleStatus?.selectedAccountId) return;
+    setBusyId('gemini');
+    resetFeedback();
+    try {
+      const status = await selectGoogleAccount(accountId);
+      setGoogleStatus(status);
+      setGoogleProjectId(status.account?.cloudProjectId ?? '');
+      if (status.selectedAuthType === 'gemini_api_key' && status.apiKeyConnected) {
+        const available = await providerAuthAdapter('gemini').getAvailableModels();
+        setModels(current => ({ ...current, gemini: available.map(model => model.displayName) }));
+        onModels('gemini', available);
+      } else {
+        setModels(current => { const next = { ...current }; delete next.gemini; return next; });
+        onModels('gemini', []);
+      }
+    } catch (cause) {
+      const normalized = normalizeError(cause);
+      setError(googleProviderErrorMessage(normalized.code, normalized.message));
+    } finally { setBusyId(null); }
   }
 
   async function cancelGoogleAccount() {
@@ -421,11 +445,11 @@ export function ProviderSettings({
     } finally { setBusyId(null); }
   }
 
-  async function disconnectGoogleAccount() {
+  async function disconnectGoogleAccount(accountId: string) {
     setBusyId('gemini');
     resetFeedback();
     try {
-      const result = await logoutGoogleAuth();
+      const result = await logoutGoogleAuth(accountId);
       const status = await getGoogleAuthStatus();
       setGoogleStatus(status);
       onAccount(await providerAuthAdapter('gemini').getAuthStatus());
@@ -437,12 +461,9 @@ export function ProviderSettings({
         setModels(current => { const next = { ...current }; delete next.gemini; return next; });
         onModels('gemini', []);
       }
-      const disconnectNotice = result.revocationConfirmed
-        ? 'Google account disconnected from this device and access revoked.'
-        : 'Google account disconnected from this device. Google could not confirm remote sign-out; review app access in your Google Account settings.';
-      setNotice(status.selectedAuthType === 'gemini_api_key'
-        ? `${disconnectNotice} Gemini requests now use the connected API key.`
-        : disconnectNotice);
+      setNotice(result.revocationConfirmed
+        ? 'Google account removed from this device and access revoked.'
+        : 'Google account removed from this device. Google could not confirm remote sign-out; review app access in your Google Account settings.');
     } catch (cause) {
       const normalized = normalizeError(cause);
       setError(googleProviderErrorMessage(normalized.code, normalized.message));
@@ -643,9 +664,9 @@ export function ProviderSettings({
         }
 
         if (provider.id === 'gemini') {
-          const googleAccount = googleStatus?.account ?? null;
+          const googleAccounts = googleStatus?.accounts ?? [];
+          const googleAccount = googleAccounts.find(item => item.id === googleStatus?.selectedAccountId) ?? googleStatus?.account ?? null;
           const googleConnected = !!googleAccount && !googleAccountNeedsReconnect(googleAccount);
-          const googleNeedsReconnect = !!googleAccount && googleAccountNeedsReconnect(googleAccount);
           const keyNeedsAttention = account.authMethod === 'api_key' && account.state === 'needs_attention';
           const keyConnected = !keyNeedsAttention && (!!googleStatus?.apiKeyConnected || account.authMethod === 'api_key' && account.state === 'connected');
           const selectedMethod = googleStatus?.selectedAuthType;
@@ -654,7 +675,7 @@ export function ProviderSettings({
             ? { label: attentionLabel(account.lastErrorCode), tone: 'needs_attention' as const }
             : baseGoogleSummary;
           const selectedConnected = selectedMethod === 'gemini_api_key' && keyConnected;
-          const googleShowChoices = !googleStatusLoading && !googleStatusError && !googleConnected && !googleNeedsReconnect && !keyConnected && !keyNeedsAttention && !editing;
+          const googleShowChoices = !googleStatusLoading && !googleStatusError && googleAccounts.length === 0 && !keyConnected && !keyNeedsAttention && !editing;
           const googleFlowActive = googleFlow.phase !== 'idle';
 
           return <article className={`account-row google-provider-card${editing ? ' is-editing' : ''}`} key={provider.id}>
@@ -698,24 +719,24 @@ export function ProviderSettings({
               </button>
             </div>}
 
-            {!googleStatusLoading && googleStatus && !googleStatusError && !googleShowChoices && <div className="openai-method-list google-method-list" aria-label="Google Gemini authentication methods">
-              <div className="openai-method-row">
-                <div className="openai-method-status"><span>Google Account</span><strong className={`account-status ${googleConnected ? 'connected' : googleNeedsReconnect ? 'needs_attention' : ''}`}>
-                  {googleConnected ? <><CircleCheck size={13} />Connected</> : googleNeedsReconnect ? <><CircleAlert size={13} />Needs reconnecting</> : 'Not connected'}
-                </strong></div>
-                <div className="openai-method-account">
-                  <span>{googleAccount?.email ?? googleAccount?.displayName ?? (googleNeedsReconnect ? 'Google account needs reconnecting.' : 'Sign in using your Google account in a browser.')}</span>
-                  {googleConnected && <small>{googleAccount?.accountType === 'workspace' ? 'Workspace account · Code Assist eligibility cannot be verified by JevCode.' : googleAccount?.accountType === 'individual' ? 'Individual account · consumer Code Assist access ended in Gemini CLI on June 18, 2026.' : 'Google account · identity only'}</small>}
-                  {googleAccount?.requiresReconnect && <small>Reconnect this account to restore Gemini access.</small>}
-                </div>
-                <div className="openai-method-actions">
-                  {googleConnected && <strong className="account-status needs_attention">Identity only</strong>}
-                  {(googleNeedsReconnect || !googleAccount) && <button className="account-button connect" onClick={() => void connectGoogleAccount()} disabled={!desktopAvailable || googleStatus.oauthAvailable === false || googleFlowActive}>{googleNeedsReconnect ? 'Reconnect' : 'Continue with Google'}</button>}
-                  {googleConnected && <>
-                    <button className="account-button quiet" onClick={() => setGoogleAccountExpanded(value => !value)} aria-expanded={googleAccountExpanded}>{googleAccountExpanded ? 'Hide account' : 'Manage Account'}</button>
-                    <button className="account-button remove" onClick={() => void disconnectGoogleAccount()} disabled={!desktopAvailable || busy}><Trash2 size={13} />Disconnect</button>
-                  </>}
-                </div>
+            {!googleStatusLoading && googleStatus && !googleStatusError && <div className="openai-method-list google-method-list" aria-label="Google Gemini authentication methods">
+              <div className="google-account-list" aria-label="Google accounts">
+                {googleAccounts.map(item => {
+                  const selected = item.id === googleStatus.selectedAccountId;
+                  const connected = !googleAccountNeedsReconnect(item);
+                  return <div className={`openai-method-row google-account-row${selected ? ' is-selected' : ''}`} key={item.id}>
+                    <button className="google-account-select" onClick={() => void chooseGoogleAccount(item.id)} aria-pressed={selected} disabled={!desktopAvailable || busy}>
+                      <span className={`google-account-radio${selected ? ' selected' : ''}`} aria-hidden="true">{selected ? '●' : '○'}</span>
+                      <span className="google-account-copy"><strong>{item.email ?? item.displayName ?? 'Google account'}</strong><small>{connected ? 'Connected' : 'Needs reconnecting'}{item.accountType === 'workspace' ? ' · Workspace' : ''}{selected ? ' · Selected' : ''}</small></span>
+                    </button>
+                    <div className="openai-method-actions">
+                      {!connected && <button className="account-button connect" onClick={() => void connectGoogleAccount(item.id)} disabled={!desktopAvailable || googleStatus.oauthAvailable === false || googleFlowActive}>Reconnect</button>}
+                      {connected && <button className="account-button quiet" onClick={() => setGoogleAccountExpanded(value => !value)} aria-expanded={googleAccountExpanded && selected} disabled={!selected}>{googleAccountExpanded && selected ? 'Hide details' : 'Manage account'}</button>}
+                      <button className="account-button remove" onClick={() => void disconnectGoogleAccount(item.id)} disabled={!desktopAvailable || busy}><Trash2 size={13} />Remove</button>
+                    </div>
+                  </div>;
+                })}
+                <div className="google-add-account-row"><button className="account-button quiet" onClick={() => void connectGoogleAccount()} disabled={!desktopAvailable || googleStatus.oauthAvailable === false || googleFlowActive}><ShieldCheck size={13} />Add Google Account</button></div>
               </div>
               {googleAccountExpanded && googleAccount && <div className="openai-account-details google-account-details" aria-label="Google account details">
                 <span><small>Sign-in method</small><strong>Google Account</strong></span>
@@ -729,7 +750,7 @@ export function ProviderSettings({
                 <div className="account-form-copy"><strong>Google Cloud project</strong><span>Google's Gemini CLI documentation requires a project for Workspace accounts. JevCode stores this setting with the account, but cannot validate Code Assist entitlement or use the project for model requests.</span></div>
                 <label className="sr-only" htmlFor="google-code-assist-project">Google Cloud project ID</label>
                 <input id="google-code-assist-project" type="text" autoComplete="off" spellCheck={false} value={googleProjectId} onChange={event => setGoogleProjectId(event.target.value)} placeholder="your-google-cloud-project" disabled={busy} />
-                <button className="account-button quiet" onClick={() => void saveGoogleProjectId()} disabled={!desktopAvailable || busy || !googleProjectId.trim()}>{busy ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}Save project ID</button>
+                <button className="account-button quiet" onClick={() => void saveGoogleProjectId()} disabled={!desktopAvailable || busy || !googleAccount?.id || !googleProjectId.trim()}>{busy ? <LoaderCircle size={13} className="spin" /> : <Check size={13} />}Save project ID</button>
               </div>}
 
               <div className="openai-method-row">
@@ -752,7 +773,7 @@ export function ProviderSettings({
               </div>
 
               {selectedConnected && <div className="openai-catalog-actions">
-                <span>{models.gemini ? `${models.gemini.length} Gemini models loaded` : 'Load the models available to the selected Google credential.'}</span>
+                <span>{models.gemini ? `${models.gemini.length} Gemini models loaded` : 'Load the models available to the selected Gemini API key.'}</span>
                 <button className="account-button quiet" onClick={() => void loadModels(provider)} disabled={!desktopAvailable || busy}>{busy ? <LoaderCircle size={13} className="spin" /> : <Waypoints size={13} />}Refresh models</button>
               </div>}
             </div>}

@@ -130,7 +130,7 @@ export function googleProviderErrorMessage(code: string, message: string): strin
   switch (code) {
     case 'google_reconnect_required':
     case 'expired_authentication':
-      return 'Google account needs reconnecting. Sign in again to restore Gemini access.';
+      return 'Google account needs reconnecting. Sign in again to restore account access.';
     case 'google_cloud_project_required':
     case 'google_oauth_not_configured':
     case 'google_auth_method_unavailable':

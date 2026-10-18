@@ -69,6 +69,7 @@ impl Database {
         Self::migrate_openai_installation(&connection)?;
         Self::migrate_openai_account_selection(&connection)?;
         Self::migrate_openai_auth_preference(&connection)?;
+        Self::migrate_google_accounts(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -245,6 +246,115 @@ impl Database {
              );
              PRAGMA user_version = 13;",
         )?;
+        Ok(())
+    }
+
+    fn migrate_google_accounts(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS google_accounts (
+                 id TEXT PRIMARY KEY, data TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS google_account_selection (
+                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                 account_id TEXT NOT NULL
+             );
+             PRAGMA user_version = 14;",
+        )?;
+        Ok(())
+    }
+
+    /// Google account records contain safe profile and entitlement metadata only.
+    /// OAuth credentials are stored separately in the operating system keychain.
+    pub fn google_accounts(&self) -> AppResult<Vec<GoogleAccount>> {
+        let connection = self.connection()?;
+        let mut statement =
+            connection.prepare("SELECT data FROM google_accounts ORDER BY rowid")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    pub fn save_google_account(&self, account: &GoogleAccount) -> AppResult<()> {
+        if account.id.trim().is_empty() || account.id.len() > 512 {
+            return Err(AppError::new(
+                "invalid_input",
+                "The Google account identifier is invalid.",
+            ));
+        }
+        let data = serde_json::to_string(account)?;
+        self.connection()?.execute(
+            "INSERT INTO google_accounts(id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = excluded.data",
+            params![account.id, data],
+        )?;
+        Ok(())
+    }
+
+    pub fn google_account(&self, account_id: &str) -> AppResult<Option<GoogleAccount>> {
+        let data = self
+            .connection()?
+            .query_row(
+                "SELECT data FROM google_accounts WHERE id = ?1",
+                [account_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        data.map(|data| Ok(serde_json::from_str(&data)?))
+            .transpose()
+    }
+
+    pub fn selected_google_account_id(&self) -> AppResult<Option<String>> {
+        self.connection()?
+            .query_row(
+                "SELECT account_id FROM google_account_selection WHERE singleton = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(AppError::from)
+    }
+
+    pub fn select_google_account(&self, account_id: &str) -> AppResult<()> {
+        if self.google_account(account_id)?.is_none() {
+            return Err(AppError::new(
+                "google_account_not_found",
+                "That Google account is no longer available.",
+            ));
+        }
+        self.connection()?.execute(
+            "INSERT INTO google_account_selection(singleton, account_id) VALUES (1, ?1) ON CONFLICT(singleton) DO UPDATE SET account_id = excluded.account_id",
+            [account_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn ensure_selected_google_account(&self) -> AppResult<Option<String>> {
+        let accounts = self.google_accounts()?;
+        if let Some(selected) = self.selected_google_account_id()? {
+            if accounts.iter().any(|account| account.id == selected) {
+                return Ok(Some(selected));
+            }
+        }
+        let fallback = accounts.last().map(|account| account.id.clone());
+        match fallback.as_deref() {
+            Some(account_id) => self.select_google_account(account_id)?,
+            None => {
+                self.connection()?.execute(
+                    "DELETE FROM google_account_selection WHERE singleton = 1",
+                    [],
+                )?;
+            }
+        }
+        Ok(fallback)
+    }
+
+    pub fn remove_google_account(&self, account_id: &str) -> AppResult<()> {
+        let connection = self.connection()?;
+        connection.execute("DELETE FROM google_accounts WHERE id = ?1", [account_id])?;
+        connection.execute(
+            "DELETE FROM google_account_selection WHERE singleton = 1 AND account_id = ?1",
+            [account_id],
+        )?;
+        drop(connection);
+        self.ensure_selected_google_account()?;
         Ok(())
     }
 

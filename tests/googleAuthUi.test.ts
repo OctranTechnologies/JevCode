@@ -22,6 +22,8 @@ function event(state: GoogleAuthAttemptEvent['state'], failureReason: GoogleAuth
 function status(overrides: Partial<GoogleAuthStatus> = {}): GoogleAuthStatus {
   return {
     account: null,
+    accounts: [],
+    selectedAccountId: null,
     codeAssist: {
       accountType: 'unknown',
       availability: 'not_connected',

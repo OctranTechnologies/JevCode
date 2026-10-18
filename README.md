@@ -343,7 +343,8 @@ model credential. Other API-key providers continue through the shared adapter.
 Zen and Go model catalog URLs are taken from their official docs. Safe account
 metadata is stored in SQLite; credentials stay in the OS keychain under service
 `dev.jevcode.desktop` (OpenAI ChatGPT and Google OAuth sessions each use a
-separate namespaced keychain service; OpenAI entries are UUID-scoped).
+separate namespaced keychain service; OpenAI entries are UUID-scoped and Google
+entries are scoped by a one-way digest of the verified Google subject).
 
 Authentication is intentionally separated by product entitlement:
 
@@ -464,19 +465,34 @@ Authentication is intentionally separated by product entitlement:
   client secret. JevCode validates the bearer token response, expiry, required
   identity scopes, and Google's signed OIDC identity before marking the account
   connected. Refreshes are serialized and replace the secure session in place.
-  `google_auth_status` returns only account metadata and connection state;
-  `google_auth_logout` revokes where possible, removes the local keychain
-  session, and selects a separately connected Gemini API key if one remains.
-  The provider settings card makes the active route visible. React never receives
+  `google_auth_status` returns a list of safe account metadata and the selected
+  account ID. SQLite stores only profile, account type, expiry, scopes, project
+  ID, connection state, and selected-account preference. Each verified Google
+  subject gets a separate OS credential-store item; keychain labels contain a
+  SHA-256 digest rather than the subject or email. App startup migrates the old
+  single-session item into this account-scoped format without writing token
+  values to SQLite. Adding an account starts a new browser flow with fresh
+  state, nonce, and PKCE values while keeping the existing selection.
+  Reconnect binds the flow to the expected subject and rejects a different
+  Google account instead of replacing it.
+  `google_auth_select_account` persists selection; account-specific refresh,
+  project updates, and logout always carry the account ID. Removing one account
+  revokes its token where possible and deletes only its credential item; other
+  accounts stay connected. Removing the selected account selects a remaining
+  profile, and that selection survives restart. Project IDs are stored with the
+  corresponding Workspace account. Selecting an account refreshes the safe
+  OAuth/Code Assist status and reloads API-key model availability when that
+  separate route is active. Gemini requests remain API-key based: account
+  selection cannot change an in-flight request or its billing path. JevCode
+  never switches from Google Account to API Key implicitly. React never receives
   access, refresh, or ID tokens.
-  The OS credential-store session is loaded again after app restart; SQLite
-  keeps only safe account and connection metadata. The native auth manager
-  refreshes an expired token or one within five minutes of expiry. A per-account
-  async lock serializes refreshes, and rotated credentials are stored back in
-  the OS credential store. Revoked grants or missing refresh credentials mark
-  the linked account **Needs attention**. Network failures preserve the saved
-  session and do not trigger an internal retry loop. Refresh maintains Google
-  identity only; it does not authorize a Gemini model request.
+  The native auth manager refreshes an expired token or one within five minutes
+  of expiry. A per-account async lock serializes refreshes, and rotated
+  credentials are written back to that account's OS credential-store item.
+  Revoked grants or missing refresh credentials mark only that profile **Needs
+  attention**. Network failures preserve its saved session and do not trigger an
+  internal retry loop. Refresh maintains Google identity only; it does not
+  authorize a Gemini model request.
 
   Google account classification uses only a verified ID-token `hd` claim. A
   consumer account is identified as individual, but OAuth does not expose

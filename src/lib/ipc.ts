@@ -70,12 +70,13 @@ interface Commands {
   openai_auth_logout: { args: { accountId: string }; result: OpenAILogoutResult };
   openai_auth_select_account: { args: { accountId: string }; result: OpenAIAuthStatus };
   openai_auth_use_api_key: { args: undefined; result: OpenAIAuthStatus };
-  google_auth_start: { args: undefined; result: GoogleAuthStart };
+  google_auth_start: { args: { reconnectAccountId: string | null }; result: GoogleAuthStart };
   google_auth_cancel: { args: { attemptId: string }; result: null };
   google_auth_status: { args: undefined; result: GoogleAuthStatus };
-  google_auth_set_cloud_project: { args: { projectId: string }; result: GoogleAccount };
-  google_auth_logout: { args: undefined; result: GoogleLogoutResult };
-  google_auth_refresh: { args: undefined; result: GoogleAccount };
+  google_auth_select_account: { args: { accountId: string }; result: GoogleAuthStatus };
+  google_auth_set_cloud_project: { args: { projectId: string; accountId: string }; result: GoogleAccount };
+  google_auth_logout: { args: { accountId: string }; result: GoogleLogoutResult };
+  google_auth_refresh: { args: { accountId: string }; result: GoogleAccount };
   google_auth_select_method: { args: { authType: GoogleAuthType }; result: GoogleAuthStatus };
   google_auth_disconnect_api_key: { args: undefined; result: ProviderAccount };
   get_provider_account_info: { args: { providerId: string }; result: ProviderAccountInfo };
@@ -102,6 +103,7 @@ const responses = {
   google_auth_start: googleAuthStartSchema,
   google_auth_cancel: z.null(),
   google_auth_status: googleAuthStatusSchema,
+  google_auth_select_account: googleAuthStatusSchema,
   google_auth_set_cloud_project: googleAccountSchema,
   google_auth_logout: googleLogoutResultSchema,
   google_auth_refresh: googleAccountSchema,
@@ -171,8 +173,8 @@ export function selectOpenAIAPIKey(): Promise<OpenAIAuthStatus> {
 }
 
 /** Start Google OAuth in the system browser; protocol values remain native-only. */
-export function startGoogleAuth(): Promise<GoogleAuthStart> {
-  return command('google_auth_start', undefined);
+export function startGoogleAuth(reconnectAccountId: string | null = null): Promise<GoogleAuthStart> {
+  return command('google_auth_start', { reconnectAccountId });
 }
 
 export function cancelGoogleAuth(attemptId: string): Promise<null> {
@@ -184,16 +186,20 @@ export function getGoogleAuthStatus(): Promise<GoogleAuthStatus> {
 }
 
 /** Store the Workspace Code Assist project ID alongside the native Google session. */
-export function setGoogleCloudProject(projectId: string): Promise<GoogleAccount> {
-  return command('google_auth_set_cloud_project', { projectId });
+export function selectGoogleAccount(accountId: string): Promise<GoogleAuthStatus> {
+  return command('google_auth_select_account', { accountId });
 }
 
-export function refreshGoogleAuth(): Promise<GoogleAccount> {
-  return command('google_auth_refresh', undefined);
+export function setGoogleCloudProject(projectId: string, accountId: string): Promise<GoogleAccount> {
+  return command('google_auth_set_cloud_project', { projectId, accountId });
 }
 
-export function logoutGoogleAuth(): Promise<GoogleLogoutResult> {
-  return command('google_auth_logout', undefined);
+export function refreshGoogleAuth(accountId: string): Promise<GoogleAccount> {
+  return command('google_auth_refresh', { accountId });
+}
+
+export function logoutGoogleAuth(accountId: string): Promise<GoogleLogoutResult> {
+  return command('google_auth_logout', { accountId });
 }
 
 /** Select a pre-existing credential route; raw credentials never cross this boundary. */

@@ -771,6 +771,17 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .openai-method-account > span { overflow: hidden; color: var(--wb-ink); font-size: 10px; text-overflow: ellipsis; }
 .openai-method-account > small { overflow: hidden; color: var(--wb-muted); font-size: 9px; line-height: 1.5; text-overflow: ellipsis; }
 .openai-method-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.google-account-row { grid-template-columns: minmax(0, 1fr) auto; }
+.google-account-row.is-selected { background: color-mix(in srgb, var(--wb-accent) 4%, transparent); }
+.google-account-select { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 7px; color: var(--wb-ink); text-align: left; background: transparent; border: 0; border-radius: 5px; cursor: pointer; }
+.google-account-select:disabled { cursor: default; }
+.google-account-select:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 2px; }
+.google-account-radio { display: grid; flex: 0 0 17px; place-items: center; width: 17px; color: var(--wb-muted); font-size: 13px; }
+.google-account-radio.selected { color: var(--wb-accent); }
+.google-account-copy { display: grid; min-width: 0; gap: 4px; }
+.google-account-copy strong { overflow: hidden; font-size: 10px; font-weight: 600; text-overflow: ellipsis; }
+.google-account-copy small { color: var(--wb-muted); font-size: 9px; }
+.google-add-account-row { display: flex; justify-content: flex-start; padding: 10px 0; border-bottom: 1px solid var(--wb-border); }
 .openai-add-account-row { display: flex; justify-content: flex-end; padding: 10px 0; border-bottom: 1px solid var(--wb-border); }
 .openai-account-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 11px; padding: 10px 0 2px; border-top: 1px solid var(--wb-border); }
 .openai-account-details > span { display: grid; min-width: 0; gap: 4px; }
@@ -1432,4 +1443,10 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .project-preferences-row label, .project-preferences-row select { width: 100%; max-width: none; }
   .project-create-dialog footer { flex-wrap: wrap; }
   .project-text-action { flex: 1 0 100%; }
+}
+
+@media (max-width: 620px) {
+  .google-account-row { grid-template-columns: minmax(0, 1fr); }
+  .google-account-row .openai-method-actions { justify-content: flex-start; padding-left: 34px; }
+  .google-project-setup { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
 }

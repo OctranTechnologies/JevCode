@@ -73,6 +73,7 @@ pub(crate) struct PendingGoogleAuth {
     pub(crate) expires_at: DateTime<Utc>,
     client_id: String,
     cloud_project_id: String,
+    expected_account_id: Option<String>,
 }
 
 pub(crate) fn parse_authorization_callback(
@@ -169,22 +170,22 @@ pub(crate) trait GoogleOAuthTransport: Send + Sync {
 /// Keeping this boundary explicit lets the exchange and logout path be tested
 /// with an in-memory store without reading or modifying a developer's keychain.
 pub(crate) trait GoogleSessionStorage: Send + Sync {
-    fn save_google_session(&self, session: &str) -> AppResult<()>;
-    fn get_google_session(&self) -> AppResult<Option<String>>;
-    fn delete_google_session(&self) -> AppResult<()>;
+    fn save_google_session(&self, account_id: &str, session: &str) -> AppResult<()>;
+    fn get_google_session(&self, account_id: &str) -> AppResult<Option<String>>;
+    fn delete_google_session(&self, account_id: &str) -> AppResult<()>;
 }
 
 impl GoogleSessionStorage for CredentialStore {
-    fn save_google_session(&self, session: &str) -> AppResult<()> {
-        CredentialStore::save_google_session(self, session)
+    fn save_google_session(&self, account_id: &str, session: &str) -> AppResult<()> {
+        CredentialStore::save_google_session(self, account_id, session)
     }
 
-    fn get_google_session(&self) -> AppResult<Option<String>> {
-        CredentialStore::get_google_session(self)
+    fn get_google_session(&self, account_id: &str) -> AppResult<Option<String>> {
+        CredentialStore::get_google_session(self, account_id)
     }
 
-    fn delete_google_session(&self) -> AppResult<()> {
-        CredentialStore::delete_google_session(self)
+    fn delete_google_session(&self, account_id: &str) -> AppResult<()> {
+        CredentialStore::delete_google_session(self, account_id)
     }
 }
 
@@ -432,23 +433,41 @@ impl GoogleAuthManager {
     pub fn status(
         &self,
         credentials: &CredentialStore,
+        database: &Database,
         stored: Option<ProviderAccount>,
     ) -> AppResult<GoogleAuthStatus> {
-        let account = self.load_session(credentials)?.map(|session| {
-            let mut account = session.account.clone();
-            if account.cloud_project_id.is_none() && !session.cloud_project_id.is_empty() {
-                account.cloud_project_id = Some(session.cloud_project_id.clone());
+        if self.session_storage.is_none() {
+            self.migrate_legacy_session(credentials, database)?;
+        }
+        let selected_account_id = database.ensure_selected_google_account()?;
+        let mut accounts = database.google_accounts()?;
+        for account in &mut accounts {
+            match self.load_session(credentials, &account.id)? {
+                Some(session) => {
+                    account.cloud_project_id = if session.cloud_project_id.is_empty() {
+                        None
+                    } else {
+                        Some(session.cloud_project_id.clone())
+                    };
+                    let renewal_needed = parse_timestamp(&session.expires_at)
+                        .is_none_or(|expires_at| expires_at <= Utc::now() + REFRESH_SKEW);
+                    account.connected = !(account.requires_reconnect
+                        || session.access_token.trim().is_empty()
+                        || renewal_needed && session.refresh_token.trim().is_empty());
+                    account.requires_reconnect = !account.connected;
+                }
+                None => {
+                    account.connected = false;
+                    account.requires_reconnect = true;
+                }
             }
-            let renewal_needed = parse_timestamp(&session.expires_at)
-                .is_none_or(|expires_at| expires_at <= Utc::now() + REFRESH_SKEW);
-            if account.requires_reconnect
-                || session.access_token.trim().is_empty()
-                || (renewal_needed && session.refresh_token.trim().is_empty())
-            {
-                account.connected = false;
-                account.requires_reconnect = true;
-            }
-            account
+            database.save_google_account(account)?;
+        }
+        let account = selected_account_id.as_ref().and_then(|selected| {
+            accounts
+                .iter()
+                .find(|account| &account.id == selected)
+                .cloned()
         });
         let api_key_connected = self.has_api_key(credentials)?;
         let selected_auth_type = match stored.as_ref().and_then(|value| value.auth_method.as_ref())
@@ -462,6 +481,8 @@ impl GoogleAuthManager {
         let code_assist = code_assist_status(account.as_ref());
         Ok(GoogleAuthStatus {
             account,
+            accounts,
+            selected_account_id,
             code_assist,
             selected_auth_type,
             api_key_connected,
@@ -475,7 +496,9 @@ impl GoogleAuthManager {
     pub(crate) fn set_cloud_project_id(
         &self,
         project_id: &str,
+        account_id: &str,
         credentials: &CredentialStore,
+        database: &Database,
     ) -> AppResult<GoogleAccount> {
         let project_id = project_id.trim();
         if !valid_project_id(project_id) {
@@ -485,7 +508,7 @@ impl GoogleAuthManager {
             ));
         }
         let mut session = self
-            .load_session(credentials)?
+            .load_session(credentials, account_id)?
             .ok_or_else(google_reconnect_error)?;
         if session.account.account_type != GoogleAccountType::Workspace {
             return Err(AppError::new(
@@ -496,6 +519,7 @@ impl GoogleAuthManager {
         session.cloud_project_id = project_id.to_owned();
         session.account.cloud_project_id = Some(project_id.to_owned());
         self.save_session(credentials, &session)?;
+        database.save_google_account(&session.account)?;
         Ok(session.account.clone())
     }
 
@@ -548,7 +572,7 @@ impl GoogleAuthManager {
             available_methods: self.available_auth_methods(),
         };
         database.save_provider_account(&account)?;
-        self.status(credentials, Some(account))
+        self.status(credentials, database, Some(account))
     }
 
     pub(crate) fn disconnect_api_key(
@@ -559,7 +583,7 @@ impl GoogleAuthManager {
         credentials.delete(&self.provider.id)?;
         if let Some(mut stored) = database.provider_account(&self.provider.id)? {
             if stored.auth_method == Some(ProviderAuthMethod::ApiKey) {
-                let status = self.status(credentials, Some(stored.clone()))?;
+                let status = self.status(credentials, database, Some(stored.clone()))?;
                 if let Some(account) = status.account {
                     stored.state = ProviderAuthState::NotConnected;
                     stored.auth_method = None;
@@ -575,9 +599,18 @@ impl GoogleAuthManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn create_authentication_session(
         &self,
         redirect_uri: &str,
+    ) -> AppResult<PendingGoogleAuth> {
+        self.create_authentication_session_for_account(redirect_uri, None)
+    }
+
+    pub(crate) fn create_authentication_session_for_account(
+        &self,
+        redirect_uri: &str,
+        expected_account_id: Option<String>,
     ) -> AppResult<PendingGoogleAuth> {
         if !self.oauth_configured() {
             return Err(AppError::new(
@@ -615,6 +648,7 @@ impl GoogleAuthManager {
             expires_at,
             client_id,
             cloud_project_id,
+            expected_account_id,
         })
     }
 
@@ -654,6 +688,16 @@ impl GoogleAuthManager {
             &discovery,
             &jwks,
         )?;
+        if pending
+            .expected_account_id
+            .as_deref()
+            .is_some_and(|expected| expected != identity.subject)
+        {
+            return Err(AppError::new(
+                "google_reconnect_account_mismatch",
+                "The signed-in Google account did not match the account selected for reconnection.",
+            ));
+        }
         let scopes = response.scope.as_deref().ok_or_else(google_scope_error)?;
         let granted_scopes: Vec<String> =
             scopes.split_ascii_whitespace().map(str::to_owned).collect();
@@ -689,6 +733,10 @@ impl GoogleAuthManager {
             granted_scopes,
         };
         self.save_session(credentials, &session)?;
+        database.save_google_account(&account)?;
+        if database.selected_google_account_id()?.is_none() {
+            database.select_google_account(&account.id)?;
+        }
         let previous = database.provider_account(&self.provider.id)?;
         let retained_api_key = previous
             .as_ref()
@@ -739,7 +787,7 @@ impl GoogleAuthManager {
         let selected = stored
             .as_ref()
             .and_then(|account| account.auth_method.as_ref());
-        let saved_session_exists = self.load_session(credentials)?.is_some();
+        let saved_session_exists = !database.google_accounts()?.is_empty();
         let wants_oauth = selected == Some(&ProviderAuthMethod::GoogleOAuth)
             || (selected.is_none() && saved_session_exists);
         if wants_oauth {
@@ -760,8 +808,11 @@ impl GoogleAuthManager {
         &self,
         credentials: &CredentialStore,
         database: &Database,
+        account_id: &str,
     ) -> AppResult<GoogleAccount> {
-        let (_, account) = self.access_token(credentials, database, true).await?;
+        let (_, account) = self
+            .access_token(credentials, database, account_id, true)
+            .await?;
         Ok(account)
     }
 
@@ -779,8 +830,9 @@ impl GoogleAuthManager {
         &self,
         credentials: &CredentialStore,
         database: &Database,
+        account_id: &str,
     ) -> AppResult<bool> {
-        let mut session = self.load_session(credentials)?;
+        let mut session = self.load_session(credentials, account_id)?;
         let revocation_confirmed = if let Some(session) = session.as_mut() {
             self.oauth
                 .revoke_token(&session.refresh_token)
@@ -789,23 +841,8 @@ impl GoogleAuthManager {
         } else {
             false
         };
-        self.delete_session(credentials)?;
-        if let Some(mut account) = database.provider_account(&self.provider.id)? {
-            if account.auth_method != Some(ProviderAuthMethod::ApiKey) {
-                if self.has_api_key(credentials)? {
-                    account.state = ProviderAuthState::Connected;
-                    account.auth_method = Some(ProviderAuthMethod::ApiKey);
-                    account.account_label = Some("API key".into());
-                    account.connected_at = None;
-                    account.last_validated_at = None;
-                    account.last_error_code = None;
-                    account.available_methods = self.available_auth_methods();
-                    database.save_provider_account(&account)?;
-                } else {
-                    database.delete_provider_account(&self.provider.id)?;
-                }
-            }
-        }
+        self.delete_session(credentials, account_id)?;
+        database.remove_google_account(account_id)?;
         Ok(revocation_confirmed)
     }
 
@@ -835,17 +872,18 @@ impl GoogleAuthManager {
         &self,
         credentials: &CredentialStore,
         database: &Database,
+        account_id: &str,
         force_refresh: bool,
     ) -> AppResult<(Zeroizing<String>, GoogleAccount)> {
         let mut session = self
-            .load_session(credentials)?
+            .load_session(credentials, account_id)?
             .ok_or_else(google_reconnect_error)?;
         let lock = google_refresh_lock(&session.account.id)?;
         let _guard = lock.lock().await;
         // Re-read after acquiring the lock so waiting requests reuse the token
         // written by the first refresh instead of issuing duplicate refreshes.
         session = self
-            .load_session(credentials)?
+            .load_session(credentials, account_id)?
             .ok_or_else(google_reconnect_error)?;
         if session.account.requires_reconnect || session.access_token.trim().is_empty() {
             self.mark_reconnect_required(credentials, database, &mut session)?;
@@ -898,6 +936,7 @@ impl GoogleAuthManager {
                 session.account.connected = true;
                 let token = Zeroizing::new(session.access_token.clone());
                 self.save_session(credentials, &session)?;
+                database.save_google_account(&session.account)?;
                 if let Some(mut account) = database.provider_account(&self.provider.id)? {
                     if account.auth_method == Some(ProviderAuthMethod::GoogleOAuth) {
                         account.state = ProviderAuthState::Connected;
@@ -918,18 +957,23 @@ impl GoogleAuthManager {
         }
     }
 
-    fn load_session(&self, credentials: &CredentialStore) -> AppResult<Option<GoogleAuthSession>> {
+    fn load_session(
+        &self,
+        credentials: &CredentialStore,
+        account_id: &str,
+    ) -> AppResult<Option<GoogleAuthSession>> {
         let stored = match &self.session_storage {
-            Some(storage) => storage.get_google_session()?,
-            None => credentials.get_google_session()?,
+            Some(storage) => storage.get_google_session(account_id)?,
+            None => credentials.get_google_session(account_id)?,
         };
         let Some(mut serialized) = stored else {
             return Ok(None);
         };
-        let parsed = serde_json::from_str(&serialized);
+        let parsed = serde_json::from_str::<GoogleAuthSession>(&serialized);
         serialized.zeroize();
         match parsed {
-            Ok(session) => Ok(Some(session)),
+            Ok(session) if session.account.id == account_id => Ok(Some(session)),
+            Ok(_) => Err(google_reconnect_error()),
             Err(_) => Err(google_reconnect_error()),
         }
     }
@@ -941,18 +985,39 @@ impl GoogleAuthManager {
     ) -> AppResult<()> {
         let mut serialized = serde_json::to_string(session)?;
         let result = match &self.session_storage {
-            Some(storage) => storage.save_google_session(&serialized),
-            None => credentials.save_google_session(&serialized),
+            Some(storage) => storage.save_google_session(&session.account.id, &serialized),
+            None => credentials.save_google_session(&session.account.id, &serialized),
         };
         serialized.zeroize();
         result
     }
 
-    fn delete_session(&self, credentials: &CredentialStore) -> AppResult<()> {
+    fn delete_session(&self, credentials: &CredentialStore, account_id: &str) -> AppResult<()> {
         match &self.session_storage {
-            Some(storage) => storage.delete_google_session(),
-            None => credentials.delete_google_session(),
+            Some(storage) => storage.delete_google_session(account_id),
+            None => credentials.delete_google_session(account_id),
         }
+    }
+
+    fn migrate_legacy_session(
+        &self,
+        credentials: &CredentialStore,
+        database: &Database,
+    ) -> AppResult<()> {
+        let Some(mut serialized) = credentials.get_legacy_google_session()? else {
+            return Ok(());
+        };
+        let parsed = serde_json::from_str::<GoogleAuthSession>(&serialized);
+        serialized.zeroize();
+        let session = parsed.map_err(|_| google_reconnect_error())?;
+        if database.google_account(&session.account.id)?.is_none() {
+            self.save_session(credentials, &session)?;
+            database.save_google_account(&session.account)?;
+            if database.selected_google_account_id()?.is_none() {
+                database.select_google_account(&session.account.id)?;
+            }
+        }
+        credentials.delete_legacy_google_session()
     }
 
     fn mark_reconnect_required(
@@ -964,6 +1029,7 @@ impl GoogleAuthManager {
         session.account.connected = false;
         session.account.requires_reconnect = true;
         self.save_session(credentials, session)?;
+        database.save_google_account(&session.account)?;
         if let Some(mut stored) = database.provider_account(&self.provider.id)? {
             if stored.auth_method == Some(ProviderAuthMethod::GoogleOAuth) {
                 stored.state = ProviderAuthState::NeedsAttention;
@@ -994,7 +1060,6 @@ impl ProviderAuthAdapter for GoogleAuthManager {
     }
 
     fn disconnect(&self, credentials: &CredentialStore) -> AppResult<()> {
-        credentials.delete_google_session()?;
         self.api_key.disconnect(credentials)
     }
 
@@ -1019,23 +1084,17 @@ impl ProviderAuthAdapter for GoogleAuthManager {
         credentials: &CredentialStore,
         stored: Option<ProviderAccount>,
     ) -> AppResult<ProviderAccount> {
-        let google_account = self
-            .load_session(credentials)?
-            .map(|session| session.account.clone());
         let selected = stored.as_ref().and_then(|value| value.auth_method.as_ref());
         let mut account = if selected == Some(&ProviderAuthMethod::GoogleOAuth) {
-            match google_account {
-                Some(google_account) => ProviderAccount {
+            match stored.as_ref() {
+                Some(saved) => ProviderAccount {
                     provider_id: "gemini".into(),
                     provider_name: self.provider.name.clone(),
-                    state: if google_account.requires_reconnect {
-                        ProviderAuthState::NeedsAttention
-                    } else {
-                        ProviderAuthState::Connected
-                    },
+                    state: saved.state.clone(),
                     auth_method: Some(ProviderAuthMethod::GoogleOAuth),
-                    account_label: google_account
-                        .email
+                    account_label: saved
+                        .account_label
+                        .clone()
                         .or_else(|| Some("Google account".into())),
                     connected_at: stored.as_ref().and_then(|value| value.connected_at.clone()),
                     last_validated_at: stored
@@ -1060,32 +1119,10 @@ impl ProviderAuthAdapter for GoogleAuthManager {
                     available_methods: self.available_auth_methods(),
                 },
             }
-        } else if selected == Some(&ProviderAuthMethod::ApiKey) || google_account.is_none() {
+        } else if selected == Some(&ProviderAuthMethod::ApiKey) || stored.is_none() {
             self.api_key.get_auth_status(credentials, stored)?
-        } else if let Some(google_account) = google_account {
-            ProviderAccount {
-                provider_id: "gemini".into(),
-                provider_name: self.provider.name.clone(),
-                state: if google_account.requires_reconnect {
-                    ProviderAuthState::NeedsAttention
-                } else {
-                    ProviderAuthState::Connected
-                },
-                auth_method: Some(ProviderAuthMethod::GoogleOAuth),
-                account_label: google_account
-                    .email
-                    .or_else(|| Some("Google account".into())),
-                connected_at: stored.as_ref().and_then(|value| value.connected_at.clone()),
-                last_validated_at: stored
-                    .as_ref()
-                    .and_then(|value| value.last_validated_at.clone()),
-                last_error_code: stored
-                    .as_ref()
-                    .and_then(|value| value.last_error_code.clone()),
-                available_methods: self.available_auth_methods(),
-            }
         } else {
-            self.api_key.get_auth_status(credentials, stored)?
+            stored.expect("stored Google provider state").clone()
         };
         account.available_methods = self.available_auth_methods();
         Ok(account)
@@ -1554,24 +1591,74 @@ mod tests {
     #[derive(Default)]
     struct MemoryGoogleSessionStorage {
         serialized: Mutex<Option<String>>,
+        sessions: Mutex<HashMap<String, String>>,
     }
 
     impl GoogleSessionStorage for MemoryGoogleSessionStorage {
-        fn save_google_session(&self, session: &str) -> AppResult<()> {
+        fn save_google_session(&self, account_id: &str, session: &str) -> AppResult<()> {
+            self.sessions
+                .lock()
+                .map_err(AppError::internal)?
+                .insert(account_id.to_owned(), session.to_owned());
             *self.serialized.lock().map_err(AppError::internal)? = Some(session.to_owned());
             Ok(())
         }
 
-        fn get_google_session(&self) -> AppResult<Option<String>> {
-            Ok(self.serialized.lock().map_err(AppError::internal)?.clone())
+        fn get_google_session(&self, account_id: &str) -> AppResult<Option<String>> {
+            Ok(self
+                .sessions
+                .lock()
+                .map_err(AppError::internal)?
+                .get(account_id)
+                .cloned())
         }
 
-        fn delete_google_session(&self) -> AppResult<()> {
-            if let Some(mut serialized) = self.serialized.lock().map_err(AppError::internal)?.take()
-            {
+        fn delete_google_session(&self, account_id: &str) -> AppResult<()> {
+            self.sessions
+                .lock()
+                .map_err(AppError::internal)?
+                .remove(account_id);
+            let replacement = self
+                .sessions
+                .lock()
+                .map_err(AppError::internal)?
+                .values()
+                .next()
+                .cloned();
+            let mut current = self.serialized.lock().map_err(AppError::internal)?;
+            if let Some(mut serialized) = current.take() {
                 serialized.zeroize();
             }
+            *current = replacement;
             Ok(())
+        }
+    }
+
+    impl MemoryGoogleSessionStorage {
+        fn save_test_session(&self, session: &GoogleAuthSession) {
+            let serialized = serde_json::to_string(session).unwrap();
+            self.save_google_session(&session.account.id, &serialized)
+                .unwrap();
+        }
+
+        fn save_serialized(&self, serialized: &str) {
+            let session: GoogleAuthSession = serde_json::from_str(serialized).unwrap();
+            self.save_google_session(&session.account.id, serialized)
+                .unwrap();
+        }
+
+        fn single_session(&self) -> Option<String> {
+            self.serialized.lock().unwrap().clone()
+        }
+
+        fn only_account_id(&self) -> String {
+            self.sessions
+                .lock()
+                .unwrap()
+                .keys()
+                .next()
+                .cloned()
+                .unwrap()
         }
     }
 
@@ -1699,7 +1786,7 @@ mod tests {
     }
 
     fn sign_test_id_token(encoding: &EncodingKey, nonce: &str) -> String {
-        sign_test_id_token_with_hosted_domain(encoding, nonce, None)
+        sign_test_id_token_for_subject(encoding, nonce, "google-subject-42", None)
     }
 
     fn sign_test_id_token_with_hosted_domain(
@@ -1707,11 +1794,20 @@ mod tests {
         nonce: &str,
         hosted_domain: Option<&str>,
     ) -> String {
+        sign_test_id_token_for_subject(encoding, nonce, "google-subject-42", hosted_domain)
+    }
+
+    fn sign_test_id_token_for_subject(
+        encoding: &EncodingKey,
+        nonce: &str,
+        subject: &str,
+        hosted_domain: Option<&str>,
+    ) -> String {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("jevcode-google-test-key".into());
         let mut claims = serde_json::json!({
             "iss": "https://accounts.google.com",
-            "sub": "google-subject-42",
+            "sub": subject,
             "aud": TEST_CLIENT_ID,
             "iat": Utc::now().timestamp() as u64,
             "exp": (Utc::now() + ChronoDuration::minutes(5)).timestamp() as u64,
@@ -1786,9 +1882,16 @@ mod tests {
             expires_at,
             granted_scopes: scopes,
         };
-        storage
-            .save_google_session(&serde_json::to_string(&session).unwrap())
-            .unwrap();
+        storage.save_test_session(&session);
+    }
+
+    fn persist_test_account(database: &Database, storage: &MemoryGoogleSessionStorage) -> String {
+        let serialized = storage.single_session().unwrap();
+        let session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
+        let account_id = session.account.id.clone();
+        database.save_google_account(&session.account).unwrap();
+        database.select_google_account(&account_id).unwrap();
+        account_id
     }
 
     fn save_test_provider_account(database: &Database) {
@@ -1826,6 +1929,7 @@ mod tests {
             Utc::now() + ChronoDuration::minutes(45),
             TEST_REFRESH_TOKEN,
         );
+        persist_test_account(&Database::open(&database_path).unwrap(), &storage);
         let oauth = refresh_mock(MockRefreshBehavior::Success);
         {
             let database = Database::open(&database_path).unwrap();
@@ -1834,6 +1938,7 @@ mod tests {
             let status = manager
                 .status(
                     &CredentialStore,
+                    &database,
                     database.provider_account("gemini").unwrap(),
                 )
                 .unwrap();
@@ -1846,12 +1951,12 @@ mod tests {
         let database = Database::open(&database_path).unwrap();
         let manager = test_oauth_manager(oauth.clone(), storage.clone());
         let (access_token, _) = manager
-            .access_token(&CredentialStore, &database, false)
+            .access_token(&CredentialStore, &database, &account_id, false)
             .await
             .unwrap();
         assert_eq!(access_token.as_str(), "existing-google-access-token");
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
-        assert!(storage.get_google_session().unwrap().is_some());
+        assert!(storage.single_session().is_some());
     }
 
     #[tokio::test]
@@ -1862,20 +1967,21 @@ mod tests {
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "expired-account",
             Utc::now() - ChronoDuration::seconds(1),
             TEST_REFRESH_TOKEN,
         );
         let oauth = refresh_mock(MockRefreshBehavior::Success);
+        let account_id = storage.only_account_id();
         let manager = test_oauth_manager(oauth.clone(), storage.clone());
 
         let (access_token, _) = manager
-            .access_token(&CredentialStore, &database, false)
+            .access_token(&CredentialStore, &database, &account_id, false)
             .await
             .unwrap();
         assert_eq!(access_token.as_str(), "refreshed-google-access-token");
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
-        let serialized = storage.get_google_session().unwrap().unwrap();
+        let serialized = storage.single_session().unwrap();
         let session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
         assert_eq!(session.access_token, "refreshed-google-access-token");
         assert_eq!(session.refresh_token, "rotated-google-refresh-token");
@@ -1895,15 +2001,16 @@ mod tests {
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "concurrent-account",
             Utc::now() - ChronoDuration::seconds(1),
             TEST_REFRESH_TOKEN,
         );
         let oauth = refresh_mock(MockRefreshBehavior::Success);
-        let manager = test_oauth_manager(oauth.clone(), storage);
+        let account_id = storage.only_account_id();
+        let manager = test_oauth_manager(oauth.clone(), storage.clone());
 
         let results = futures_util::future::join_all(
-            (0..8).map(|_| manager.access_token(&CredentialStore, &database, false)),
+            (0..8).map(|_| manager.access_token(&CredentialStore, &database, &account_id, false)),
         )
         .await;
         for result in results {
@@ -1921,16 +2028,17 @@ mod tests {
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "revoked-account",
             Utc::now() - ChronoDuration::seconds(1),
             TEST_REFRESH_TOKEN,
         );
         let oauth = refresh_mock(MockRefreshBehavior::Revoked);
+        let account_id = storage.only_account_id();
         let manager = test_oauth_manager(oauth.clone(), storage.clone());
 
         for _ in 0..2 {
             let error = manager
-                .access_token(&CredentialStore, &database, false)
+                .access_token(&CredentialStore, &database, &account_id, false)
                 .await
                 .expect_err("revoked authorization should require reconnection");
             assert_eq!(error.code, "google_reconnect_required");
@@ -1939,7 +2047,7 @@ mod tests {
                 .starts_with("Google account needs reconnecting."));
         }
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
-        let serialized = storage.get_google_session().unwrap().unwrap();
+        let serialized = storage.single_session().unwrap();
         let session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
         assert!(!session.account.connected);
         assert!(session.account.requires_reconnect);
@@ -1960,47 +2068,55 @@ mod tests {
         let valid_storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &valid_storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "valid-account",
             Utc::now() + ChronoDuration::minutes(15),
             "",
         );
+        persist_test_account(&database, &valid_storage);
         let oauth = refresh_mock(MockRefreshBehavior::Success);
         let valid_manager = test_oauth_manager(oauth.clone(), valid_storage.clone());
         let (access_token, _) = valid_manager
-            .access_token(&CredentialStore, &database, false)
+            .access_token(
+                &CredentialStore,
+                &database,
+                &valid_storage.only_account_id(),
+                false,
+            )
             .await
             .unwrap();
         assert_eq!(access_token.as_str(), "existing-google-access-token");
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
         let valid_session: GoogleAuthSession =
-            serde_json::from_str(&valid_storage.get_google_session().unwrap().unwrap()).unwrap();
+            serde_json::from_str(&valid_storage.single_session().unwrap()).unwrap();
         assert!(!valid_session.account.requires_reconnect);
 
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "missing-refresh-account",
             Utc::now() - ChronoDuration::seconds(1),
             "",
         );
+        let account_id = persist_test_account(&database, &storage);
         let oauth = refresh_mock(MockRefreshBehavior::Success);
         let manager = test_oauth_manager(oauth.clone(), storage.clone());
         let status = manager
             .status(
                 &CredentialStore,
+                &database,
                 database.provider_account("gemini").unwrap(),
             )
             .unwrap();
         assert!(status.account.unwrap().requires_reconnect);
 
         let error = manager
-            .access_token(&CredentialStore, &database, false)
+            .access_token(&CredentialStore, &database, &account_id, false)
             .await
             .expect_err("missing refresh token should require reconnection");
         assert_eq!(error.code, "google_reconnect_required");
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 0);
         let session: GoogleAuthSession =
-            serde_json::from_str(&storage.get_google_session().unwrap().unwrap()).unwrap();
+            serde_json::from_str(&storage.single_session().unwrap()).unwrap();
         assert!(session.account.requires_reconnect);
     }
 
@@ -2012,7 +2128,7 @@ mod tests {
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "network-account",
             Utc::now() - ChronoDuration::seconds(1),
             TEST_REFRESH_TOKEN,
         );
@@ -2020,13 +2136,18 @@ mod tests {
         let manager = test_oauth_manager(oauth.clone(), storage.clone());
 
         let error = manager
-            .access_token(&CredentialStore, &database, false)
+            .access_token(
+                &CredentialStore,
+                &database,
+                &storage.only_account_id(),
+                false,
+            )
             .await
             .expect_err("network failure should be reported");
         assert_eq!(error.code, "network_error");
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
         let session: GoogleAuthSession =
-            serde_json::from_str(&storage.get_google_session().unwrap().unwrap()).unwrap();
+            serde_json::from_str(&storage.single_session().unwrap()).unwrap();
         assert!(!session.account.requires_reconnect);
         assert_eq!(
             database.provider_account("gemini").unwrap().unwrap().state,
@@ -2042,7 +2163,7 @@ mod tests {
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
-            &uuid::Uuid::new_v4().to_string(),
+            "scope-account",
             Utc::now() - ChronoDuration::seconds(1),
             TEST_REFRESH_TOKEN,
         );
@@ -2050,13 +2171,18 @@ mod tests {
         let manager = test_oauth_manager(oauth.clone(), storage.clone());
 
         let error = manager
-            .access_token(&CredentialStore, &database, false)
+            .access_token(
+                &CredentialStore,
+                &database,
+                &storage.only_account_id(),
+                false,
+            )
             .await
             .expect_err("lost Gemini scopes should require reconnection");
         assert_eq!(error.code, "google_reconnect_required");
         assert_eq!(oauth.refresh_calls.load(Ordering::SeqCst), 1);
         let session: GoogleAuthSession =
-            serde_json::from_str(&storage.get_google_session().unwrap().unwrap()).unwrap();
+            serde_json::from_str(&storage.single_session().unwrap()).unwrap();
         assert!(session.account.requires_reconnect);
         assert_eq!(
             database.provider_account("gemini").unwrap().unwrap().state,
@@ -2180,21 +2306,183 @@ mod tests {
         for secret in [TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, "id_token"] {
             assert!(!persisted.contains(secret));
         }
-        let status = manager.status(&credentials, Some(stored_account)).unwrap();
+        let status = manager
+            .status(&credentials, &database, Some(stored_account))
+            .unwrap();
         let safe_status = serde_json::to_string(&status).unwrap();
         for secret in [TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, "id_token"] {
             assert!(!safe_status.contains(secret));
         }
 
-        assert!(manager.logout(&credentials, &database).await.unwrap());
+        assert!(manager
+            .logout(&credentials, &database, "google-subject-42")
+            .await
+            .unwrap());
         assert_eq!(oauth.revoke_calls.load(Ordering::SeqCst), 1);
         assert!(storage.serialized.lock().unwrap().is_none());
-        assert!(database.provider_account("gemini").unwrap().is_none());
         assert!(manager
-            .status(&credentials, None)
+            .status(&credentials, &database, None)
             .unwrap()
             .account
             .is_none());
+        assert!(database.google_accounts().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn two_google_oauth_accounts_are_isolated_selectable_and_persisted() {
+        let root = tempfile::tempdir().unwrap();
+        let database_path = root.path().join("multi-google-auth.sqlite");
+        let database = Database::open(&database_path).unwrap();
+        let storage = Arc::new(MemoryGoogleSessionStorage::default());
+        let creator = GoogleAuthManager::with_config(
+            provider(),
+            Some(TEST_CLIENT_ID.into()),
+            Some("jevcode-test-project".into()),
+        )
+        .unwrap();
+        let redirect_uri = "http://127.0.0.1:43123";
+        let first_pending = creator.create_authentication_session(redirect_uri).unwrap();
+        let second_pending = creator.create_authentication_session(redirect_uri).unwrap();
+        assert_ne!(first_pending.attempt_id, second_pending.attempt_id);
+        assert_ne!(first_pending.state, second_pending.state);
+        assert_ne!(first_pending.nonce, second_pending.nonce);
+        assert_ne!(first_pending.code_verifier, second_pending.code_verifier);
+        assert!(first_pending
+            .authorization_url
+            .as_str()
+            .contains("prompt=select_account"));
+
+        let (encoding, jwks) = test_signing_key();
+        let first_transport = Arc::new(MockGoogleOAuthTransport {
+            jwks: jwks.clone(),
+            id_token: sign_test_id_token_for_subject(
+                &encoding,
+                &first_pending.nonce,
+                "google-account-one",
+                None,
+            ),
+            exchange_arguments: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_behavior: MockRefreshBehavior::Success,
+        });
+        let first_manager = test_manager(first_transport.clone(), storage.clone());
+        let first = first_manager
+            .complete_authentication(&first_pending, "code-one", &CredentialStore, &database)
+            .await
+            .unwrap();
+
+        let second_transport = Arc::new(MockGoogleOAuthTransport {
+            jwks,
+            id_token: sign_test_id_token_for_subject(
+                &encoding,
+                &second_pending.nonce,
+                "google-account-two",
+                None,
+            ),
+            exchange_arguments: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_behavior: MockRefreshBehavior::Success,
+        });
+        let second_manager = test_manager(second_transport.clone(), storage.clone());
+        let second = second_manager
+            .complete_authentication(&second_pending, "code-two", &CredentialStore, &database)
+            .await
+            .unwrap();
+        assert_ne!(first.id, second.id);
+        assert_eq!(
+            database.selected_google_account_id().unwrap(),
+            Some(first.id.clone())
+        );
+        assert_eq!(database.google_accounts().unwrap().len(), 2);
+        let safe_rows = serde_json::to_string(&database.google_accounts().unwrap()).unwrap();
+        for secret in [TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN, "id_token"] {
+            assert!(!safe_rows.contains(secret));
+        }
+        assert!(storage.get_google_session(&first.id).unwrap().is_some());
+        assert!(storage.get_google_session(&second.id).unwrap().is_some());
+
+        database.select_google_account(&first.id).unwrap();
+        let first_status = first_manager
+            .status(&CredentialStore, &database, None)
+            .unwrap();
+        assert_eq!(
+            first_status.selected_account_id.as_deref(),
+            Some(first.id.as_str())
+        );
+        assert_eq!(
+            first_status
+                .account
+                .as_ref()
+                .map(|account| account.id.as_str()),
+            Some(first.id.as_str())
+        );
+        database.select_google_account(&second.id).unwrap();
+        let second_status = second_manager
+            .status(&CredentialStore, &database, None)
+            .unwrap();
+        assert_eq!(
+            second_status.selected_account_id.as_deref(),
+            Some(second.id.as_str())
+        );
+        assert_eq!(
+            second_status
+                .account
+                .as_ref()
+                .map(|account| account.id.as_str()),
+            Some(second.id.as_str())
+        );
+
+        // A reconnect flow cannot replace credentials for a different subject.
+        let mismatched_pending = creator
+            .create_authentication_session_for_account(redirect_uri, Some(first.id.clone()))
+            .unwrap();
+        let mismatch_transport = Arc::new(MockGoogleOAuthTransport {
+            jwks: second_transport.jwks.clone(),
+            id_token: sign_test_id_token_for_subject(
+                &encoding,
+                &mismatched_pending.nonce,
+                "google-account-two",
+                None,
+            ),
+            exchange_arguments: Mutex::new(None),
+            revoke_calls: AtomicUsize::new(0),
+            refresh_calls: AtomicUsize::new(0),
+            refresh_behavior: MockRefreshBehavior::Success,
+        });
+        let mismatch_manager = test_manager(mismatch_transport, storage.clone());
+        let mismatch = mismatch_manager
+            .complete_authentication(
+                &mismatched_pending,
+                "wrong-account-code",
+                &CredentialStore,
+                &database,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(mismatch.code, "google_reconnect_account_mismatch");
+
+        assert!(second_manager
+            .logout(&CredentialStore, &database, &second.id)
+            .await
+            .unwrap());
+        assert!(storage.get_google_session(&second.id).unwrap().is_none());
+        assert!(storage.get_google_session(&first.id).unwrap().is_some());
+        drop(database);
+        let reopened = Database::open(&database_path).unwrap();
+        let restored = first_manager
+            .status(&CredentialStore, &reopened, None)
+            .unwrap();
+        assert_eq!(restored.accounts.len(), 1);
+        assert_eq!(
+            restored.selected_account_id.as_deref(),
+            Some(first.id.as_str())
+        );
+        assert_eq!(
+            restored.account.as_ref().map(|account| account.id.as_str()),
+            Some(first.id.as_str())
+        );
     }
 
     #[test]
@@ -2474,6 +2762,8 @@ mod tests {
 
     #[test]
     fn workspace_project_is_validated_and_stays_in_the_native_session() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("workspace-google.sqlite")).unwrap();
         let storage = Arc::new(MemoryGoogleSessionStorage::default());
         save_test_session(
             &storage,
@@ -2481,34 +2771,35 @@ mod tests {
             Utc::now() + ChronoDuration::minutes(10),
             TEST_REFRESH_TOKEN,
         );
-        let mut serialized = storage.get_google_session().unwrap().unwrap();
+        let account_id = persist_test_account(&database, &storage);
+        let mut serialized = storage.single_session().unwrap();
         let mut session: GoogleAuthSession = serde_json::from_str(&serialized).unwrap();
         serialized.zeroize();
         let individual_manager =
             test_oauth_manager(refresh_mock(MockRefreshBehavior::Success), storage.clone());
         let error = individual_manager
-            .set_cloud_project_id("team-project-123", &CredentialStore)
+            .set_cloud_project_id("team-project-123", &account_id, &CredentialStore, &database)
             .unwrap_err();
         assert_eq!(error.code, "google_project_not_required");
 
         session.account.account_type = GoogleAccountType::Workspace;
         let mut serialized = serde_json::to_string(&session).unwrap();
-        storage.save_google_session(&serialized).unwrap();
+        storage.save_serialized(&serialized);
         serialized.zeroize();
 
         let manager =
             test_oauth_manager(refresh_mock(MockRefreshBehavior::Success), storage.clone());
         assert!(manager
-            .set_cloud_project_id("bad", &CredentialStore)
+            .set_cloud_project_id("bad", &account_id, &CredentialStore, &database)
             .is_err());
         let account = manager
-            .set_cloud_project_id("team-project-123", &CredentialStore)
+            .set_cloud_project_id("team-project-123", &account_id, &CredentialStore, &database)
             .unwrap();
         assert_eq!(
             account.cloud_project_id.as_deref(),
             Some("team-project-123")
         );
-        let status = manager.status(&CredentialStore, None).unwrap();
+        let status = manager.status(&CredentialStore, &database, None).unwrap();
         assert_eq!(
             status.code_assist.availability,
             GoogleCodeAssistAvailability::EligibilityUnknown
@@ -2518,7 +2809,7 @@ mod tests {
         assert!(!status_json.contains("access_token"));
         assert!(!status_json.contains("refresh_token"));
         status_json.zeroize();
-        let mut saved = storage.get_google_session().unwrap().unwrap();
+        let mut saved = storage.single_session().unwrap();
         assert!(saved.contains("team-project-123"));
         saved.zeroize();
     }
@@ -2535,6 +2826,7 @@ mod tests {
             Utc::now() + ChronoDuration::minutes(10),
             TEST_REFRESH_TOKEN,
         );
+        persist_test_account(&database, &storage);
         let oauth = refresh_mock(MockRefreshBehavior::Success);
         let manager = test_oauth_manager(oauth.clone(), storage);
 

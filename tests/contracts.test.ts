@@ -55,6 +55,8 @@ describe('desktop contracts', () => {
     expect(googleAuthStartSchema.safeParse({ ...safeAttempt, authorizationUrl: 'https://accounts.google.com/?state=private' }).success).toBe(false);
     const safeStatus = {
       account: { id: 'google-profile', email: 'user@gmail.com', displayName: 'Google User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: ['openid', 'email'] },
+      accounts: [{ id: 'google-profile', email: 'user@gmail.com', displayName: 'Google User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: ['openid', 'email'] }],
+      selectedAccountId: 'google-profile',
       codeAssist: { accountType: 'individual', availability: 'consumer_access_retired', requiresCloudProject: false, cloudProjectId: null, userTier: null, inferenceAvailable: false },
       selectedAuthType: null,
       apiKeyConnected: false,
@@ -67,6 +69,7 @@ describe('desktop contracts', () => {
     expect(googleAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'failed', failureReason: 'network_error' }).failureReason).toBe('network_error');
     const nativeCommands = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
     const handler = nativeCommands.slice(nativeCommands.indexOf('generate_handler!'));
+    expect(handler).toContain('commands::google_auth_select_account');
     expect(handler).toContain('commands::google_auth_select_method');
     expect(handler).toContain('commands::google_auth_disconnect_api_key');
     expect(handler).not.toMatch(/google_auth_(?:get|read)_credentials|commands::get_google_session/);

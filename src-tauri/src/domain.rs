@@ -882,6 +882,10 @@ pub struct GoogleAccount {
 #[serde(rename_all = "camelCase")]
 pub struct GoogleAuthStatus {
     pub account: Option<GoogleAccount>,
+    #[serde(default)]
+    pub accounts: Vec<GoogleAccount>,
+    #[serde(default)]
+    pub selected_account_id: Option<String>,
     pub code_assist: GoogleCodeAssistStatus,
     pub selected_auth_type: Option<GoogleAuthType>,
     pub api_key_connected: bool,

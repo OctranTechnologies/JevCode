@@ -122,6 +122,7 @@ pub fn run() {
             commands::google_auth_start,
             commands::google_auth_cancel,
             commands::google_auth_status,
+            commands::google_auth_select_account,
             commands::google_auth_set_cloud_project,
             commands::google_auth_logout,
             commands::google_auth_refresh,

@@ -1805,7 +1805,11 @@ pub async fn disconnect_provider(
             provider.clone(),
             &state.config,
         )?;
-        let _ = manager.logout(&state.credentials, &state.database).await?;
+        for account in state.database.google_accounts()? {
+            let _ = manager
+                .logout(&state.credentials, &state.database, &account.id)
+                .await?;
+        }
         state.credentials.delete("gemini")?;
     } else {
         auth::adapter_with_config(provider, &state.config)?.disconnect(&state.credentials)?;
@@ -2052,6 +2056,7 @@ pub fn openai_auth_cancel(
 /// authorization URL stay in Rust; only the opaque attempt handle crosses IPC.
 #[tauri::command]
 pub async fn google_auth_start(
+    reconnect_account_id: Option<String>,
     app: AppHandle,
     state: State<'_, SharedState>,
 ) -> AppResult<GoogleAuthStart> {
@@ -2075,7 +2080,16 @@ pub async fn google_auth_start(
         })?
         .port();
     let redirect_uri = format!("http://127.0.0.1:{port}");
-    let pending = manager.create_authentication_session(&redirect_uri)?;
+    if let Some(account_id) = reconnect_account_id.as_deref() {
+        if state.database.google_account(account_id)?.is_none() {
+            return Err(AppError::new(
+                "google_account_not_found",
+                "That Google account is no longer available.",
+            ));
+        }
+    }
+    let pending =
+        manager.create_authentication_session_for_account(&redirect_uri, reconnect_account_id)?;
     let result = GoogleAuthStart {
         attempt_id: pending.attempt_id.clone(),
         expires_at: pending.expires_at.to_rfc3339(),
@@ -2172,6 +2186,7 @@ pub fn google_auth_status(state: State<'_, SharedState>) -> AppResult<GoogleAuth
         crate::auth::google::GoogleAuthManager::with_app_config(provider.clone(), &state.config)?;
     manager.status(
         &state.credentials,
+        &state.database,
         state.database.provider_account("gemini")?,
     )
 }
@@ -2179,30 +2194,57 @@ pub fn google_auth_status(state: State<'_, SharedState>) -> AppResult<GoogleAuth
 #[tauri::command]
 pub fn google_auth_set_cloud_project(
     project_id: String,
+    account_id: String,
     state: State<'_, SharedState>,
 ) -> AppResult<GoogleAccount> {
     let provider = state.config.provider("gemini")?.clone();
     crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
-        .set_cloud_project_id(&project_id, &state.credentials)
+        .set_cloud_project_id(
+            &project_id,
+            &account_id,
+            &state.credentials,
+            &state.database,
+        )
 }
 
 #[tauri::command]
-pub async fn google_auth_refresh(state: State<'_, SharedState>) -> AppResult<GoogleAccount> {
+pub async fn google_auth_refresh(
+    account_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<GoogleAccount> {
     let provider = state.config.provider("gemini")?.clone();
     crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
-        .refresh_account(&state.credentials, &state.database)
+        .refresh_account(&state.credentials, &state.database, &account_id)
         .await
 }
 
 #[tauri::command]
-pub async fn google_auth_logout(state: State<'_, SharedState>) -> AppResult<GoogleLogoutResult> {
+pub async fn google_auth_logout(
+    account_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<GoogleLogoutResult> {
     let provider = state.config.provider("gemini")?.clone();
     let revoked = crate::auth::google::GoogleAuthManager::with_app_config(provider, &state.config)?
-        .logout(&state.credentials, &state.database)
+        .logout(&state.credentials, &state.database, &account_id)
         .await?;
     Ok(GoogleLogoutResult {
         revocation_confirmed: revoked,
     })
+}
+
+#[tauri::command]
+pub fn google_auth_select_account(
+    account_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<GoogleAuthStatus> {
+    state.database.select_google_account(&account_id)?;
+    let provider = state.config.provider("gemini")?;
+    crate::auth::google::GoogleAuthManager::with_app_config(provider.clone(), &state.config)?
+        .status(
+            &state.credentials,
+            &state.database,
+            state.database.provider_account("gemini")?,
+        )
 }
 
 #[tauri::command]
