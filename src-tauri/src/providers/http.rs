@@ -13,6 +13,7 @@ pub struct HttpProvider {
     secret: Zeroizing<String>,
     client: reqwest::Client,
     chatgpt_plan: bool,
+    google_cloud_project: Option<String>,
 }
 
 impl HttpProvider {
@@ -33,9 +34,47 @@ impl HttpProvider {
         Self::with_mode(provider, Some(access_token), true)
     }
 
+    pub(crate) fn new_gemini_oauth(
+        provider: Provider,
+        access_token: String,
+        project_id: String,
+    ) -> AppResult<Self> {
+        let base_url = provider.base_url.as_deref().unwrap_or_default();
+        if provider.id != "gemini"
+            || provider.protocol != ProviderProtocol::Gemini
+            || base_url != "https://generativelanguage.googleapis.com/v1beta"
+            || project_id.trim().is_empty()
+        {
+            return Err(AppError::new(
+                "google_gemini_oauth_unavailable",
+                "Google Account requests are restricted to the official Gemini API and a configured Cloud project.",
+            ));
+        }
+        let mut transport = Self::with_mode(provider, Some(access_token), false)?;
+        transport.google_cloud_project = Some(project_id);
+        Ok(transport)
+    }
+
     #[cfg(test)]
     fn new_chatgpt_plan_for_test(provider: Provider, access_token: String) -> AppResult<Self> {
         Self::with_mode(provider, Some(access_token), true)
+    }
+
+    #[cfg(test)]
+    fn new_gemini_oauth_for_test(
+        provider: Provider,
+        access_token: String,
+        project_id: String,
+    ) -> AppResult<Self> {
+        if provider.id != "gemini" || provider.protocol != ProviderProtocol::Gemini {
+            return Err(AppError::new(
+                "provider_configuration",
+                "The Gemini OAuth test transport requires the Gemini provider.",
+            ));
+        }
+        let mut transport = Self::with_mode(provider, Some(access_token), false)?;
+        transport.google_cloud_project = Some(project_id);
+        Ok(transport)
     }
 
     fn with_mode(
@@ -60,6 +99,7 @@ impl HttpProvider {
             secret: Zeroizing::new(secret),
             client,
             chatgpt_plan,
+            google_cloud_project: None,
         })
     }
 }
@@ -84,7 +124,12 @@ impl LlmProvider for HttpProvider {
             ProviderProtocol::Anthropic => builder
                 .header("x-api-key", self.secret.as_str())
                 .header("anthropic-version", "2023-06-01"),
-            ProviderProtocol::Gemini => builder.header("x-goog-api-key", self.secret.as_str()),
+            ProviderProtocol::Gemini => match &self.google_cloud_project {
+                Some(project_id) => builder
+                    .bearer_auth(self.secret.as_str())
+                    .header("x-goog-user-project", project_id),
+                None => builder.header("x-goog-api-key", self.secret.as_str()),
+            },
             _ => builder.bearer_auth(self.secret.as_str()),
         };
         let mut response = builder.send().await.map_err(|error| {
@@ -140,7 +185,12 @@ impl LlmProvider for HttpProvider {
             ProviderProtocol::Anthropic => builder
                 .header("x-api-key", self.secret.as_str())
                 .header("anthropic-version", "2023-06-01"),
-            ProviderProtocol::Gemini => builder.header("x-goog-api-key", self.secret.as_str()),
+            ProviderProtocol::Gemini => match &self.google_cloud_project {
+                Some(project_id) => builder
+                    .bearer_auth(self.secret.as_str())
+                    .header("x-goog-user-project", project_id),
+                None => builder.header("x-goog-api-key", self.secret.as_str()),
+            },
             _ => builder.bearer_auth(self.secret.as_str()),
         };
         let mut response = builder.send().await.map_err(|error| {
@@ -345,5 +395,69 @@ mod tests {
         assert_eq!(payload["model"], "catalog-slug");
         assert_eq!(payload["store"], false);
         assert_eq!(payload["stream"], true);
+    }
+
+    #[tokio::test]
+    async fn google_account_transport_uses_bearer_and_selected_cloud_project() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut stream).await;
+            let body = concat!(
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}],\"role\":\"model\"}}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            request
+        });
+
+        let provider = Provider {
+            id: "gemini".into(),
+            name: "Google Gemini".into(),
+            protocol: ProviderProtocol::Gemini,
+            base_url: Some(format!("http://{address}/v1beta")),
+            models: vec![],
+            connected: true,
+        };
+        let transport = HttpProvider::new_gemini_oauth_for_test(
+            provider,
+            "test-google-access-token".into(),
+            "billing-project-123".into(),
+        )
+        .unwrap();
+        let messages = [AgentMessage::text(MessageRole::User, "Say hello")];
+        let (deltas, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let response = transport
+            .complete_stream(
+                ProviderRequest {
+                    model_id: "gemini-test-model",
+                    protocol: &ProviderProtocol::Gemini,
+                    messages: &messages,
+                    tools: &[],
+                },
+                deltas,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.content, "Hello");
+        assert_eq!(receiver.recv().await.as_deref(), Some("Hello"));
+
+        let request = server.await.unwrap();
+        let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+        let normalized_headers = headers.to_ascii_lowercase();
+        assert!(headers.starts_with(
+            "POST /v1beta/models/gemini-test-model:streamGenerateContent?alt=sse HTTP/1.1"
+        ));
+        assert!(normalized_headers.contains("authorization: bearer test-google-access-token"));
+        assert!(normalized_headers.contains("x-goog-user-project: billing-project-123"));
+        assert!(!normalized_headers.contains("x-goog-api-key"));
+        let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["contents"][0]["parts"][0]["text"], "Say hello");
     }
 }

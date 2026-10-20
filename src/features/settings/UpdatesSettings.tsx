@@ -3,6 +3,7 @@ import { AlertCircle, Check, Download, LoaderCircle, RefreshCw, ShieldCheck } fr
 import { command, desktopAvailable } from '../../lib/ipc';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
 import type { UpdatePreferences } from '../../types/domain';
+import { ReleaseNotes } from './ReleaseNotes';
 
 export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
   preferences: UpdatePreferences;
@@ -31,13 +32,27 @@ export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
     setSaving(true);
     setError(null);
     try {
-      const persisted = await command('save_update_preferences', { input: next });
+      const current = updateService.getPreferences();
+      const persisted = await command('save_update_preferences', { input: {
+        ...next,
+        deferredVersion: current.deferredVersion,
+        skippedVersion: current.skippedVersion,
+        remindAfter: current.remindAfter,
+        downloadRequestedVersion: current.downloadRequestedVersion,
+      } });
+      updateService.setPreferences(persisted);
       onSaved(persisted);
     } catch {
       setError('Update preferences could not be saved. Try again.');
     } finally {
       setSaving(false);
     }
+  }
+
+  async function showUpdateAgain() {
+    setError(null);
+    if (await updateService.showSkippedVersion()) onSaved(updateService.getPreferences());
+    else setError(updateService.getSnapshot().error ?? 'The update reminder could not be changed. Try again.');
   }
 
   const status = statusCopy(update, supported, online);
@@ -83,9 +98,13 @@ export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
         <div><strong>{status.title}</strong><span>{status.description}</span></div>
       </div>
 
-      {update.notes && update.availableVersion && <div className="about-release-notes">
-        <div><strong>JevCode v{update.availableVersion}</strong>{update.publishedAt && <time dateTime={update.publishedAt}>{formatReleaseDate(update.publishedAt)}</time>}</div>
-        <p>{update.notes}</p>
+      {update.availableVersion && update.phase !== 'up_to_date' && <ReleaseNotes version={update.availableVersion} body={update.notes} publishedAt={update.publishedAt} className="about-release-notes" />}
+
+      {(update.deferredVersion || update.skippedVersion) && <div className="update-deferral-row" role="status">
+        <div><strong>{update.skippedVersion ? `v${update.skippedVersion} is skipped` : `Reminder set for v${update.deferredVersion}`}</strong>
+          <span>{update.skippedVersion ? 'This version will stay hidden until you ask to see it again.' : `JevCode will remind you after ${formatReminderDate(update.remindAfter)}.`}</span>
+        </div>
+        <button type="button" className="account-button quiet" onClick={() => void showUpdateAgain()}>Show this update now</button>
       </div>}
 
       {update.phase === 'downloading' && <div className="about-download-progress" role="status">
@@ -101,9 +120,9 @@ export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
           {update.phase === 'checking' ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
           Check for Updates
         </button>
-        {update.phase === 'available' && <button className="account-button quiet" onClick={() => void updateService.downloadAvailableUpdate()} disabled={!online}><Download size={14} />Download</button>}
-        {update.phase === 'ready' && <button className="account-button connect" onClick={() => void updateService.installDownloadedUpdate()} disabled={agentActive}><Download size={14} />Install and restart</button>}
-        {update.phase === 'restart_required' && <button className="account-button connect" onClick={() => void updateService.restartApplication()} disabled={agentActive}><RefreshCw size={14} />Restart now</button>}
+        {update.phase === 'available' && <button className="account-button quiet" onClick={() => void updateService.downloadAvailableUpdate()} disabled={!online}><Download size={14} />Update Now</button>}
+        {update.phase === 'ready' && <button className="account-button connect" onClick={() => void updateService.installDownloadedUpdate()} disabled={agentActive}><RefreshCw size={14} />Restart and Update</button>}
+        {update.phase === 'restart_required' && <button className="account-button connect" onClick={() => void updateService.restartApplication()} disabled={agentActive}><RefreshCw size={14} />Restart and Update</button>}
       </div>
       {error && <p className="about-update-error" role="alert">{error}</p>}
       {supported && !online && <p className="about-help">You’re offline. Reconnect to check for or download an update.</p>}
@@ -125,7 +144,7 @@ function statusCopy(update: UpdateSnapshot, supported: boolean, online: boolean)
   switch (update.phase) {
     case 'disabled': return { title: 'Updates unavailable in development', description: 'Run an installed release build to check for signed updates.' };
     case 'checking': return { title: 'Checking for updates', description: 'JevCode is checking the stable release channel in the background.' };
-    case 'available': return { title: `Version ${update.availableVersion} is available`, description: 'Download the signed release when you’re ready.' };
+    case 'available': return { title: `Version ${update.availableVersion} is available`, description: 'Update now, or choose Remind Me Later from the update notice.' };
     case 'downloading': return { title: 'Downloading update', description: 'The download runs in the background. JevCode will wait for your confirmation before installation.' };
     case 'ready': return { title: 'Update ready', description: 'The signed package is downloaded. Installing requires an explicit action and an idle agent.' };
     case 'installing': return { title: 'Installing update', description: 'The verified package is being applied.' };
@@ -138,9 +157,10 @@ function statusCopy(update: UpdateSnapshot, supported: boolean, online: boolean)
   }
 }
 
-function formatReleaseDate(value: string): string {
+function formatReminderDate(value: string | null): string {
+  if (!value) return 'later';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
+  return Number.isNaN(date.getTime()) ? 'later' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
 
 function formatBytes(bytes: number): string {

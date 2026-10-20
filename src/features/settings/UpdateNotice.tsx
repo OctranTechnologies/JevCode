@@ -1,45 +1,73 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, Download, LoaderCircle, RefreshCw, RotateCw, X } from 'lucide-react';
+import { AlertCircle, Download, LoaderCircle, RefreshCw, RotateCw } from 'lucide-react';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
+import { ReleaseNotes } from './ReleaseNotes';
 
 export function UpdateNotice({ agentActive }: { agentActive: boolean }) {
   const [update, setUpdate] = useState<UpdateSnapshot>(() => updateService.getSnapshot());
-  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => updateService.subscribe(setUpdate), []);
+  useEffect(() => updateService.subscribe(snapshot => {
+    setUpdate(snapshot);
+    if (!snapshot.error) setActionError(null);
+  }), []);
 
-  if (!['available', 'downloading', 'ready', 'restart_required'].includes(update.phase)) return null;
+  if (!updateService.shouldShowNotice()) return null;
   const version = update.availableVersion;
-  if (update.phase === 'available' && version && dismissedVersion === version) return null;
-
   const progress = update.contentLength && update.contentLength > 0
     ? Math.min(100, Math.round((update.downloadedBytes / update.contentLength) * 100))
     : null;
   const ready = update.phase === 'ready';
   const needsRestart = update.phase === 'restart_required';
   const downloading = update.phase === 'downloading';
+  const actionBlocked = agentActive && (ready || needsRestart);
+
+  async function remindLater() {
+    setActionError(null);
+    if (!await updateService.remindMeLater()) setActionError(updateService.getSnapshot().error ?? 'The reminder could not be saved. Try again.');
+  }
+
+  async function skipVersion() {
+    setActionError(null);
+    if (!await updateService.skipAvailableVersion()) setActionError(updateService.getSnapshot().error ?? 'The skipped version could not be saved. Try again.');
+  }
+
+  async function updateNow() {
+    setActionError(null);
+    await updateService.downloadAvailableUpdate();
+  }
+
+  async function restartAndUpdate() {
+    setActionError(null);
+    if (ready) await updateService.installDownloadedUpdate();
+    else await updateService.restartApplication();
+  }
 
   return <aside className="update-notice" role="status" aria-live="polite">
     <div className="update-notice-icon" aria-hidden="true">
       {downloading ? <LoaderCircle size={15} className="spin" /> : needsRestart ? <RotateCw size={15} /> : <Download size={15} />}
     </div>
     <div className="update-notice-copy">
-      <strong>{ready || needsRestart ? 'Update ready' : downloading ? `Downloading JevCode v${version}` : `JevCode v${version} is available`}</strong>
+      <strong>{ready || needsRestart ? `Update v${version} ready` : downloading ? `Updating JevCode to v${version}` : `JevCode v${version} is available`}</strong>
       {downloading ? <>
-        <span>{progress === null ? 'Downloading in the background…' : `${progress}% · ${formatBytes(update.downloadedBytes)}${update.contentLength === null ? ' downloaded' : ` of ${formatBytes(update.contentLength)}`}`}</span>
+        <span>{progress === null ? 'Downloading the signed update…' : `${progress}% · ${formatBytes(update.downloadedBytes)}${update.contentLength === null ? ' downloaded' : ` of ${formatBytes(update.contentLength)}`}`}</span>
         <progress max={100} value={progress ?? undefined} aria-label="Update download progress" />
       </> : ready ? <span>{agentActive ? 'Finish the active task before installing and restarting.' : 'The signed download is ready to install.'}</span>
-        : needsRestart ? <span>{agentActive ? 'Finish the active task before restarting JevCode.' : 'Restart JevCode to finish installing the update.'}</span>
-          : <span>{update.notes?.split(/\r?\n/)[0]?.slice(0, 130) || 'A signed release is ready to download.'}</span>}
-      {(ready || needsRestart) && agentActive && <span className="update-notice-hold"><AlertCircle size={12} />Restart waits until the agent is idle.</span>}
+        : needsRestart ? <span>{agentActive ? 'Finish the active task before restarting JevCode.' : 'The update is installed and ready to restart.'}</span>
+          : <span>Review the release notes before updating.</span>}
+      {version && (update.notes || update.phase === 'available') && <ReleaseNotes version={version} body={update.notes} publishedAt={update.publishedAt} className="update-notice-notes" />}
+      {actionBlocked && <span className="update-notice-hold"><AlertCircle size={12} />The agent is working. JevCode will wait before restarting.</span>}
+      {actionError && <span className="update-notice-error" role="alert">{actionError}</span>}
     </div>
     <div className="update-notice-actions">
       {update.phase === 'available' && <>
-        <button type="button" className="update-notice-dismiss" onClick={() => { if (version) setDismissedVersion(version); }} aria-label="Later" title="Later"><X size={14} /></button>
-        <button type="button" className="account-button connect" onClick={() => void updateService.downloadAvailableUpdate()}><Download size={13} />Download</button>
+        <button type="button" className="account-button quiet" onClick={() => void remindLater()}>Remind Me Later</button>
+        <button type="button" className="account-button connect" onClick={() => void updateNow()}><Download size={13} />Update Now</button>
+        <button type="button" className="update-notice-skip" onClick={() => void skipVersion()}>Skip this version</button>
       </>}
-      {ready && <button type="button" className="account-button connect" disabled={agentActive} onClick={() => void updateService.installDownloadedUpdate()}><Download size={13} />Install and restart</button>}
-      {needsRestart && <button type="button" className="account-button connect" disabled={agentActive} onClick={() => void updateService.restartApplication()}><RefreshCw size={13} />Restart now</button>}
+      {(ready || needsRestart) && <button type="button" className="account-button connect" disabled={agentActive} onClick={() => void restartAndUpdate()}>
+        {ready ? <Download size={13} /> : <RefreshCw size={13} />}Restart and Update
+      </button>}
     </div>
   </aside>;
 }

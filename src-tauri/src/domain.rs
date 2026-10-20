@@ -110,6 +110,14 @@ pub struct UpdatePreferences {
     pub automatically_download: bool,
     #[serde(default)]
     pub channel: UpdateChannel,
+    #[serde(default)]
+    pub deferred_version: Option<String>,
+    #[serde(default)]
+    pub skipped_version: Option<String>,
+    #[serde(default)]
+    pub remind_after: Option<String>,
+    #[serde(default)]
+    pub download_requested_version: Option<String>,
 }
 
 impl Default for UpdatePreferences {
@@ -118,6 +126,10 @@ impl Default for UpdatePreferences {
             automatically_check: true,
             automatically_download: false,
             channel: UpdateChannel::Stable,
+            deferred_version: None,
+            skipped_version: None,
+            remind_after: None,
+            download_requested_version: None,
         }
     }
 }
@@ -806,6 +818,126 @@ pub struct OpenAiAuthStatus {
     pub chatgpt: OpenAiChatGptAuthStatus,
 }
 
+/// Public Google authentication mode. Vertex AI is reserved for a later provider
+/// transport and is never inferred from local gcloud state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAuthType {
+    GoogleOAuth,
+    GeminiApiKey,
+    VertexAdc,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAccountType {
+    Individual,
+    Workspace,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleCodeAssistAvailability {
+    NotConnected,
+    ConsumerAccessRetired,
+    ProjectRequired,
+    EligibilityUnknown,
+}
+
+/// Account classification derived only from Google's verified OIDC identity.
+/// It does not claim that an account has a Code Assist license or entitlement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleCodeAssistStatus {
+    pub account_type: GoogleAccountType,
+    pub availability: GoogleCodeAssistAvailability,
+    pub requires_cloud_project: bool,
+    pub cloud_project_id: Option<String>,
+    /// Google does not expose this tier through the documented OAuth identity flow.
+    pub user_tier: Option<String>,
+    /// JevCode deliberately keeps this false until Google documents a supported
+    /// third-party Code Assist inference API.
+    pub inference_available: bool,
+}
+
+/// Safe Google account metadata. OAuth token values are intentionally absent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAccount {
+    pub id: String,
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub auth_type: GoogleAuthType,
+    #[serde(default)]
+    pub account_type: GoogleAccountType,
+    #[serde(default)]
+    pub cloud_project_id: Option<String>,
+    pub connected: bool,
+    pub requires_reconnect: bool,
+    pub expires_at: Option<String>,
+    pub granted_scopes: Vec<String>,
+}
+
+/// Safe status returned to the webview. Tokens remain in the native keychain.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAuthStatus {
+    pub account: Option<GoogleAccount>,
+    #[serde(default)]
+    pub accounts: Vec<GoogleAccount>,
+    #[serde(default)]
+    pub selected_account_id: Option<String>,
+    pub code_assist: GoogleCodeAssistStatus,
+    pub selected_auth_type: Option<GoogleAuthType>,
+    pub api_key_connected: bool,
+    pub oauth_available: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+/// Safe handle for a native Google browser flow.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAuthStart {
+    pub attempt_id: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAuthAttemptState {
+    Connected,
+    Denied,
+    Cancelled,
+    TimedOut,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleAuthFailureReason {
+    BrowserUnavailable,
+    PermissionDenied,
+    NetworkError,
+    ProviderOutage,
+    OauthFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleAuthAttemptEvent {
+    pub attempt_id: String,
+    pub state: GoogleAuthAttemptState,
+    pub failure_reason: Option<GoogleAuthFailureReason>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleLogoutResult {
+    pub revocation_confirmed: bool,
+}
+
 /// Safe handle for an in-progress native sign-in attempt. OAuth values and the
 /// authorization URL intentionally never cross the IPC boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -919,6 +1051,20 @@ impl PermissionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_preferences_accept_legacy_saved_values() {
+        let legacy: UpdatePreferences = serde_json::from_str(
+            r#"{"automaticallyCheck":false,"automaticallyDownload":true,"channel":"stable"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(legacy.deferred_version, None);
+        assert_eq!(legacy.skipped_version, None);
+        assert!(!legacy.automatically_check);
+        assert!(legacy.automatically_download);
+    }
+
     #[test]
     fn shared_typescript_fixture_roundtrips_without_field_drift() {
         let fixture: Value =

@@ -2,9 +2,10 @@ import {
   Archive, BarChart3, ChevronDown, ChevronsLeft, Copy, ExternalLink, Folder, FolderPlus, GitBranch,
   GitFork, Layers3, MessageSquare, MoreHorizontal, Pencil, Plus, Puzzle, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Brand } from '../../components/Brand';
 import { displayPath } from '../../lib/paths';
+import { updateService, type UpdateSnapshot } from '../../services/updater';
 import type { AgentSession, Project, Provider } from '../../types/domain';
 import { primaryShortcutModifier } from '../../lib/shortcuts';
 import type { View } from './Sidebar';
@@ -43,6 +44,10 @@ export function WorkspaceSidebar({
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
   const modifier = primaryShortcutModifier;
   const [taskMenu, setTaskMenu] = useState<string | null>(null);
+  const [, setUpdate] = useState<UpdateSnapshot>(() => updateService.getSnapshot());
+
+  useEffect(() => updateService.subscribe(setUpdate), []);
+  const updatePending = updateService.hasPendingUpdate();
   const recentProjects = projects.filter(project => project.isRecent).slice(0, 5);
   const visibleTasks = sessions.filter(session => showArchived ? !!session.archivedAt : !session.archivedAt);
   const projectRow = (project: Project, prefix: string) => {
@@ -115,7 +120,7 @@ export function WorkspaceSidebar({
 
     <div className="sidebar-bottom">
       <nav className="sidebar-utilities" aria-label="Settings and reports">
-        <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={view === 'providers' || view === 'updates' || view === 'about'} onClick={() => onView('providers')} />
+        <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={view === 'providers' || view === 'updates' || view === 'about'} hasUpdate={updatePending} onClick={() => onView('providers')} />
         <SidebarAction icon={<ShieldCheck size={16} />} label="Permissions" active={view === 'permissions'} onClick={() => onView('permissions')} />
         <SidebarAction icon={<Puzzle size={16} />} label="MCP" active={view === 'mcp'} onClick={() => onView('mcp')} />
         <SidebarAction icon={<BarChart3 size={16} />} label="Usage" active={view === 'usage'} onClick={() => onView('usage')} />
@@ -143,8 +148,9 @@ function TaskState({ status }: { status: AgentSession['status'] }) {
   return <MessageSquare size={14} />;
 }
 
-function SidebarAction({ icon, label, active, onClick }: { icon: ReactNode; label: string; active: boolean; onClick: () => void }) {
-  return <button className={`sidebar-row utility-row${active ? ' is-active' : ''}`} onClick={onClick} title={label} aria-current={active ? 'page' : undefined}>
-    {icon}<span>{label}</span>
+function SidebarAction({ icon, label, active, hasUpdate = false, onClick }: { icon: ReactNode; label: string; active: boolean; hasUpdate?: boolean; onClick: () => void }) {
+  const title = hasUpdate ? `${label} · update available` : label;
+  return <button className={`sidebar-row utility-row${active ? ' is-active' : ''}`} onClick={onClick} title={title} aria-label={title} aria-current={active ? 'page' : undefined}>
+    {icon}<span>{label}</span>{hasUpdate && <span className="sidebar-update-dot" aria-hidden="true" />}
   </button>;
 }

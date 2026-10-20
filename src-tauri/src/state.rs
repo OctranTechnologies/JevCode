@@ -28,6 +28,7 @@ pub struct AppState {
     pub extensions: ExtensionRegistry,
     pub runs: Mutex<HashMap<String, watch::Sender<bool>>>,
     openai_auth_attempts: Mutex<HashMap<String, OpenAiAuthAttempt>>,
+    pub google_auth_attempts: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 
 impl AppState {
@@ -42,6 +43,7 @@ impl AppState {
             extensions,
             runs: Mutex::new(Default::default()),
             openai_auth_attempts: Mutex::new(Default::default()),
+            google_auth_attempts: Mutex::new(Default::default()),
         }
     }
 
@@ -127,6 +129,39 @@ impl AppState {
 
     pub fn release_openai_auth_attempt(&self, id: &str) {
         if let Ok(mut attempts) = self.openai_auth_attempts.lock() {
+            attempts.remove(id);
+        }
+    }
+
+    pub fn register_google_auth_attempt(
+        &self,
+        id: &str,
+        cancel: watch::Sender<bool>,
+    ) -> AppResult<()> {
+        self.google_auth_attempts
+            .lock()
+            .map_err(AppError::internal)?
+            .insert(id.to_owned(), cancel);
+        Ok(())
+    }
+
+    pub fn cancel_google_auth_attempt(&self, id: &str) -> AppResult<()> {
+        let attempts = self
+            .google_auth_attempts
+            .lock()
+            .map_err(AppError::internal)?;
+        let cancel = attempts.get(id).ok_or_else(|| {
+            AppError::new(
+                "auth_attempt_not_found",
+                "This sign-in attempt is no longer active.",
+            )
+        })?;
+        let _ = cancel.send(true);
+        Ok(())
+    }
+
+    pub fn release_google_auth_attempt(&self, id: &str) {
+        if let Ok(mut attempts) = self.google_auth_attempts.lock() {
             attempts.remove(id);
         }
     }

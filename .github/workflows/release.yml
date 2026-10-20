@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tauri-release-${{ github.ref }}
+  group: tauri-release
   cancel-in-progress: false
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Require a stable tag matching the Tauri version
+      - name: Require a stable tag matching every app version file
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -28,25 +28,63 @@ jobs:
             exit 1
           fi
 
-          APP_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          if [[ "$RELEASE_TAG" != "v$APP_VERSION" ]]; then
-            echo "::error::Tag $RELEASE_TAG does not match src-tauri/tauri.conf.json version $APP_VERSION."
-            exit 1
-          fi
+          node scripts/release.mjs verify "$RELEASE_TAG"
+
+  quality:
+    name: Run release quality gates
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Run formatting, lint, type, frontend, Rust, and Clippy checks
+        run: npm run check
 
   prepare:
     name: Prepare draft release
-    needs: validate
+    needs: [validate, quality]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
+      - name: Require the updater signing key before creating a draft
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::Configure the TAURI_SIGNING_PRIVATE_KEY repository secret before creating a release tag."
+            exit 1
+          fi
+
       - name: Create or reuse the draft for this tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          releases="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+          node scripts/validate-release-order.mjs \
+            --releases "$RUNNER_TEMP/releases.json" \
+            --tag "$RELEASE_TAG"
+
+          releases="$(cat "$RUNNER_TEMP/releases.json")"
           matching="$(jq -c --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)]' <<< "$releases")"
           count="$(jq 'length' <<< "$matching")"
 
@@ -57,7 +95,11 @@ jobs:
               -f body="Installers and signed updater packages for JevCode $RELEASE_TAG." \
               -F draft=true \
               -F prerelease=false > /dev/null
-          elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]]; then
+          elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]] && [[ "$(jq -r '.[0].prerelease' <<< "$matching")" == "false" ]]; then
+            while IFS= read -r asset_id; do
+              [[ -n "$asset_id" ]] || continue
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done < <(jq -r '.[0].assets[]?.id' <<< "$matching")
             echo "Reusing the existing draft release for $RELEASE_TAG."
           else
             echo "::error::A non-draft release already exists for $RELEASE_TAG, or multiple releases use this tag. Refusing to replace a published release."
@@ -71,6 +113,7 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - platform: windows-latest
@@ -78,16 +121,6 @@ jobs:
             os: windows
             rust-target: ""
             args: ""
-          - platform: macos-latest
-            label: macOS Apple Silicon
-            os: macos
-            rust-target: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin
-          - platform: macos-latest
-            label: macOS Intel
-            os: macos
-            rust-target: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
           - platform: ubuntu-24.04
             label: Linux x64
             os: linux
@@ -102,6 +135,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev patchelf xdg-utils
+
+      - name: Enable Windows Script Host for MSI packaging
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $capability = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'VBSCRIPT*' } | Select-Object -First 1
+          if (-not $capability) {
+            throw 'The Windows runner does not expose the VBScript capability required by WiX MSI packaging.'
+          }
+          if ($capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $capability.Name | Out-Null
+          }
+          $installedCapability = Get-WindowsCapability -Online -Name $capability.Name
+          if ($installedCapability.State -ne 'Installed') {
+            throw 'The VBScript capability required by WiX MSI packaging could not be installed.'
+          }
 
       - uses: actions/setup-node@v6
         with:
@@ -147,6 +196,7 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: false
           retryAttempts: 3
           args: ${{ matrix.args }}
 
@@ -154,39 +204,44 @@ jobs:
         shell: bash
         env:
           PLATFORM_KIND: ${{ matrix.os }}
+          RUST_TARGET: ${{ matrix.rust-target }}
         run: |
-          bundle_dir="src-tauri/target/release/bundle"
+          if [[ -n "$RUST_TARGET" ]]; then
+            bundle_dir="src-tauri/target/$RUST_TARGET/release/bundle"
+          else
+            bundle_dir="src-tauri/target/release/bundle"
+          fi
           if [[ ! -d "$bundle_dir" ]]; then
-            echo "::error::Tauri bundle output directory is missing."
+            echo "::error::Tauri bundle output directory is missing: $bundle_dir"
             exit 1
           fi
 
-          signature="$(find "$bundle_dir" -type f -name '*.sig' -print -quit)"
-          if [[ -z "$signature" ]]; then
-            echo "::error::No updater signature was generated for $PLATFORM_KIND. Check the signing key and Tauri bundle configuration."
-            exit 1
-          fi
+          require_file() {
+            local pattern="$1"
+            if ! find "$bundle_dir" -type f -iname "$pattern" -print -quit | grep -q .; then
+              echo "::error::Required updater or installer artifact '$pattern' is missing for $PLATFORM_KIND."
+              exit 1
+            fi
+          }
 
           case "$PLATFORM_KIND" in
             windows)
-              installer="$(find "$bundle_dir" -type f \( -iname '*.msi' -o -iname '*-setup.exe' \) -print -quit)"
-              ;;
-            macos)
-              installer="$(find "$bundle_dir" -type f -iname '*.dmg' -print -quit)"
+              require_file '*.msi'
+              require_file '*-setup.exe'
+              require_file '*.msi.sig'
+              require_file '*-setup.exe.sig'
               ;;
             linux)
-              installer="$(find "$bundle_dir" -type f \( -iname '*.deb' -o -iname '*.appimage' \) -print -quit)"
+              require_file '*.AppImage'
+              require_file '*.AppImage.sig'
+              require_file '*.deb'
+              require_file '*.rpm'
               ;;
             *)
               echo "::error::Unexpected release platform: $PLATFORM_KIND"
               exit 1
               ;;
           esac
-
-          if [[ -z "$installer" ]]; then
-            echo "::error::No expected installer was generated for $PLATFORM_KIND."
-            exit 1
-          fi
 
   publish:
     name: Validate and publish stable release
@@ -195,49 +250,55 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository for release validation
+        uses: actions/checkout@v7
+
       - name: Validate complete draft release before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          releases="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
-          release="$(jq -ce --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag and .draft == true)] | if length == 1 then .[0] else error("expected exactly one draft release for the tag") end' <<< "$releases")"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+          matching="$(jq -c --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)]' "$RUNNER_TEMP/releases.json")"
+          count="$(jq 'length' <<< "$matching")"
+          if [[ "$count" -ne 1 ]]; then
+            echo "::error::Expected exactly one draft release for $RELEASE_TAG; found $count. It will remain unpublished."
+            exit 1
+          fi
+
+          release="$(jq -c '.[0]' <<< "$matching")"
+          jq -e --arg tag "$RELEASE_TAG" 'select(.tag_name == $tag and .draft == true and .prerelease == false)' <<< "$release" > /dev/null || {
+            echo "::error::Expected one stable draft release for $RELEASE_TAG. It will remain unpublished."
+            exit 1
+          }
           release_id="$(jq -r '.id' <<< "$release")"
           assets="$(jq -c '.assets' <<< "$release")"
+          printf '%s' "$assets" > "$RUNNER_TEMP/release-assets.json"
 
           jq -e '
             any(.[]; .name == "latest.json") and
-            any(.[]; ((.name | ascii_downcase | endswith(".msi")) or (.name | ascii_downcase | endswith("-setup.exe")))) and
-            any(.[]; .name | ascii_downcase | endswith(".dmg")) and
-            any(.[]; ((.name | ascii_downcase | endswith(".deb")) or (.name | ascii_downcase | endswith(".appimage")))) and
-            (map(select(.name | ascii_downcase | endswith(".sig"))) | length >= 4)
+            any(.[]; .name | ascii_downcase | endswith(".msi")) and
+            any(.[]; .name | ascii_downcase | endswith("-setup.exe")) and
+            any(.[]; .name | ascii_downcase | endswith(".deb")) and
+            any(.[]; .name | ascii_downcase | endswith(".rpm")) and
+            any(.[]; .name | ascii_downcase | endswith(".appimage")) and
+            (map(select(.name | ascii_downcase | endswith(".sig"))) | length >= 5)
           ' <<< "$assets" > /dev/null || {
-            echo "::error::Draft release is missing latest.json, a Windows/macOS/Linux installer, or one of the four platform signatures. It will remain unpublished."
+            echo "::error::Draft release is missing latest.json, one of the distributed installers, or one of the required updater signatures. It will remain unpublished."
             exit 1
           }
 
           manifest_id="$(jq -r '.[] | select(.name == "latest.json") | .id' <<< "$assets")"
           gh api \
             --header "Accept: application/octet-stream" \
-            --output "$RUNNER_TEMP/latest.json" \
-            "repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id"
+            "repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id" > "$RUNNER_TEMP/latest.json"
 
-          jq -e \
-            --arg version "${RELEASE_TAG#v}" \
-            --argjson assets "$assets" '
-              .version == $version and
-              ((.platforms) as $platforms |
-                all(["windows-x86_64", "darwin-aarch64", "darwin-x86_64", "linux-x86_64"][];
-                  . as $target |
-                  ($platforms[$target] // null) as $entry |
-                  $entry != null and
-                  (if ($entry.url | type) == "string" then ($entry.url | length) > 0 else false end) and
-                  (if ($entry.signature | type) == "string" then ($entry.signature | length) >= 40 else false end) and
-                  any($assets[]; .url == $entry.url)
-                )
-              )
-            ' "$RUNNER_TEMP/latest.json" > /dev/null || {
-              echo "::error::latest.json does not contain valid signed assets for Windows x64, macOS Intel/Apple Silicon, and Linux x64. The draft will remain unpublished."
+          node scripts/validate-updater-release.mjs \
+            --manifest "$RUNNER_TEMP/latest.json" \
+            --assets "$RUNNER_TEMP/release-assets.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" || {
+              echo "::error::latest.json does not contain valid signed updater assets for Windows x64 and Linux x64. The draft will remain unpublished."
               exit 1
             }
 

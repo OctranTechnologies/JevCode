@@ -72,6 +72,19 @@ export interface OpenAILogoutResult { revocationConfirmed: boolean }
 export type OpenAIAuthAttemptState = 'callback_received' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
 export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'callback_rejected' | 'authorization_code_rejected' | 'authorization_exchange_rejected' | 'identity_verification_failed' | 'invalid_response' | 'local_failure' | 'secure_storage_unavailable' | 'account_mismatch' | 'account_already_connected' | 'configuration_error' | 'subscription_unavailable' | 'oauth_failure';
 export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }
+export type GoogleAuthType = 'google_oauth' | 'gemini_api_key' | 'vertex_adc';
+/** Safe account metadata only. OAuth tokens exist only in the native Rust session type. */
+export type GoogleAccountType = 'individual' | 'workspace' | 'unknown';
+export type GoogleCodeAssistAvailability = 'not_connected' | 'consumer_access_retired' | 'project_required' | 'eligibility_unknown';
+export interface GoogleCodeAssistStatus { accountType: GoogleAccountType; availability: GoogleCodeAssistAvailability; requiresCloudProject: boolean; cloudProjectId: string | null; userTier: string | null; inferenceAvailable: boolean }
+export interface GoogleAccount { id: string; email: string | null; displayName: string | null; authType: GoogleAuthType; accountType: GoogleAccountType; cloudProjectId: string | null; connected: boolean; requiresReconnect: boolean; expiresAt: string | null; grantedScopes: string[] }
+export interface GoogleAuthStatus { account: GoogleAccount | null; accounts: GoogleAccount[]; selectedAccountId: string | null; codeAssist: GoogleCodeAssistStatus; selectedAuthType: GoogleAuthType | null; apiKeyConnected: boolean; oauthAvailable: boolean; unavailableReason: string | null }
+/** Opaque native flow handle; the authorization URL and PKCE values are never exposed. */
+export interface GoogleAuthStart { attemptId: string; expiresAt: string }
+export interface GoogleLogoutResult { revocationConfirmed: boolean }
+export type GoogleAuthAttemptState = 'connected' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
+export type GoogleAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
+export interface GoogleAuthAttemptEvent { attemptId: string; state: GoogleAuthAttemptState; failureReason: GoogleAuthFailureReason | null }
 export interface Model {
   id: string;
   provider: string;
@@ -92,8 +105,8 @@ export type ModelCapability = 'tools' | 'vision' | 'reasoning' | 'streaming';
 export type ModelStatus = 'available' | 'deprecated' | 'unavailable';
 export interface ModelReference { providerId: string; modelId: string }
 export interface ModelPreferences { defaultModel: ModelReference | null; favorites: ModelReference[]; recent: ModelReference[] }
-export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable' }
-export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable' };
+export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable'; deferredVersion: string | null; skippedVersion: string | null; remindAfter: string | null; downloadRequestedVersion: string | null }
+export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface AgentSession {
   id: string;
   projectId: string;

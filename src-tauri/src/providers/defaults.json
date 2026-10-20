@@ -1,5 +1,7 @@
 {
   "maxToolRounds": 8,
+  "googleOAuthClientId": null,
+  "googleCloudProjectId": null,
   "providers": [
     { "id": "preview", "name": "Local preview", "protocol": "preview", "baseUrl": null, "models": [{ "id": "workspace-explorer", "provider": "preview", "displayName": "Workspace explorer", "capabilities": ["tools", "streaming"], "supportsTools": true, "supportsVision": false, "supportsReasoning": false, "supportsStreaming": true, "contextWindow": null, "inputPrice": null, "outputPrice": null, "status": "available" }] },
     { "id": "openai", "name": "OpenAI", "protocol": "open_ai_responses", "baseUrl": "https://api.openai.com/v1", "models": [] },

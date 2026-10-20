@@ -1,4 +1,6 @@
 use crate::error::{AppError, AppResult};
+use sha2::{Digest, Sha256};
+use zeroize::Zeroize;
 
 /// Only Rust may retrieve secrets. IPC exposes presence, save, and delete.
 pub struct CredentialStore;
@@ -16,6 +18,19 @@ impl CredentialStore {
         match Self::entry(provider_id)?.get_password() {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(AppError::new(
+                "keychain",
+                "Could not read the OS credential store. Unlock your keychain and retry.",
+            )),
+        }
+    }
+    pub fn has(&self, provider_id: &str) -> AppResult<bool> {
+        match Self::entry(provider_id)?.get_password() {
+            Ok(mut secret) => {
+                secret.zeroize();
+                Ok(true)
+            }
+            Err(keyring::Error::NoEntry) => Ok(false),
             Err(_) => Err(AppError::new(
                 "keychain",
                 "Could not read the OS credential store. Unlock your keychain and retry.",
@@ -61,6 +76,86 @@ impl CredentialStore {
     #[allow(dead_code)]
     pub(crate) fn delete_openai_session(&self, account_id: &str) -> AppResult<()> {
         delete_openai_session_with(&OsSessionCredentialBackend, account_id)
+    }
+
+    /// Store a Google OAuth session as one native credential. The serialized
+    /// value is never returned by a Tauri command or written to SQLite.
+    pub(crate) fn save_google_session(&self, account_id: &str, session: &str) -> AppResult<()> {
+        if session.trim().is_empty() || session.len() > 65_536 {
+            return Err(AppError::new(
+                "invalid_input",
+                "The Google session record is invalid or too large.",
+            ));
+        }
+        Self::google_session_entry(account_id)?
+            .set_password(session)
+            .map_err(|_| {
+                AppError::new(
+                    "keychain",
+                    "Could not save the Google session to the OS credential store.",
+                )
+            })
+    }
+
+    pub(crate) fn get_google_session(&self, account_id: &str) -> AppResult<Option<String>> {
+        match Self::google_session_entry(account_id)?.get_password() {
+            Ok(session) => Ok(Some(session)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(AppError::new(
+                "keychain",
+                "Could not read the Google session from the OS credential store.",
+            )),
+        }
+    }
+
+    pub(crate) fn delete_google_session(&self, account_id: &str) -> AppResult<()> {
+        match Self::google_session_entry(account_id)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(AppError::new(
+                "keychain",
+                "Could not remove the Google session from the OS credential store.",
+            )),
+        }
+    }
+
+    pub(crate) fn get_legacy_google_session(&self) -> AppResult<Option<String>> {
+        match Self::legacy_google_session_entry()?.get_password() {
+            Ok(session) => Ok(Some(session)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(_) => Err(AppError::new(
+                "keychain",
+                "Could not read the Google session from the OS credential store.",
+            )),
+        }
+    }
+
+    pub(crate) fn delete_legacy_google_session(&self) -> AppResult<()> {
+        match Self::legacy_google_session_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err(AppError::new(
+                "keychain",
+                "Could not remove the legacy Google session from the OS credential store.",
+            )),
+        }
+    }
+
+    fn google_session_entry(account_id: &str) -> AppResult<keyring::Entry> {
+        let account_key = google_session_account_key(account_id)?;
+        keyring::Entry::new("dev.jevcode.desktop.google", &account_key).map_err(|_| {
+            AppError::new(
+                "keychain",
+                "The OS credential store is unavailable. Unlock your keychain and retry.",
+            )
+        })
+    }
+
+    fn legacy_google_session_entry() -> AppResult<keyring::Entry> {
+        keyring::Entry::new("dev.jevcode.desktop.google", "gemini.oauth.session").map_err(|_| {
+            AppError::new(
+                "keychain",
+                "The OS credential store is unavailable. Unlock your keychain and retry.",
+            )
+        })
     }
 
     #[cfg(test)]
@@ -467,6 +562,27 @@ mod session_storage_tests {
     }
 }
 
+fn google_session_account_key(account_id: &str) -> AppResult<String> {
+    if account_id.trim().is_empty()
+        || account_id.len() > 512
+        || account_id.chars().any(char::is_control)
+    {
+        return Err(AppError::new(
+            "invalid_input",
+            "The Google account identifier is invalid.",
+        ));
+    }
+    // OIDC subject values do not need to appear in the user's keychain labels.
+    Ok(format!(
+        "gemini.oauth.{}",
+        format_digest(Sha256::digest(account_id.as_bytes()).as_slice())
+    ))
+}
+
+fn format_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::CredentialStore;
@@ -478,5 +594,16 @@ mod tests {
         assert!(
             CredentialStore::openai_session_entry("550e8400-e29b-41d4-a716-446655440000").is_ok()
         );
+    }
+
+    #[test]
+    fn google_oauth_session_keychain_entry_is_separate_from_api_keys() {
+        assert!(CredentialStore::google_session_entry("google-subject").is_ok());
+        assert!(CredentialStore::google_session_entry("").is_err());
+        let first = super::google_session_account_key("subject-one").unwrap();
+        let second = super::google_session_account_key("subject-two").unwrap();
+        assert_ne!(first, second);
+        assert!(!first.contains("subject-one"));
+        assert!(CredentialStore::entry("gemini").is_ok());
     }
 }

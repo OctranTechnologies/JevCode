@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { bootstrapSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, sessionSchema } from '../src/lib/schemas';
+import { bootstrapSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, sessionSchema } from '../src/lib/schemas';
 import { mergeSession } from '../src/app/store';
 import { normalizeError } from '../src/lib/errors';
 import { displayPath } from '../src/lib/paths';
@@ -11,7 +11,7 @@ describe('desktop contracts', () => {
   it('accepts the shared Rust wire fixture and the provider catalog', () => {
     const parsed = sessionSchema.parse(session);
     expect(parsed.pendingToolCall?.name).toBe('git_status');
-    const result = bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers, accounts: [], sessions: [parsed], usage: [], tools: [], permissionPolicy: parsed.permissionPolicy, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [] }, chatgpt: { available: true, connectedAccounts: [], selectedAccountId: null, selectedAuthMethod: null, unavailableReason: null } }, updatePreferences: { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable' } });
+    const result = bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers, accounts: [], sessions: [parsed], usage: [], tools: [], permissionPolicy: parsed.permissionPolicy, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [] }, chatgpt: { available: true, connectedAccounts: [], selectedAccountId: null, selectedAuthMethod: null, unavailableReason: null } }, updatePreferences: { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null } });
     expect(result.providers.map(provider => provider.id)).toEqual(['preview', 'openai', 'anthropic', 'gemini', 'opencode-zen', 'opencode-go']);
     // OpenAI models are account-scoped and loaded from the authenticated
     // account's official model catalog instead of a guessed static list.
@@ -48,6 +48,31 @@ describe('desktop contracts', () => {
     expect(openAIAuthStartSchema.safeParse({ ...safeAttempt, codeVerifier: 'private-verifier' }).success).toBe(false);
     expect(openAIAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'callback_received' })).toEqual({ attemptId: safeAttempt.attemptId, state: 'callback_received', failureReason: null });
     expect(openAIAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'failed', failureReason: 'network_error' }).failureReason).toBe('network_error');
+  });
+  it('keeps Google OAuth status and attempt handles token-free and registers narrow method commands', () => {
+    const safeAttempt = { attemptId: '5b5b0e1a-8127-4e62-9fb7-f3a3dd9d09ce', expiresAt: '2026-10-14T12:00:00+00:00' };
+    expect(googleAuthStartSchema.parse(safeAttempt)).toEqual(safeAttempt);
+    expect(googleAuthStartSchema.safeParse({ ...safeAttempt, authorizationUrl: 'https://accounts.google.com/?state=private' }).success).toBe(false);
+    const safeStatus = {
+      account: { id: 'google-profile', email: 'user@gmail.com', displayName: 'Google User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: ['openid', 'email'] },
+      accounts: [{ id: 'google-profile', email: 'user@gmail.com', displayName: 'Google User', authType: 'google_oauth', accountType: 'individual', cloudProjectId: null, connected: true, requiresReconnect: false, expiresAt: null, grantedScopes: ['openid', 'email'] }],
+      selectedAccountId: 'google-profile',
+      codeAssist: { accountType: 'individual', availability: 'consumer_access_retired', requiresCloudProject: false, cloudProjectId: null, userTier: null, inferenceAvailable: false },
+      selectedAuthType: null,
+      apiKeyConnected: false,
+      oauthAvailable: true,
+      unavailableReason: null,
+    };
+    expect(googleAuthStatusSchema.parse(safeStatus).account?.email).toBe('user@gmail.com');
+    expect(googleAuthStatusSchema.safeParse({ ...safeStatus, accessToken: 'must-not-cross-ipc' }).success).toBe(false);
+    expect(googleAuthStatusSchema.safeParse({ ...safeStatus, account: { ...safeStatus.account, refreshToken: 'must-not-cross-ipc' } }).success).toBe(false);
+    expect(googleAuthAttemptEventSchema.parse({ attemptId: safeAttempt.attemptId, state: 'failed', failureReason: 'network_error' }).failureReason).toBe('network_error');
+    const nativeCommands = readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+    const handler = nativeCommands.slice(nativeCommands.indexOf('generate_handler!'));
+    expect(handler).toContain('commands::google_auth_select_account');
+    expect(handler).toContain('commands::google_auth_select_method');
+    expect(handler).toContain('commands::google_auth_disconnect_api_key');
+    expect(handler).not.toMatch(/google_auth_(?:get|read)_credentials|commands::get_google_session/);
   });
   it('does not let a late command response overwrite newer events', () => {
     const parsed = sessionSchema.parse(session);

@@ -6,7 +6,7 @@ export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, onWorkspaceMode, baseBranch, onBaseBranch, branches, canIsolate,
   onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
-  sessionLocked, desktopAllowed, providerConnected, contextOpen, setContextOpen, includeProject, setIncludeProject,
+  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, contextOpen, setContextOpen, includeProject, setIncludeProject,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -37,6 +37,7 @@ export function WorkspaceComposer({
   sessionLocked: boolean;
   desktopAllowed: boolean;
   providerConnected: boolean;
+  authRouteLabel?: string | null;
   contextOpen: boolean;
   setContextOpen: (open: boolean) => void;
   includeProject: boolean;
@@ -88,7 +89,7 @@ export function WorkspaceComposer({
         </div>
       </div>
     </form>
-    <div className="composer-footnote"><span className="privacy-dot" />{workspaceMode === 'isolated' && workspaceUnavailable ? 'Choose a Git repository and a local starting branch for this isolated task' : !desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}</div>
+    <div className="composer-footnote"><span className="privacy-dot" />{workspaceMode === 'isolated' && workspaceUnavailable ? 'Choose a Git repository and a local starting branch for this isolated task' : !desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}{authRouteLabel && <span className="auth-route-indicator"><ShieldCheck size={10} />{authRouteLabel}</span>}</div>
   </section>;
 }
 

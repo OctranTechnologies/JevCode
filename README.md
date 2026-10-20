@@ -1,118 +1,78 @@
-<div align="center">
-  <img src="src-tauri/icons/icon.svg" alt="JevCode orange five-pronged asterisk" width="96" height="96" />
-  <h1>JevCode</h1>
-  <p><strong>A local-first desktop workspace for AI-assisted coding.</strong></p>
-  <p>Bring an agent into your repository, follow its work, review every change, and keep control of your code.</p>
-  <p>
-    <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri&logoColor=white" />
-    <img alt="React 19" src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" />
-    <img alt="TypeScript 5.9" src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white" />
-    <img alt="Rust stable" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white" />
-    <img alt="MIT license" src="https://img.shields.io/github/license/OctranTechnologies/JevCode?color=2E8B57" />
-    <img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-59636e" />
-  </p>
-  <p>
-    <a href="#features">Features</a> ·
-    <a href="#installation">Installation</a> ·
-    <a href="#usage">Usage</a> ·
-    <a href="#screenshots">Screenshots</a> ·
-    <a href="#architecture">Architecture</a> ·
-    <a href="#security-audit-and-known-limits">Security</a>
-  </p>
-</div>
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="JevCode logo" width="88" />
+</p>
 
-JevCode is a local desktop AI coding agent built with Tauri 2, React, TypeScript,
-Vite, Tailwind CSS, and Rust. The interface is organized around projects and
-tasks: the agent works through a visible timeline, sensitive actions require
-permission, and file edits stay reviewable.
+<h1 align="center">JevCode</h1>
 
-## Features
+<p align="center">A local desktop AI coding agent for your projects, tasks, and code changes.</p>
 
-- **Project workspaces:** open folders and Git repositories, browse ignored-aware
-  file trees, inspect branches and changes, and optionally isolate tasks in Git
-  worktrees.
-- **Provider choice:** use OpenAI, Anthropic, Google Gemini, OpenCode Zen, or
-  OpenCode Go through a shared model and agent interface. OpenAI supports API
-  keys and its supported ChatGPT sign-in flow; other methods depend on provider
-  support and account eligibility.
-- **Visible agent activity:** follow progress, tool calls, command output, approval
-  requests, file edits, and test results in the task timeline.
-- **Permission controls:** choose a conservative access mode and approve sensitive
-  reads, edits, commands, network access, and dangerous actions.
-- **Change review:** inspect diffs, distinguish agent edits from pre-existing work,
-  and accept, revert, open, copy, or stage supported file changes.
-- **Persistent tasks:** search, resume, archive, duplicate, and fork sessions;
-  task history and usage stay available locally across launches.
-- **Extensible tools:** configure MCP servers per user or project, discover tools,
-  and review their permissions before use.
-- **Privacy-conscious storage:** provider credentials use the OS credential store;
-  projects, sessions, settings, and local usage records are stored on device.
+<p align="center">
+  <a href="https://github.com/OctranTechnologies/JevCode/actions/workflows/release.yml"><img src="https://github.com/OctranTechnologies/JevCode/actions/workflows/release.yml/badge.svg" alt="Desktop release builds" /></a>
+  <img src="https://img.shields.io/github/v/release/OctranTechnologies/JevCode?label=latest%20release" alt="Latest release" />
+  <img src="https://img.shields.io/github/license/OctranTechnologies/JevCode" alt="License" />
+</p>
 
-## Installation
+A local desktop AI coding agent built with Tauri 2, React, TypeScript, Vite,
+Tailwind CSS and Rust. Open a project, choose a provider and model, run a task,
+review tool activity and diffs, approve sensitive actions, and resume the last
+task when the desktop starts again.
 
-JevCode is a native desktop application. To build and run this checkout, install
-Node.js 22 or newer, Rust 1.90 or newer, Git, and the platform packages listed
-in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Windows
-also needs Visual Studio C++ Build Tools and WebView2; Linux needs the documented
-WebKitGTK and system packages.
+The original repository contained only this README and a license. No incumbent
+application or architecture was replaced. The initial architecture scope puts
+orchestration, credentials, provider requests and local services in Rust, with
+React responsible for interaction and presentation.
+
+## Development
+
+Prerequisites: Node.js 22+, Rust 1.90+, Git, and the
+[Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/).
+On Windows these include Visual Studio C++ Build Tools and WebView2. Linux needs
+the documented WebKitGTK/system packages; its credential store uses Secret Service.
 
 ```sh
 npm ci
 npm run tauri dev
 ```
 
-This starts Vite on `127.0.0.1:1420`, compiles the Rust backend, and opens the
-desktop window. Port 1420 is fixed so the app cannot silently load the wrong dev
-server; close another JevCode dev process if the port is occupied. To build a
-platform package locally, run `npm run tauri build`.
+`tauri dev` starts Vite on `127.0.0.1:1420`, compiles Rust, and opens the desktop
+window. In a debug build the source repository opens automatically on the first
+launch. Release builds start with an empty workspace. Use **Open folder** to add
+other projects. If port 1420 is occupied, close the existing JevCode dev server;
+Vite uses a fixed port so the desktop window cannot silently load the wrong app.
 
-For a UI-only browser preview, run `npm run dev`. It shows clearly labeled sample
-project, task, activity, diff, and terminal data; sample actions do not run, and
-project access, credentials, and agent requests require the desktop app.
+**Local preview** runs a deterministic adapter with real project tools and no
+remote model. Try **Explore this project**, **Explain the architecture**, or
+**Review Git status**. Git status asks for one-time approval by default. Preview
+responses are labeled and report zero LLM tokens.
 
-## Usage
+For a remote model, open **Providers**, save an API key to the OS keychain, then
+start a new session and select that provider and model. A saved key indicates
+presence; account access and model availability are checked on the first request.
+Keys are never stored in SQLite, config files, localStorage or logs. The typed
+password field holds a key briefly while saving it; Rust alone retrieves stored
+credentials. Existing conversations keep their original provider and model.
 
-1. Open a folder or Git repository from the sidebar, or create a project.
-2. Use **Local preview** to explore with the deterministic local adapter, or open
-   **Settings → Providers** to connect a supported provider.
-3. Start a task, select a model, describe the change, and choose Agent or Plan mode.
-4. Review permission prompts before sensitive actions. Watch tool activity and
-   progress in the conversation timeline.
-5. Inspect the **Changes** panel when the task finishes. Review or revert edits,
-   then commit them from the repository when ready.
-
-The first debug launch opens the JevCode source repository automatically; use
-**Open folder** to switch to another project. API keys are saved to the OS
-credential store and are not written to SQLite, configuration files, localStorage,
-or application logs. A saved key is checked for access when used.
+`npm run dev` opens the UI in a browser for layout work. Browser mode shows a
+clearly labeled sample project, task, activity, diff, and terminal output so the
+workspace can be reviewed without connecting a provider. Sample actions are not
+executed, and local-project, credential, and send controls require the desktop app.
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/mockups/nexus-inspired/01-active-task.png" alt="JevCode active task timeline with tool activity, an approval prompt, and a file changes panel" width="960" />
-  <br /><sub>Active coding task</sub>
-</p>
+![Approved JevCode desktop workspace design reference](docs/desktop-mockup.png)
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/mockups/nexus-inspired/02-project-overview.png" alt="JevCode project overview with Git state, recent tasks, and file explorer" width="100%" /><br /><sub>Project overview</sub></td>
-    <td align="center"><img src="docs/mockups/nexus-inspired/03-accounts-providers.png" alt="JevCode provider and account settings" width="100%" /><br /><sub>Provider accounts</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/mockups/nexus-inspired/04-local-usage.png" alt="JevCode local usage dashboard" width="100%" /><br /><sub>Local usage dashboard</sub></td>
-    <td align="center"><strong>Design preview</strong><br />The images are product mockups, not captures of a running desktop build. Browser preview data is illustrative.</td>
-  </tr>
-</table>
+This is the approved design reference, not a capture of a running build. A native
+runtime screenshot should be added after visual review on a supported capture host.
 
 ## Workspace interface
 
 The main window uses a project and task sidebar, an agent activity timeline, a
 task composer, and an optional right inspector for files, diffs, terminal activity,
 context, and task details. The sidebar and inspector resize from their dividers;
-the sidebar collapses to an icon rail and remembers that preference across app
-launches. On narrower windows, the inspector and sidebar become temporary drawers
-so the conversation stays usable. The layout has been reviewed at 1280×850,
-900×640, and 618×708 browser viewports.
+the sidebar collapses to an icon rail. On narrower windows, the inspector and
+sidebar become drawers so the conversation stays usable. The layout has been
+reviewed at 1280×850, 900×640, and 618×708 browser viewports. A native desktop
+screenshot and live resizing pass still need a supported capture surface.
 
 Use **Ctrl/Cmd+N** for a new task, **Ctrl/Cmd+O** to open a project,
 **Ctrl/Cmd+K** for the command palette, **Ctrl/Cmd+Shift+M** for model selection,
@@ -152,7 +112,7 @@ is not registered as an agent tool. Agent tools continue to use the backend's
 separate permission policy and scoped operations. Git branch switching only accepts
 an existing local branch name and uses Git arguments without shell interpolation.
 
-## Architecture
+## Module boundaries
 
 | Responsibility | Location | Boundary |
 | --- | --- | --- |
@@ -385,18 +345,20 @@ catalog endpoint, so a connection check does not issue a billable model request.
 `src-tauri/src/auth` defines the provider-neutral `ProviderAuthAdapter` contract
 for connect, disconnect, refresh, validation, account info, model discovery and
 status. `OpenAIAuthManager` owns OpenAI API keys, ChatGPT sessions, model discovery,
-and token refresh. `OpenAIProvider` is a distinct native transport adapter; the
-generic agent runtime asks the provider factory for an `LlmProvider` and never
-reads a key or token. Other API-key providers continue through the shared
-adapter. The current transports use bearer authorization for OpenAI and OpenCode,
-`x-api-key` for Anthropic, and `x-goog-api-key` for Gemini.
+and token refresh. `GoogleAuthManager` owns isolated Google OAuth sessions,
+Gemini API keys, per-account Cloud projects, and token refresh.
+`OpenAIProvider` and `GeminiProvider` are distinct native transport adapters;
+the generic agent runtime asks the provider factory for an `LlmProvider` and
+never reads a key or token. OpenAI and OpenCode use bearer authorization,
+Anthropic uses `x-api-key`, Gemini API-key requests use `x-goog-api-key`, and
+Google Account Gemini API requests use a bearer token plus
+`x-goog-user-project`. Other API-key providers continue through the shared
+adapter.
 Zen and Go model catalog URLs are taken from their official docs. Safe account
 metadata is stored in SQLite; credentials stay in the OS keychain under service
-`dev.jevcode.desktop` (OpenAI ChatGPT sessions use a separate namespaced
-keychain service and UUID-scoped entries). Large OAuth sessions are split into
-1 KiB credential items to fit Windows Credential Manager limits; a small
-manifest switches to the new generation only after every chunk is written, and old single-item
-sessions remain readable for compatibility.
+`dev.jevcode.desktop` (OpenAI ChatGPT and Google OAuth sessions each use a
+separate namespaced keychain service; OpenAI entries are UUID-scoped and Google
+entries are scoped by a one-way digest of the verified Google subject).
 
 Authentication is intentionally separated by product entitlement:
 
@@ -423,18 +385,13 @@ Authentication is intentionally separated by product entitlement:
   data stored in SQLite. Every OAuth registration is a distinct safe profile,
   even when two registrations have the same verified email. Its stable local
   profile ID (derived from the issued client ID and verified subject) scopes a
-  separate UUID-scoped OS credential records, so adding or reconnecting one
-  account cannot overwrite another account's credentials. The session record is
-  written in bounded chunks with a manifest pointer so a failed write preserves
-  the previous session. The React layer receives only safe account
+  separate keychain item, so adding or reconnecting one account cannot overwrite
+  another account's credentials. The React layer receives only safe account
   state, registration labels, the selected profile ID, and the selected auth
   method. Selection and auth method persist across restarts; selecting an
   account invalidates the prior account's cached model catalog. Before each
   OpenAI request, the native adapter uses only the explicitly selected ChatGPT
-  profile or API-key method. OpenAI function tools use non-strict schemas
-  because built-in tools have optional arguments; every returned call is still
-  validated against the Rust tool schema and permission policy before execution.
-  Removing the last selected ChatGPT account leaves
+  profile or API-key method. Removing the last selected ChatGPT account leaves
   ChatGPT selected and pauses requests until reconnect or an explicit switch to
   an already connected API key. OAuth errors never fall through to API-key
   billing. It refreshes within
@@ -447,14 +404,12 @@ Authentication is intentionally separated by product entitlement:
   the official OpenAI Responses API host. ChatGPT-plan requests always use
   `store: false` and `stream: true`, send complete local history through
   `input`, and place JevCode function tools in the documented namespace form.
-  The stream must finish with `response.completed`; JevCode also retains final
-  `response.output_item.done` items and handles top-level stream error events so
-  partial transports are recovered before an empty-response error is reported.
-  Rate/usage-limit, unavailable, unsupported-capability and incomplete-response
-  errors remain distinct and do not trigger a billing-mode switch. A terminal
-  revoked or expired refresh error clears the unusable credential and leaves a
-  safe profile marked **Reconnect needed**. Network and service errors preserve
-  the saved session and do not start a refresh retry loop. `openai_auth_status`,
+  The stream must finish with `response.completed`; rate/usage-limit, unavailable,
+  unsupported-capability and incomplete-response errors remain distinct and do
+  not trigger a billing-mode switch. A terminal revoked or expired refresh
+  error clears the unusable credential and leaves a safe profile marked
+  **Reconnect needed**. Network and service errors preserve the saved session
+  and do not start a refresh retry loop. `openai_auth_status`,
   `openai_auth_refresh`, `openai_auth_select_account`,
   `openai_auth_use_api_key` and `openai_auth_logout` expose safe metadata only.
   Reconnect reuses that account's issued client ID, host ID and (only when the
@@ -468,20 +423,9 @@ Authentication is intentionally separated by product entitlement:
   Codex/ChatGPT credentials or browser cookies.
 - Settings → Providers → OpenAI presents ChatGPT OAuth and an API key as
   separate authentication methods. ChatGPT sign-in opens the system browser;
-  while JevCode waits, users can copy the short-lived sign-in link and paste it
-  into another browser. The authorization URL is held in zeroizing native
-  memory for the active attempt and copied to the OS clipboard by a Rust
-  command; neither the URL nor OAuth tokens cross IPC or enter application
-  logs. The copy action stops working after the attempt expires or ends. The
-  page shows the waiting, cancel, reconnect, denial, timeout, network and
-  provider-outage states without exposing authorization material. Callback
-  failures are logged with an app-owned error category only; JevCode never logs
-  the callback URL, authorization code, state, token response or identity claims.
-  Settings feedback distinguishes rejected callbacks, expired or reused codes,
-  rejected exchanges, malformed responses, identity-verification failures,
-  local/secure-storage errors, account mismatches, and provider/configuration
-  errors. The browser callback page directs users back to JevCode for that
-  feedback. Account management displays only verified profile metadata and a stable short
+  the page shows the waiting, cancel, reconnect, denial, timeout, network and
+  provider-outage states without exposing authorization material. Account
+  management displays only verified profile metadata and a stable short
   registration label for accounts sharing an email. Users can add, select,
   reconnect, or remove accounts; each selection loads that account's available
   models. API keys can be tested, replaced, disconnected, or explicitly selected
@@ -490,9 +434,147 @@ Authentication is intentionally separated by product entitlement:
   model picker, and safe profile/selection metadata is restored on app restart.
 - Anthropic Console API keys are supported. JevCode does not reuse Claude Code,
   Claude.ai or subscription OAuth credentials.
-- Gemini API keys are supported. Google documents OAuth for Gemini with a
-  registered desktop client and Google Cloud project. That method remains gated
-  until JevCode has an app client configured.
+- Gemini API keys and Google Account OAuth are independent Gemini Developer API
+  request routes. The OAuth route uses a Cloud project and the public
+  `generativelanguage.googleapis.com` API. It does not use Gemini Code Assist
+  inference: Google's Cloud AI Companion REST reference documents project,
+  location, repository-index and settings operations, while the Gemini CLI's
+  Code Assist integration uses Google's first-party
+  `cloudcode-pa.googleapis.com/v1internal` service. Google says the Code Assist
+  inference API is for Google-provided clients; JevCode does not call that
+  private endpoint.
+  Google's Gemini API OAuth quickstart describes a simplified setup and directs
+  production apps to choose appropriate credentials. JevCode implements this
+  documented OAuth path as a distinct Gemini Developer API billing route. It
+  does not use Google Account OAuth to access Gemini Code Assist inference.
+
+  To enable Google Account sign-in, create JevCode's own Desktop app
+  OAuth client in Google Cloud Console and add its public client ID to the
+  existing `config.json` in the app configuration directory:
+
+  ```json
+  {
+    "googleOAuthClientId": "YOUR_CLIENT_ID.apps.googleusercontent.com"
+  }
+  ```
+
+  In Google Auth Platform, configure the OAuth consent screen and create an
+  OAuth client whose application type is **Desktop app**. While the consent
+  screen is in Testing, add the accounts you intend to use as test users. A
+  desktop client is a public client: configure only its client ID in JevCode;
+  do not ship or enter a client secret. The callback port is chosen at runtime,
+  so do not register a fixed web redirect URI.
+
+  The client ID is public configuration; do not add a client secret or copy
+  Gemini CLI credentials. Sign-in opens the system browser and uses Google's
+  documented random-port IPv4 loopback redirect in the form
+  `http://127.0.0.1:<port>` with the root path. The callback listener binds
+  only to `127.0.0.1`, accepts one callback whose host, path, and state match
+  the authorization request, then closes on success, provider error,
+  cancellation, or timeout. Google documents the loopback redirect as host and
+  port without an `/oauth2callback` path; JevCode uses that documented form to
+  avoid redirect mismatches. Callback pages never show authorization codes or
+  tokens. Sign-in also uses fresh `state` and `nonce`, and PKCE S256. JevCode
+  requests `openid email profile` plus the Google-documented
+  `cloud-platform` and `generative-language.retriever` scopes. These OAuth
+  scopes are needed for the selected Google account to call the Gemini
+  Developer API with a Cloud project. Production deployments must complete the
+  applicable Google OAuth consent and scope verification requirements.
+  The native layer validates the callback, granted scopes, and signed ID token
+  (issuer, audience, signature, expiry and nonce) before saving the session in
+  the OS credential store. After the callback, Rust sends a form-encoded POST
+  to Google's official `https://oauth2.googleapis.com/token` endpoint with the
+  app's `client_id`, the returned authorization `code`, the original loopback
+  `redirect_uri`, the matching PKCE `code_verifier`, and
+  `grant_type=authorization_code`. The desktop app does not send or embed a
+  client secret. JevCode validates the bearer token response, expiry, required
+  identity scopes, and Google's signed OIDC identity before marking the account
+  connected. Refreshes are serialized and replace the secure session in place.
+  `google_auth_status` returns a list of safe account metadata and the selected
+  account ID. SQLite stores only profile, account type, expiry, scopes, project
+  ID, connection state, and selected-account preference. Each verified Google
+  subject gets a separate OS credential-store item; keychain labels contain a
+  SHA-256 digest rather than the subject or email. App startup migrates the old
+  single-session item into this account-scoped format without writing token
+  values to SQLite. Adding an account starts a new browser flow with fresh
+  state, nonce, and PKCE values while keeping the existing selection.
+  Reconnect binds the flow to the expected subject and rejects a different
+  Google account instead of replacing it.
+  `google_auth_select_account` persists selection; account-specific refresh,
+  project updates, and logout always carry the account ID. Removing one account
+  revokes its token where possible and deletes only its credential item; other
+  accounts stay connected. Removing the selected account selects a remaining
+  profile, and that selection survives restart. Cloud project IDs are stored
+  with their corresponding Google accounts. Selecting an account refreshes
+  safe auth status and models for the active route. A Gemini provider snapshots
+  the selected account and project at task start, so switching accounts cannot
+  change the credentials or billing path of an in-flight task. JevCode never
+  switches from Google Account to API Key implicitly. React never receives
+  access, refresh, or ID tokens.
+  The native auth manager refreshes an expired token or one within five minutes
+  of expiry. A per-account async lock serializes refreshes, and rotated
+  credentials are written back to that account's OS credential-store item.
+  Revoked grants or missing refresh credentials mark only that profile **Needs
+  attention**. Network failures preserve its saved session and do not trigger an
+  internal retry loop. For Gemini API OAuth, the refreshed access token stays
+  inside the native provider path and is sent as a bearer token with the
+  selected `x-goog-user-project` header.
+
+  Google account classification uses only a verified ID-token `hd` claim. A
+  consumer account is identified as individual, but OAuth does not expose
+  whether it has Google AI Pro or Ultra. The Gemini Developer API OAuth route
+  requires a Google Cloud project with the Generative Language API enabled;
+  requests use that project's quota and billing. Google's OAuth quickstart
+  demonstrates the public `generativelanguage.googleapis.com/v1/models`
+  endpoint with an `Authorization: Bearer` token and `x-goog-user-project`.
+  JevCode uses the documented ListModels route under its configured Gemini
+  `v1beta` API version and the public GenerateContent routes for requests.
+  See the [Gemini API OAuth quickstart](https://ai.google.dev/gemini-api/docs/oauth)
+  and [GenerateContent API reference](https://ai.google.dev/api/generate-content).
+
+  Google documents Gemini for Google Cloud / Code Assist inference as an API
+  developed for Google-provided clients only. JevCode does not call that service
+  or Gemini CLI's internal endpoints, and does not reuse Gemini CLI OAuth
+  client credentials, tokens, `gcloud` credentials, or browser cookies. OAuth
+  does not expose a Google AI Pro/Ultra tier or prove Code Assist eligibility;
+  JevCode does not claim those subscriptions provide quota for this API route.
+  See Google's [Code Assist security documentation](https://docs.cloud.google.com/gemini/docs/codeassist/security-privacy-compliance).
+  JevCode identifies consumer versus Workspace accounts from the verified
+  identity, but project access, API enablement, and organization policy still
+  determine whether an account can make requests.
+
+  **Troubleshooting:** If Google sign-in is unavailable, check that the client
+  ID is present in JevCode's app `config.json` and belongs to a Desktop OAuth
+  client. Enable the Generative Language API for the intended project and
+  configure the consent screen and scopes. If Google rejects the account before
+  returning to JevCode, check the consent-screen audience, test-user list, and
+  Workspace administrator policy.
+  A callback verification error means the one-time attempt expired or failed
+  state validation; restart sign-in instead of reusing the old browser URL. If
+  the account links but no Gemini models appear, select **Use Google Account**,
+  enter the associated Cloud project ID, enable the Generative Language API in
+  that project, and confirm the account can use it. Google Account OAuth uses
+  that project's billing and quota; it does not use Code Assist or AI
+  subscription quota.
+
+  Settings → Providers → Google Gemini offers **Continue with Google** and
+  **Use Gemini API Key** as separate choices. Google Account OAuth sends
+  requests to the Gemini Developer API using the selected Cloud project's
+  billing and quota. A Gemini API key uses its own billing/quota route. Neither
+  route silently falls back to the other. Vertex AI / ADC remains unavailable
+  until a separate authentication mode is implemented. Multiple Google OAuth
+  profiles are supported with isolated keychain entries; switching the selected
+  identity persists across restart and does not affect an in-flight task.
+  API-key credentials remain independently stored and selectable.
+  Sign-in progress and cancellation appear in the settings card; cancellation,
+  timeout, denied consent, browser launch, network, OAuth and reconnect failures
+  use friendly messages. Unsupported accounts or Workspace policy restrictions
+  are identified as possible causes when Google denies consent. Missing Cloud
+  project or Gemini API setup is explained in settings. The connected view
+  shows verified email metadata and the selected sign-in method, never OAuth
+  tokens. Vertex AI / ADC is labeled unavailable until a later release. These
+  controls use the shared semantic surface, border and status tokens, so they
+  follow both warm-light and dark themes.
 - OpenCode Zen and OpenCode Go use their respective API keys.
 
 The UI receives no secret on reads: account status, account info, logout results
@@ -503,20 +585,27 @@ or request removal. Secrets are not serialized to SQLite, localStorage, JSON
 configuration, source code, diagnostics or logs. Frontend log commands accept
 only a small allowlist of fixed event names. Provider response bodies are never
 included in errors or logs, and OAuth authorization URLs are not logged. The
-loopback listener binds only to IPv4 `127.0.0.1`, accepts one correctly hosted
-callback with fresh one-time state, and shuts down on success, failure,
-cancellation or timeout. Discovery URLs are pinned to OpenAI's issuer, token,
-authorization and JWKS endpoints; revocation metadata is constrained to HTTPS
-on `auth.openai.com` with redirects disabled. ID tokens require supported
-asymmetric signatures, matching issuer/audience/authorized party, expiry,
-not-before, nonce, and a nonempty subject. Refresh and logout serialize per
-account to protect rotating refresh tokens. No crash-report upload service is
-configured; local diagnostics expose app/platform metadata only. Connection
+loopback listeners bind only to IPv4 `127.0.0.1`, accept one correctly hosted
+callback with fresh one-time state, and shut down on success, failure,
+cancellation or timeout. OpenAI discovery and revocation stay constrained to
+documented OpenAI hosts. Google OAuth uses Google's fixed authorization and
+token endpoints; OIDC discovery and signing keys are fetched over HTTPS only
+from official Google identity hosts. Both ID-token flows require supported
+signatures, matching issuer and audience, expiry, nonce, and a nonempty subject.
+Refresh and logout serialize per account to protect rotating refresh tokens. No
+crash-report upload service is configured; local diagnostics expose app/platform
+metadata only. Connection
 failures map to stable categories:
 invalid credential, expired authentication, quota exhausted, subscription
 unavailable, network error and provider outage.
 
-Official authentication references: [OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
+Official authentication references: [Google OAuth 2.0 for desktop apps](https://developers.google.com/identity/protocols/oauth2/native-app),
+[Gemini API OAuth quickstart](https://ai.google.dev/gemini-api/docs/oauth),
+[Gemini API model catalog](https://ai.google.dev/api/models),
+[Gemini Code Assist security and client restrictions](https://docs.cloud.google.com/gemini/docs/codeassist/security-privacy-compliance),
+[Gemini CLI authentication and account/project guidance](https://geminicli.com/docs/get-started/authentication/),
+[Gemini Code Assist subscription transition](https://docs.cloud.google.com/gemini/docs/codeassist/sunset),
+[OpenAI API authentication](https://developers.openai.com/api/reference/overview#authentication),
 [OpenAI Sign in with ChatGPT for open-source apps](https://developers.openai.com/siwc/token-sharing-open-source/sign-in),
 [OpenAI accounts, sessions and token refresh](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions),
 [OpenAI ChatGPT-plan models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference),
@@ -526,7 +615,13 @@ Official authentication references: [OpenAI API authentication](https://develope
 [OpenAI OIDC discovery and ID-token verification](https://developers.openai.com/siwc/website),
 [Anthropic API authentication](https://platform.claude.com/docs/en/manage-claude/authentication),
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key),
-[Gemini OAuth](https://ai.google.dev/gemini-api/docs/oauth),
+[Google Desktop OAuth](https://developers.google.com/identity/protocols/oauth2/native-app),
+[Gemini CLI authentication choices](https://geminicli.com/docs/get-started/authentication/),
+[Gemini Code Assist setup](https://docs.cloud.google.com/gemini/docs/codeassist/set-up-gemini),
+[Gemini Code Assist subscription changes](https://docs.cloud.google.com/gemini/docs/codeassist/sunset),
+[Gemini for Google Cloud API reference](https://docs.cloud.google.com/gemini/docs/api/reference/rest),
+[Gemini CLI Code Assist OAuth source](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/oauth2.ts),
+[Gemini CLI Code Assist server source](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/server.ts),
 [OpenCode Zen](https://opencode.ai/docs/zen/) and
 [OpenCode Go](https://opencode.ai/docs/go/).
 
@@ -696,6 +791,8 @@ Rust tests cover persistence, path scoping, permission enforcement, real preview
 tool runs, provider normalization and the shared TypeScript fixture. Frontend tests
 cover IPC schemas, stale-event protection, error redaction, keyboard shortcuts and
 session restoration. There is not yet a separate packaged-app integration suite.
+The approved design reference is in `docs/desktop-mockup.png`; it is not shipped as
+interface pixels.
 
 ### Release builds and updates
 
@@ -706,12 +803,21 @@ for updates after the desktop bootstrap and main interface have rendered, then
 every 12 hours. Settings → Updates stores preferences in SQLite: automatic checks
 are on by default, automatic downloads are off, and Stable is the only channel.
 Available releases appear in a compact banner; an up-to-date check stays quiet.
-When enabled, automatic downloads run in the background and show progress. The
-user must explicitly install and restart, and JevCode blocks those actions while
-any task is queued, running, streaming, or waiting for input or approval. The
-current Tauri 2 JavaScript updater API does not expose cancellation for an
-in-progress download. Settings → Updates and About both provide a manual check.
-Update checks are disabled in development builds. Tauri verifies each bundle against the public key in
+The banner and Settings → Updates render release notes as a small, safe Markdown
+subset; raw HTML is escaped and links are shown as text, so updater metadata is
+never injected into the WebView. For each available version, choose **Update Now**,
+**Remind Me Later** (shown again after 24 hours), or **Skip this version**. These
+choices persist in SQLite across restarts; a newer version clears an old
+reminder or skip. A subtle dot marks an update that is still pending. When a
+download has completed, the app offers **Restart and Update**. If JevCode closes
+before installation, it checks again and downloads the signed package on the next
+launch to restore the ready state. When enabled, automatic downloads run in the
+background and show progress. The user must explicitly install and restart, and
+JevCode blocks those actions while any task is queued, running, streaming, or
+waiting for input or approval. The current Tauri 2 JavaScript updater API does
+not expose cancellation for an in-progress download. Settings → Updates and
+About both provide a manual check. Update checks are disabled in development
+builds. Tauri verifies each bundle against the public key in
 `src-tauri/tauri.conf.json`, and the app restarts after installation when the
 platform requires it. Signed-version verification is enabled too, so the manifest
 cannot pair a valid package signature
@@ -719,40 +825,157 @@ with a forged version number. The updater also validates release metadata before
 presenting it. Missing, invalid, or modified package signatures are rejected before
 installation and shown as a concise error; raw plugin errors are not displayed.
 
+The production endpoint is the HTTPS GitHub Releases static manifest at
+`https://github.com/OctranTechnologies/JevCode/releases/latest/download/latest.json`.
+The Tauri updater selects an installer-specific target before its generic
+OS/architecture fallback. The manifest contract for the artifacts we publish is:
+
+| Installation | Generic target | Installer target | Signed update bundle |
+| --- | --- | --- | --- |
+| Windows x64 MSI | `windows-x86_64` | `windows-x86_64-msi` | MSI |
+| Windows x64 NSIS | `windows-x86_64` | `windows-x86_64-nsis` | NSIS setup executable |
+| Linux x64 AppImage | `linux-x86_64` | `linux-x86_64-appimage` | AppImage |
+| Linux x64 Debian | — | `linux-x86_64-deb` | `.deb` |
+| Linux x64 RPM | — | `linux-x86_64-rpm` | `.rpm` |
+
+The generic Windows entry intentionally prefers MSI (`updaterJsonPreferNsis: false`);
+the app's installed bundle type selects the corresponding installer-specific
+entry when available. Tauri selects `{os}-{arch}-{bundle_type}` before its
+generic `{os}-{arch}` fallback, so AppImage, Debian, and RPM installations use
+their own signed update bundles. The generic Linux entry points to AppImage as
+the fallback. The release validator requires exactly these seven Windows and Linux targets,
+checks that their HTTPS GitHub API asset URLs belong to the release, confirms
+each asset has the expected bundle type and an uploaded `.sig` file, and checks
+that generic entries match their configured preferred targets. Tauri performs
+cryptographic signature verification on the client; signed-version verification
+binds the package signature to its manifest version. Downgrades are disabled. GitHub's
+`latest` route excludes drafts and prereleases, and the release workflow rejects
+a tag that is not newer than every published stable release.
+
+After the release quality gate and updater-key preflight pass, the workflow creates
+a stable draft. A test, signing, platform bundle, or manifest failure prevents the
+publish job from running, leaving the draft out of the production endpoint. A
+draft is promoted only after Windows and Linux pass.
+See the official [Tauri updater guide](https://v2.tauri.app/plugin/updater/),
+[GitHub pipeline guide](https://v2.tauri.app/distribute/pipelines/github/),
+and [tauri-action manifest generator](https://github.com/tauri-apps/tauri-action/blob/dev/src/upload-version-json.ts)
+for the updater format and release tooling.
+
 #### GitHub Actions release procedure
 
-The workflow at `.github/workflows/release.yml` runs for stable semantic-version
-tags such as `v0.1.0`. Before tagging, update the application version in
-`src-tauri/tauri.conf.json` so it exactly matches the tag. Configure these
-repository Actions secrets:
+`src-tauri/tauri.conf.json` is the single source of truth for the app version,
+following the [Tauri versioning recommendation](https://v2.tauri.app/distribute/#versioning).
+The release commands synchronize that version to `package.json`,
+`package-lock.json`, `src-tauri/Cargo.toml`, and the JevCode entry in
+`src-tauri/Cargo.lock`. `npm run version:check` verifies all six version fields;
+the release workflow runs the same check against the pushed tag before preparing
+a draft.
+
+Commit your application changes to `main`, make sure the working tree is clean,
+then preview or run one of these commands:
+
+```sh
+npm run release:patch -- --dry-run
+npm run release:patch
+# or: npm run release:minor / npm run release:major
+```
+
+The release command verifies that local `main` matches `origin/main`, calculates
+the next stable semantic version, synchronizes all version files, and runs
+`npm run check`. A failed check restores the version files and stops before any
+release commit or tag is created. After successful checks it commits the version
+bump, creates an annotated tag such as `v0.2.0`, pushes `main`, and then pushes
+the tag. The tag starts `.github/workflows/release.yml`:
+
+```text
+npm run release:patch
+  → version files synchronized and checks pass
+  → version commit and vX.Y.Z tag pushed
+  → GitHub Actions builds Windows and Linux
+  → signed updater artifacts and signatures generated
+  → complete GitHub Release published
+  → existing installations detect the update
+```
+
+The workflow validates that the tag matches every app version file, passes the
+release quality gate, confirms the updater signing key is configured, and is
+newer than all published stable releases before it creates a draft. A test,
+platform build, signing, or manifest validation failure leaves the release
+unpublished. If pushing the tag fails after the version commit reaches
+`origin/main`, push the reported tag with `git push origin vX.Y.Z` to resume the
+release.
+
+Configure these repository Actions secrets before the first release:
 
 - `TAURI_SIGNING_PRIVATE_KEY`: the complete private updater key contents.
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the key password, or an empty value for
   an unencrypted key.
 
+Add them in the repository's **Settings → Secrets and variables → Actions**.
+The signing key must be available to the release workflow before pushing a
+version tag; the workflow checks this before creating a draft.
+
 `GITHUB_TOKEN` is provided by GitHub Actions and is scoped to release contents;
-no personal access token is needed. The signing key is only passed to the Tauri
-build step and is never printed. Keep the private key out of Git, application
+no personal access token is needed. The signing key is only passed to the
+preflight and Tauri build steps and is never printed. Keep the private key out of Git, application
 configuration, logs, and checked-in `.env` files. The public verification key in
 `src-tauri/tauri.conf.json` is safe to commit.
 
-After committing the version change and workflow, push a matching tag:
+The pipeline builds Windows x64 and Linux x64 installers with the official
+`tauri-apps/tauri-action@v1`. Its Linux quality job
+runs `npm run check` (formatting, lint, type checks, frontend tests, Rust checks,
+Rust tests and Clippy) before a draft is created. Each platform job must produce
+its installer and every updater bundle/signature it needs. The Windows job
+installs and verifies the VBScript Windows capability required by WiX MSI
+packaging. The action uploads installers,
+updater packages, `.sig` files, and `latest.json` to the draft. Platform jobs run
+one at a time so the action can merge entries without racing on `latest.json`.
+The final job finds the draft in the authenticated release collection (GitHub's
+release-by-tag endpoint can return 404 for drafts), then runs
+`scripts/validate-updater-release.mjs` against its assets and downloaded manifest.
+It rejects missing platforms, wrong bundle types, unattached URLs, or missing
+signature assets. Only then does it publish the release as stable and latest.
+Failed matrix jobs prevent the final
+publish job from running, so incomplete drafts are never served by the stable
+endpoint. If a failed run is retried, the workflow removes the assets from its
+tag's existing draft before rebuilding, avoiding stale or duplicate platform
+files.
 
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
+### Update failure behavior and data safety
 
-The pipeline builds Windows x64, macOS Intel and Apple Silicon, and Linux x64
-installers with the official `tauri-apps/tauri-action@v1`. It uploads installers,
-updater packages, `.sig` files, and `latest.json` to a draft GitHub Release. A
-final job checks that all expected installers and signatures exist and that the
-manifest has valid entries for all four updater targets. Only then does it publish
-the release as the stable latest version. If a build or check fails, the draft
-remains unpublished and is not served by the app's stable updater endpoint.
+Network failures, GitHub outages, missing metadata, invalid JSON and unavailable
+assets leave the installed app and its user database alone. Invalid or corrupted
+packages fail Tauri signature verification before installation. Installation
+errors are shown without exposing raw installer paths or plugin details. If the
+app closes during a download, app-data preferences record the requested version;
+on the next launch JevCode checks and downloads it again. Partial bytes are not
+resumed. Repeated checks are serialized. Tasks may continue while a package
+downloads, but install/restart is blocked while a coding task is active. Older or
+repeated stable tags are blocked before draft creation; GitHub's latest stable
+endpoint excludes drafts and prereleases, and a failed platform build cannot
+publish.
 
-macOS notarization/signing and Windows installer signing still require maintainer
-certificates and are not configured here.
+Projects, tasks, usage and preferences live in the OS app-data directory in
+`jevcode.sqlite`, outside the application install directory. Provider credentials
+remain in OS credential storage. The updater replaces application bundles and
+does not migrate or delete these stores. SQLite migrations run when the updated
+app starts; updater failures do not issue project or session deletion commands.
+
+For the hosted release check, signed stable releases `v0.1.0` and `v0.1.1` were
+built and published successfully. The `v0.1.0` Windows installer download matched
+the GitHub asset SHA-256 and installed into an isolated test folder. Launching it
+from the Codex execution sandbox failed before the UI opened because that sandbox
+grants read-only access to the Windows app-data directory used by SQLite. The
+user database hash remained unchanged. The installed-app update, restart, and
+data-retention path therefore still needs a run outside that sandbox. These first
+test releases used the previous Windows/macOS/Linux matrix; future releases build
+Windows and Linux only. Automated tests and CI gates cover release
+metadata, downgrade rejection, interrupted downloads, signature failures,
+active-task protection, and publication preconditions; these checks do not
+substitute for a hosted installation test.
+
+Windows Authenticode installer signing requires a maintainer certificate and is
+not configured here. Updater artifact signing remains enabled independently.
 
 For a local signed Windows build in PowerShell, point the documented environment
 variable at the private key file outside the repository, then run the Tauri build:
@@ -765,16 +988,15 @@ Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY
 Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 ```
 
-The resulting NSIS updater bundle and its adjacent `.sig` file are written under
+The NSIS updater bundle and its adjacent `.sig` file are written under
 `src-tauri/target/release/bundle/nsis/`. Keep the key in a restricted-access
 encrypted password manager or secrets vault and keep a separate encrypted offline
 backup. Limit access to release maintainers, retain recovery instructions, and
 periodically confirm the backup can be restored without copying the key into the
 repository. Losing or replacing this key requires rotating the configured public
 key and will prevent existing installations from accepting releases signed with
-the old key. A GitHub draft release becomes available to the updater after it is
-published. macOS notarization/signing and Windows installer signing still require
-maintainer certificates and are not configured here.
+the old key. A GitHub draft release becomes available to the updater only after
+publication. Updater package signing is separate from Windows Authenticode.
 
 Provider adapters are covered by offline protocol fixtures. Live API calls require
 user credentials and have not been certified against every provider account/model.

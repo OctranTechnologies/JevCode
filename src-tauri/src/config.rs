@@ -10,6 +10,13 @@ use std::path::Path;
 pub struct AppConfig {
     pub providers: Vec<Provider>,
     pub max_tool_rounds: u32,
+    /// Public OAuth client ID for Google's registered desktop application.
+    #[serde(default, rename = "googleOAuthClientId")]
+    pub google_oauth_client_id: Option<String>,
+    /// Legacy compatibility field. Gemini OAuth billing projects are selected
+    /// explicitly per Google account and this value is never used for requests.
+    #[serde(default)]
+    pub google_cloud_project_id: Option<String>,
 }
 
 impl AppConfig {
@@ -34,6 +41,20 @@ impl AppConfig {
             return Err(AppError::new(
                 "configuration",
                 "Configure providers and a tool-round limit between 1 and 32.",
+            ));
+        }
+        if self
+            .google_oauth_client_id
+            .as_deref()
+            .is_some_and(|id| id.len() > 256 || !id.ends_with(".apps.googleusercontent.com"))
+            || self
+                .google_cloud_project_id
+                .as_deref()
+                .is_some_and(|project| !valid_google_cloud_project_id(project))
+        {
+            return Err(AppError::new(
+                "configuration",
+                "Google OAuth settings must contain a desktop OAuth client ID and a valid Cloud project ID.",
             ));
         }
         let mut ids = std::collections::HashSet::new();
@@ -97,6 +118,15 @@ impl AppConfig {
     }
 }
 
+fn valid_google_cloud_project_id(value: &str) -> bool {
+    (6..=30).contains(&value.len())
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +138,14 @@ mod tests {
         assert!(config.providers[1].models.is_empty());
         config.providers[1].base_url = Some("http://example.com".into());
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn google_cloud_project_id_uses_google_project_id_format() {
+        assert!(valid_google_cloud_project_id("team-project-123"));
+        assert!(!valid_google_cloud_project_id("short"));
+        assert!(!valid_google_cloud_project_id("-team-123"));
+        assert!(!valid_google_cloud_project_id("team-123-"));
+        assert!(!valid_google_cloud_project_id("Team-project"));
     }
 }
