@@ -1,4 +1,16 @@
-# JevCode
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="JevCode logo" width="88" />
+</p>
+
+<h1 align="center">JevCode</h1>
+
+<p align="center">A local desktop AI coding agent for your projects, tasks, and code changes.</p>
+
+<p align="center">
+  <a href="https://github.com/OctranTechnologies/JevCode/actions/workflows/release.yml"><img src="https://github.com/OctranTechnologies/JevCode/actions/workflows/release.yml/badge.svg" alt="Desktop release builds" /></a>
+  <img src="https://img.shields.io/github/v/release/OctranTechnologies/JevCode?label=latest%20release" alt="Latest release" />
+  <img src="https://img.shields.io/github/license/OctranTechnologies/JevCode" alt="License" />
+</p>
 
 A local desktop AI coding agent built with Tauri 2, React, TypeScript, Vite,
 Tailwind CSS and Rust. Open a project, choose a provider and model, run a task,

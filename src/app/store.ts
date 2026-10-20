@@ -11,7 +11,7 @@ export function desktopReducer(state: DesktopState, action: Action): DesktopStat
   switch (action.type) {
     case 'bootstrap': return { data: action.data, sessions: state.sessions.reduce(mergeSession, action.data.sessions), usage: [...new Map([...action.data.usage, ...state.usage].map(record => [record.id, record])).values()] };
     case 'session': return { ...state, sessions: mergeSession(state.sessions, action.session) };
-    case 'delete-session': return { ...state, sessions: state.sessions.filter(session => session.id !== action.sessionId), usage: state.usage.filter(record => record.sessionId !== action.sessionId) };
+    case 'delete-session': return { ...state, sessions: state.sessions.filter(session => session.id !== action.sessionId) };
     case 'usage': return { ...state, usage: [...state.usage.filter(record => record.id !== action.record.id), action.record] };
     case 'project': return state.data ? { ...state, data: { ...state.data, workspace: { ...state.data.workspace, projects: [...state.data.workspace.projects.filter(project => project.id !== action.project.id), action.project] } } } : state;
     case 'providers': return state.data ? { ...state, data: { ...state.data, providers: action.providers } } : state;

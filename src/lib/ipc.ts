@@ -66,6 +66,7 @@ interface Commands {
   openai_auth_status: { args: undefined; result: OpenAIAuthStatus };
   openai_auth_refresh: { args: { accountId: string }; result: OpenAIAccount };
   openai_auth_start: { args: { accountId: string | null }; result: OpenAIAuthStart };
+  openai_auth_copy_link: { args: { attemptId: string }; result: null };
   openai_auth_cancel: { args: { attemptId: string }; result: null };
   openai_auth_logout: { args: { accountId: string }; result: OpenAILogoutResult };
   openai_auth_select_account: { args: { accountId: string }; result: OpenAIAuthStatus };
@@ -96,6 +97,7 @@ const responses = {
   openai_auth_status: openAIAuthStatusSchema,
   openai_auth_refresh: openAIAccountSchema,
   openai_auth_start: openAIAuthStartSchema,
+  openai_auth_copy_link: z.null(),
   openai_auth_cancel: z.null(),
   openai_auth_logout: z.object({ revocationConfirmed: z.boolean() }).strict(),
   openai_auth_select_account: openAIAuthStatusSchema,
@@ -152,6 +154,11 @@ export function refreshOpenAIAuth(accountId: string): Promise<OpenAIAccount> {
 /** Starts OpenAI sign-in in the OS browser; only a safe attempt handle crosses IPC. */
 export function startOpenAIAuth(accountId?: string): Promise<OpenAIAuthStart> {
   return command('openai_auth_start', { accountId: accountId ?? null });
+}
+
+/** Copies the active OpenAI sign-in URL inside Rust; the URL never enters renderer memory. */
+export function copyOpenAIAuthLink(attemptId: string): Promise<null> {
+  return command('openai_auth_copy_link', { attemptId });
 }
 
 export function cancelOpenAIAuth(attemptId: string): Promise<null> {

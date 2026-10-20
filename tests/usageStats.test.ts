@@ -6,6 +6,7 @@ function usage(id: string, date: Date, values: Partial<UsageRecord> = {}): Usage
   return {
     id,
     sessionId: `session-${id}`,
+    sessionTitle: `Task ${id}`,
     projectId: 'project-a',
     providerId: 'openai',
     modelId: 'gpt-5.4-mini',
@@ -27,7 +28,7 @@ describe('usage dashboard aggregation', () => {
     const now = new Date(2026, 9, 10, 13, 0, 0);
     const yesterday = new Date(2026, 9, 9, 13, 0, 0);
     const lastWeek = new Date(2026, 9, 4, 13, 0, 0);
-    const old = new Date(2026, 8, 30, 13, 0, 0);
+    const old = new Date(2026, 7, 1, 13, 0, 0);
     const result = buildUsageDashboard([
       usage('today', now),
       usage('yesterday', yesterday, { success: false, failureCode: 'network_error', costUsd: null }),
@@ -42,6 +43,7 @@ describe('usage dashboard aggregation', () => {
     expect(result.period.tokens).toBe(420);
     expect(result.daily).toHaveLength(7);
     expect(result.daily.reduce((sum, day) => sum + day.requests, 0)).toBe(3);
+    expect(result.records.map(record => record.id)).toEqual(['today', 'yesterday', 'week', 'old']);
   });
 
   it('keeps failed attempts in provider, model, and project breakdowns', () => {

@@ -61,6 +61,17 @@ describe('OpenAI auth settings states', () => {
     expect(openAIAuthEventFeedback(event('failed', 'network_error')).message).toContain('could not reach OpenAI');
     expect(openAIAuthEventFeedback(event('failed', 'provider_outage')).message).toContain('temporarily unavailable');
     expect(openAIAuthEventFeedback(event('failed', 'oauth_failure')).message).toContain('could not verify');
+    expect(openAIAuthEventFeedback(event('failed', 'callback_rejected')).message).toContain('did not match this login attempt');
+    expect(openAIAuthEventFeedback(event('failed', 'authorization_code_rejected')).message).toContain('expired or already been used');
+    expect(openAIAuthEventFeedback(event('failed', 'authorization_exchange_rejected')).message).toContain('rejected the sign-in exchange');
+    expect(openAIAuthEventFeedback(event('failed', 'identity_verification_failed')).message).toContain('could not verify the identity');
+    expect(openAIAuthEventFeedback(event('failed', 'invalid_response')).message).toContain('response JevCode could not validate');
+    expect(openAIAuthEventFeedback(event('failed', 'local_failure')).message).toContain('local error');
+    expect(openAIAuthEventFeedback(event('failed', 'secure_storage_unavailable')).message).toContain('OS credential store');
+    expect(openAIAuthEventFeedback(event('failed', 'account_mismatch')).message).toContain('different account');
+    expect(openAIAuthEventFeedback(event('failed', 'account_already_connected')).message).toContain('already connected');
+    expect(openAIAuthEventFeedback(event('failed', 'configuration_error')).message).toContain('sign-in configuration');
+    expect(openAIAuthEventFeedback(event('failed', 'subscription_unavailable')).message).toContain('could not authorize');
     expect(openAIAuthStartErrorMessage('system_browser_unavailable')).toContain('could not open your browser');
     expect(openAIAuthStartErrorMessage('auth_callback_unavailable')).toContain('local sign-in listener');
     expect(openAIAuthStartErrorMessage('network_error')).toContain('Check your connection');

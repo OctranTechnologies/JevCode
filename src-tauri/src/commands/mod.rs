@@ -1982,7 +1982,12 @@ pub async fn openai_auth_start(
     let attempt_id = pending.attempt_id.clone();
     let browser_url = pending.authorization_url.clone();
     let (cancel_sender, cancel_receiver) = watch::channel(false);
-    state.register_openai_auth_attempt(&attempt_id, cancel_sender)?;
+    state.register_openai_auth_attempt(
+        &attempt_id,
+        cancel_sender,
+        pending.authorization_url.as_str(),
+        pending.expires_at,
+    )?;
 
     let managed_state = Arc::clone(state.inner());
     let event_app = app.clone();
@@ -1995,6 +2000,8 @@ pub async fn openai_auth_start(
             &managed_state,
         )
         .await;
+        // Drop the short-lived URL before notifying React that the attempt ended.
+        managed_state.release_openai_auth_attempt(&attempt_id);
         if let Some(completion) = completion {
             let event = OpenAiAuthAttemptEvent {
                 attempt_id: attempt_id.clone(),
@@ -2005,7 +2012,6 @@ pub async fn openai_auth_start(
                 tracing::warn!(%error, "OpenAI sign-in status delivery failed");
             }
         }
-        managed_state.release_openai_auth_attempt(&attempt_id);
     });
 
     let launch_result =
@@ -2018,7 +2024,6 @@ pub async fn openai_auth_start(
         };
     if let Err(error) = launch_result {
         let _ = state.cancel_openai_auth_attempt(&result.attempt_id);
-        state.release_openai_auth_attempt(&result.attempt_id);
         let event = OpenAiAuthAttemptEvent {
             attempt_id: result.attempt_id.clone(),
             state: OpenAiAuthAttemptState::Failed,
@@ -2032,13 +2037,30 @@ pub async fn openai_auth_start(
 }
 
 #[tauri::command]
+pub fn openai_auth_copy_link(
+    app: AppHandle,
+    attempt_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+
+    state.copy_openai_auth_link(&attempt_id, |authorization_url| {
+        app.clipboard().write_text(authorization_url).map_err(|_| {
+            AppError::new(
+                "clipboard_unavailable",
+                "JevCode could not copy the sign-in link. Check clipboard access and try again.",
+            )
+        })
+    })
+}
+
+#[tauri::command]
 pub fn openai_auth_cancel(
     attempt_id: String,
     app: AppHandle,
     state: State<'_, SharedState>,
 ) -> AppResult<()> {
     state.cancel_openai_auth_attempt(&attempt_id)?;
-    state.release_openai_auth_attempt(&attempt_id);
     let event = OpenAiAuthAttemptEvent {
         attempt_id,
         state: OpenAiAuthAttemptState::Cancelled,
@@ -2642,6 +2664,26 @@ fn openai_auth_failure_reason(error: &AppError) -> OpenAiAuthFailureReason {
         "system_browser_unavailable" | "auth_callback_unavailable" => {
             OpenAiAuthFailureReason::BrowserUnavailable
         }
+        "invalid_auth_callback" => OpenAiAuthFailureReason::CallbackRejected,
+        "openai_auth_code_rejected" => OpenAiAuthFailureReason::AuthorizationCodeRejected,
+        "openai_auth_exchange_rejected" => OpenAiAuthFailureReason::AuthorizationExchangeRejected,
+        "invalid_identity_token" => OpenAiAuthFailureReason::IdentityVerificationFailed,
+        "invalid_auth_response" => OpenAiAuthFailureReason::InvalidResponse,
+        "account_mismatch" => OpenAiAuthFailureReason::AccountMismatch,
+        "account_already_connected" => OpenAiAuthFailureReason::AccountAlreadyConnected,
+        "openai_client_configuration" => OpenAiAuthFailureReason::ConfigurationError,
+        "auth_configuration" | "provider_configuration" | "provider_format" => {
+            OpenAiAuthFailureReason::ConfigurationError
+        }
+        "keychain" => OpenAiAuthFailureReason::SecureStorageUnavailable,
+        "persistence" | "internal" => OpenAiAuthFailureReason::LocalFailure,
+        "invalid_auth_session" | "invalid_redirect_uri" | "invalid_input" => {
+            OpenAiAuthFailureReason::CallbackRejected
+        }
+        "account_not_found" | "account_not_reconnectable" => {
+            OpenAiAuthFailureReason::AccountMismatch
+        }
+        "subscription_unavailable" => OpenAiAuthFailureReason::SubscriptionUnavailable,
         _ => OpenAiAuthFailureReason::OauthFailure,
     }
 }
@@ -2777,10 +2819,17 @@ async fn handle_openai_callback(
             ))
         }
         Err(error) => {
+            // Only the app-owned error code is logged. Callback URLs, codes,
+            // state, token bodies, and identity claims are never logged.
+            tracing::warn!(
+                attempt_id = %pending.attempt_id,
+                error_code = %error.code,
+                "OpenAI sign-in callback failed"
+            );
             let _ = respond_to_openai_callback(
                 &mut stream,
                 400,
-                "This sign-in response could not be verified. Return to the desktop app and try again.",
+                "Sign-in could not be completed. Return to JevCode to see the next step.",
             )
             .await;
             Some(OpenAiAuthCompletion::new(
@@ -2877,8 +2926,47 @@ mod openai_auth_start_tests {
             ("network_error", OpenAiAuthFailureReason::NetworkError),
             ("provider_outage", OpenAiAuthFailureReason::ProviderOutage),
             (
+                "invalid_auth_callback",
+                OpenAiAuthFailureReason::CallbackRejected,
+            ),
+            (
+                "openai_auth_code_rejected",
+                OpenAiAuthFailureReason::AuthorizationCodeRejected,
+            ),
+            (
+                "openai_auth_exchange_rejected",
+                OpenAiAuthFailureReason::AuthorizationExchangeRejected,
+            ),
+            (
+                "invalid_identity_token",
+                OpenAiAuthFailureReason::IdentityVerificationFailed,
+            ),
+            (
                 "invalid_auth_response",
-                OpenAiAuthFailureReason::OauthFailure,
+                OpenAiAuthFailureReason::InvalidResponse,
+            ),
+            ("internal", OpenAiAuthFailureReason::LocalFailure),
+            ("persistence", OpenAiAuthFailureReason::LocalFailure),
+            (
+                "keychain",
+                OpenAiAuthFailureReason::SecureStorageUnavailable,
+            ),
+            (
+                "auth_configuration",
+                OpenAiAuthFailureReason::ConfigurationError,
+            ),
+            ("account_mismatch", OpenAiAuthFailureReason::AccountMismatch),
+            (
+                "account_already_connected",
+                OpenAiAuthFailureReason::AccountAlreadyConnected,
+            ),
+            (
+                "openai_client_configuration",
+                OpenAiAuthFailureReason::ConfigurationError,
+            ),
+            (
+                "subscription_unavailable",
+                OpenAiAuthFailureReason::SubscriptionUnavailable,
             ),
         ] {
             let error = AppError::new(code, "private response body must not reach the renderer");
@@ -3105,6 +3193,7 @@ mod openai_auth_start_tests {
         let response = String::from_utf8(response).unwrap();
 
         assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(response.contains("Return to JevCode to see the next step."));
         assert!(!response.contains("wrong"));
         assert_eq!(
             server.await.unwrap().map(|completion| completion.state),

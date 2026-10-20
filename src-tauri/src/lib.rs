@@ -23,6 +23,7 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -115,6 +116,7 @@ pub fn run() {
             commands::openai_auth_status,
             commands::openai_auth_refresh,
             commands::openai_auth_start,
+            commands::openai_auth_copy_link,
             commands::openai_auth_cancel,
             commands::openai_auth_logout,
             commands::openai_auth_select_account,

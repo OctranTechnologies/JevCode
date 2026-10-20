@@ -60,6 +60,7 @@ impl Database {
     pub fn open(path: &Path) -> AppResult<Self> {
         let connection = Connection::open(path)?;
         connection.execute_batch(include_str!("schema.sql"))?;
+        Self::migrate_usage_retention(&connection)?;
         Self::migrate_projects(&connection)?;
         Self::migrate_model_management(&connection)?;
         Self::migrate_permissions(&connection)?;
@@ -78,6 +79,40 @@ impl Database {
             database.save_project(&project)?;
         }
         Ok(database)
+    }
+
+    /// Older versions tied request history to a task with a foreign key. Rebuild
+    /// that table once so deleting a task cannot erase local usage telemetry.
+    fn migrate_usage_retention(connection: &Connection) -> AppResult<()> {
+        let has_session_foreign_key = {
+            let mut statement = connection.prepare("PRAGMA foreign_key_list(usage)")?;
+            let mut rows = statement.query([])?;
+            rows.next()?.is_some()
+        };
+        if !has_session_foreign_key {
+            return Ok(());
+        }
+
+        let migration = connection.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE usage_retained (
+                 id TEXT PRIMARY KEY,
+                 session_id TEXT NOT NULL,
+                 created_at TEXT NOT NULL,
+                 data TEXT NOT NULL
+             );
+             INSERT INTO usage_retained (id, session_id, created_at, data)
+                 SELECT id, session_id, created_at, data FROM usage;
+             DROP TABLE usage;
+             ALTER TABLE usage_retained RENAME TO usage;
+             CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id);
+             COMMIT;",
+        );
+        if migration.is_err() {
+            let _ = connection.execute_batch("ROLLBACK;");
+        }
+        migration?;
+        Ok(())
     }
 
     fn migrate_projects(connection: &Connection) -> AppResult<()> {
@@ -980,17 +1015,14 @@ impl Database {
     }
 
     pub fn delete_session(&self, id: &str) -> AppResult<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
-        transaction.execute("DELETE FROM usage WHERE session_id = ?1", [id])?;
-        let removed = transaction.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+        let connection = self.connection()?;
+        let removed = connection.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
         if removed == 0 {
             return Err(AppError::new(
                 "not_found",
                 "This task has already been deleted.",
             ));
         }
-        transaction.commit()?;
         Ok(())
     }
 
@@ -1416,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn task_context_roundtrips_and_delete_removes_usage() {
+    fn task_context_and_usage_roundtrip_and_usage_survives_task_deletion() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
         let mut session: AgentSession =
@@ -1456,6 +1488,7 @@ mod tests {
                 .save_usage(&UsageRecord {
                     id: "usage-test".into(),
                     session_id: session.id.clone(),
+                    session_title: "Persist usage task".into(),
                     project_id: session.project_id.clone(),
                     provider_id: session.provider_id.clone(),
                     model_id: session.model_id.clone(),
@@ -1487,10 +1520,101 @@ mod tests {
         assert_eq!(reopened.base_branch.as_deref(), Some("main"));
         assert_eq!(reopened.worktree_path, session.worktree_path);
         assert_eq!(reopened.project_instruction_files, vec!["AGENTS.md"]);
+        let stored_usage = database.usage().unwrap();
+        assert_eq!(stored_usage.len(), 1);
+        assert_eq!(stored_usage[0].session_title, "Persist usage task");
         database.delete_session(&session.id).unwrap();
         assert!(database.sessions().unwrap().is_empty());
-        assert!(database.usage().unwrap().is_empty());
+        let retained_usage = database.usage().unwrap();
+        assert_eq!(retained_usage.len(), 1);
+        assert_eq!(retained_usage[0].id, "usage-test");
     }
+
+    #[test]
+    fn legacy_usage_table_migrates_without_losing_history() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("legacy-usage.sqlite");
+        let session: AgentSession =
+            serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
+        let project = Project {
+            id: session.project_id.clone(),
+            workspace_id: "local".into(),
+            name: "legacy usage".into(),
+            path: root.path().display().to_string(),
+            repository_root: None,
+            active_branch: None,
+            last_opened_at: now(),
+            project_instructions: String::new(),
+            preferred_model: None,
+            permissions: PermissionPolicy::default(),
+            is_recent: true,
+            created_at: now(),
+        };
+        let record = UsageRecord {
+            id: "legacy-usage-record".into(),
+            session_id: session.id.clone(),
+            session_title: session.title.clone(),
+            project_id: session.project_id.clone(),
+            provider_id: session.provider_id.clone(),
+            model_id: session.model_id.clone(),
+            input_tokens: 12,
+            usage_available: true,
+            cached_input_tokens: None,
+            output_tokens: 5,
+            cost_usd: None,
+            duration_ms: 42,
+            success: true,
+            failure_code: None,
+            created_at: now(),
+        };
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON;
+                     CREATE TABLE projects (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_opened_at TEXT NOT NULL DEFAULT '', is_recent INTEGER NOT NULL DEFAULT 1, data TEXT NOT NULL);
+                     CREATE TABLE sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), updated_at TEXT NOT NULL, data TEXT NOT NULL);
+                     CREATE TABLE usage (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id), created_at TEXT NOT NULL, data TEXT NOT NULL);
+                     CREATE INDEX usage_session ON usage(session_id);",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO projects (id, path, created_at, last_opened_at, is_recent, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![project.id, project.path, project.created_at, project.last_opened_at, project.is_recent, serde_json::to_string(&project).unwrap()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sessions (id, project_id, updated_at, data) VALUES (?1, ?2, ?3, ?4)",
+                    params![session.id, session.project_id, session.updated_at, serde_json::to_string(&session).unwrap()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO usage (id, session_id, created_at, data) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        record.id,
+                        record.session_id,
+                        record.created_at,
+                        serde_json::to_string(&record).unwrap()
+                    ],
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+        let migrated_usage = database.usage().unwrap();
+        assert_eq!(migrated_usage.len(), 1);
+        assert_eq!(migrated_usage[0].id, record.id);
+        assert_eq!(migrated_usage[0].session_title, record.session_title);
+        let connection = database.connection().unwrap();
+        let mut statement = connection
+            .prepare("PRAGMA foreign_key_list(usage)")
+            .unwrap();
+        assert!(statement.query([]).unwrap().next().unwrap().is_none());
+    }
+
     #[test]
     fn projects_survive_reopening_and_unknown_ids_fail() {
         let dir = tempfile::tempdir().unwrap();

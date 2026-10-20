@@ -119,7 +119,7 @@ export function UsageView({ records, providers, projects, sessions }: {
     </section>
 
     <section className="usage-history-section">
-      <div className="usage-section-heading usage-history-heading"><div><span className="usage-overline">REQUEST LOG</span><h2>Recent requests</h2></div><span className="usage-updated">{data.records.length.toLocaleString()} in selected range</span></div>
+      <div className="usage-section-heading usage-history-heading"><div><span className="usage-overline">REQUEST LOG</span><h2>Recent requests</h2></div><span className="usage-updated">{data.records.length.toLocaleString()} stored · all time</span></div>
       {data.records.length ? <>
         <div className="usage-history-scroll"><table className="usage-history-table">
           <caption className="sr-only">Local Agent Usage request history</caption>
@@ -128,7 +128,7 @@ export function UsageView({ records, providers, projects, sessions }: {
             const provider = providersById.get(record.providerId) ?? record.providerId;
             const session = sessionsById.get(record.sessionId);
             const project = projectsById.get(record.projectId || session?.projectId || '') ?? 'Project unavailable';
-            const task = session?.title;
+            const task = session?.title || record.sessionTitle;
             return <tr key={record.id} className={record.success ? '' : 'is-failed'}>
               <td><strong>{provider}</strong><small>{record.modelId}</small></td>
               <td><strong>{project}</strong><small>{task || record.sessionId.slice(0, 8)} · {new Date(record.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small></td>

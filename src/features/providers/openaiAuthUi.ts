@@ -38,6 +38,28 @@ export function openAIAuthFailureMessage(reason: OpenAIAuthFailureReason | null)
       return 'JevCode could not reach OpenAI. Check your connection and try sign-in again.';
     case 'provider_outage':
       return 'OpenAI sign-in is temporarily unavailable. Your account is unchanged; try again later.';
+    case 'callback_rejected':
+      return 'The sign-in response did not match this login attempt. Start a fresh sign-in from JevCode.';
+    case 'authorization_code_rejected':
+      return 'OpenAI rejected this sign-in code because it may have expired or already been used. Start a fresh sign-in from JevCode.';
+    case 'authorization_exchange_rejected':
+      return 'OpenAI rejected the sign-in exchange. Start a fresh sign-in; if this repeats, JevCode may need an app configuration update.';
+    case 'identity_verification_failed':
+      return 'JevCode could not verify the identity returned by OpenAI. Start a fresh sign-in; your saved accounts are unchanged.';
+    case 'invalid_response':
+      return 'OpenAI returned a sign-in response JevCode could not validate. Start a fresh sign-in; if it repeats, update JevCode and retry.';
+    case 'local_failure':
+      return 'JevCode hit a local error while finishing sign-in. Check application diagnostics and retry; existing accounts are unchanged.';
+    case 'secure_storage_unavailable':
+      return 'JevCode could not save the OpenAI session in your OS credential store. Check that Windows Credential Manager is available, or unlock Keychain/Secret Service if locked, then retry.';
+    case 'account_mismatch':
+      return 'OpenAI returned a different account than the one selected. Choose the intended account and retry.';
+    case 'account_already_connected':
+      return 'This OpenAI account is already connected. Select it in the account list instead.';
+    case 'configuration_error':
+      return 'OpenAI could not validate JevCode’s sign-in configuration. Update JevCode and try again.';
+    case 'subscription_unavailable':
+      return 'OpenAI could not authorize this account right now. Try again later.';
     default:
       return 'OpenAI could not verify this sign-in. Start a new attempt and try again.';
   }

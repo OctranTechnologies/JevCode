@@ -70,7 +70,7 @@ export interface OpenAIAuthStatus {
 export interface OpenAIAuthStart { attemptId: string; expiresAt: string }
 export interface OpenAILogoutResult { revocationConfirmed: boolean }
 export type OpenAIAuthAttemptState = 'callback_received' | 'denied' | 'cancelled' | 'timed_out' | 'failed';
-export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'oauth_failure';
+export type OpenAIAuthFailureReason = 'browser_unavailable' | 'permission_denied' | 'network_error' | 'provider_outage' | 'callback_rejected' | 'authorization_code_rejected' | 'authorization_exchange_rejected' | 'identity_verification_failed' | 'invalid_response' | 'local_failure' | 'secure_storage_unavailable' | 'account_mismatch' | 'account_already_connected' | 'configuration_error' | 'subscription_unavailable' | 'oauth_failure';
 export interface OpenAIAuthAttemptEvent { attemptId: string; state: OpenAIAuthAttemptState; failureReason: OpenAIAuthFailureReason | null }
 export type GoogleAuthType = 'google_oauth' | 'gemini_api_key' | 'vertex_adc';
 /** Safe account metadata only. OAuth tokens exist only in the native Rust session type. */
@@ -259,6 +259,7 @@ export interface TerminalResult { output: string; exitCode: number | null; timed
 export interface UsageRecord {
   id: string;
   sessionId: string;
+  sessionTitle: string;
   projectId: string;
   providerId: string;
   modelId: string;

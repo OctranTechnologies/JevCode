@@ -56,7 +56,7 @@ export default function App() {
   const [includeProject, setIncludeProject] = useState(true);
   const [contextOpen, setContextOpen] = useState(false);
   const [mode, setMode] = useState<'agent' | 'plan'>('agent');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('jevcode-sidebar-collapsed') === 'true');
   const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth >= 1180);
@@ -178,6 +178,10 @@ export default function App() {
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', darkMode ? '#0b0b0c' : '#f7f6f3');
     localStorage.setItem('jevcode-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
+
+  useEffect(() => {
+    localStorage.setItem('jevcode-sidebar-collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     let previousWidth = window.innerWidth;
@@ -621,7 +625,7 @@ export default function App() {
 
   return <div className={compactClasses} style={{ '--sidebar-size': `${sidebarCollapsed ? 68 : sidebarWidth}px`, '--inspector-size': `${inspectorWidth}px` } as CSSProperties}>
     {(mobileSidebarOpen || (inspectorOpen && windowWidth < 1180)) && <button className="panel-backdrop" aria-label="Close open panel" onClick={() => { setMobileSidebarOpen(false); setInspectorOpen(false); }} />}
-    <WorkspaceSidebar projects={projects} sessions={allSessions} projectId={projectId} sessionId={session?.id ?? null} view={view} provider={provider} collapsed={sidebarCollapsed} opening={opening} showArchived={showArchivedTasks} onShowArchived={() => setShowArchivedTasks(value => !value)} onCollapse={() => setSidebarCollapsed(value => !value)} onProject={chooseProject} onSession={selectSession} onRenameSession={item => void renameSession(item)} onArchiveSession={item => void toggleSessionArchive(item)} onDeleteSession={item => void deleteSession(item)} onDuplicateSession={item => void duplicateSession(item)} onForkSession={item => void forkSession(item)} onView={chooseView} onNew={newTask} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} onRemoveRecent={item => void removeFromRecents(item)} onReveal={item => void revealProject(item)} onSearch={() => setPaletteOpen(true)} />
+    <WorkspaceSidebar projects={projects} sessions={allSessions} projectId={projectId} sessionId={session?.id ?? null} view={view} provider={provider} collapsed={windowWidth < 840 ? false : sidebarCollapsed} opening={opening} showArchived={showArchivedTasks} onShowArchived={() => setShowArchivedTasks(value => !value)} onCollapse={() => { if (windowWidth < 840) setMobileSidebarOpen(false); else setSidebarCollapsed(value => !value); }} onProject={chooseProject} onSession={selectSession} onRenameSession={item => void renameSession(item)} onArchiveSession={item => void toggleSessionArchive(item)} onDeleteSession={item => void deleteSession(item)} onDuplicateSession={item => void duplicateSession(item)} onForkSession={item => void forkSession(item)} onView={chooseView} onNew={newTask} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} onRemoveRecent={item => void removeFromRecents(item)} onReveal={item => void revealProject(item)} onSearch={() => setPaletteOpen(true)} />
     {!sidebarCollapsed && <ResizeDivider label="Resize sidebar" width={sidebarWidth} min={210} max={340} onResize={setSidebarWidth} />}
 
     <main className="workbench-main">
