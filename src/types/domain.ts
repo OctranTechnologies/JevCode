@@ -109,6 +109,21 @@ export type DecisionMode = 'off' | 'advisory' | 'assisted';
 export interface DecisionPreferences { mode: DecisionMode; modelId: string }
 export interface DecisionModel { id: string; description: string; releaseDate: string }
 export interface DecisionAvailability { connected: boolean; models: DecisionModel[] }
+export interface DecisionUsageRecord {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  projectId: string;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  success: boolean;
+  failureCode: string | null;
+  selectedOption: string | null;
+  selectedProbability: number | null;
+  createdAt: string;
+}
 export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable'; deferredVersion: string | null; skippedVersion: string | null; remindAfter: string | null; downloadRequestedVersion: string | null }
 export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface AgentSession {

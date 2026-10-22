@@ -145,7 +145,8 @@ only a typed task-category suggestion. Assisted mode can add fixed-choice
 workflow/context guidance to the coding-model request and reorder eligible tool
 definitions, but never removes tools, runs actions, or changes permission checks.
 The current request and project instructions remain in context. Jev usage is
-stored separately from coding-provider usage.
+stored separately from coding-provider usage and shown in its own Usage page
+section without merging provider totals or inventing a cost estimate.
 
 ## Development checks
 

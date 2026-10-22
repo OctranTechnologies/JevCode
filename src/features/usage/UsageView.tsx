@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Activity, AlertCircle, Check, CircleDollarSign, Clock3, Download, Layers3, X } from 'lucide-react';
-import type { AgentSession, Project, Provider, UsageRecord } from '../../types/domain';
+import { command, desktopAvailable } from '../../lib/ipc';
+import type { AgentSession, DecisionUsageRecord, Project, Provider, UsageRecord } from '../../types/domain';
 import { buildUsageDashboard } from './usageStats';
 
 type ExportFormat = 'csv' | 'json';
@@ -19,14 +20,16 @@ function csvCell(value: string | number | boolean | null) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
-function exportUsage(records: UsageRecord[], format: ExportFormat) {
+function exportUsage(records: UsageRecord[], decisionRecords: DecisionUsageRecord[], format: ExportFormat) {
   const notice = 'Local Agent Usage only. These records cover requests made by JevCode and do not represent complete provider-account usage or provider invoices.';
   const orderedRecords = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const orderedDecisions = [...decisionRecords].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = format === 'json'
-    ? JSON.stringify({ source: 'local_agent_usage', exportedAt: new Date().toISOString(), notice, records: orderedRecords }, null, 2)
+    ? JSON.stringify({ source: 'local_agent_usage', exportedAt: new Date().toISOString(), notice, codingModelRequests: orderedRecords, separateDecisionServiceRequests: orderedDecisions }, null, 2)
     : [
-      ['timestamp', 'provider', 'model', 'project_id', 'session_id', 'usage_available', 'input_tokens', 'cached_input_tokens', 'output_tokens', 'estimated_cost_usd', 'latency_ms', 'success', 'failure_code'].map(csvCell).join(','),
-      ...orderedRecords.map(record => [record.createdAt, record.providerId, record.modelId, record.projectId, record.sessionId, record.usageAvailable, record.usageAvailable ? record.inputTokens : null, record.usageAvailable ? record.cachedInputTokens : null, record.usageAvailable ? record.outputTokens : null, record.costUsd, record.durationMs, record.success, record.failureCode].map(csvCell).join(',')),
+      ['record_type', 'timestamp', 'provider_or_service', 'model', 'project_id', 'session_id', 'usage_available', 'input_tokens', 'cached_input_tokens', 'output_tokens', 'estimated_cost_usd', 'latency_ms', 'success', 'failure_code', 'decision'].map(csvCell).join(','),
+      ...orderedRecords.map(record => ['coding_model', record.createdAt, record.providerId, record.modelId, record.projectId, record.sessionId, record.usageAvailable, record.usageAvailable ? record.inputTokens : null, record.usageAvailable ? record.cachedInputTokens : null, record.usageAvailable ? record.outputTokens : null, record.costUsd, record.durationMs, record.success, record.failureCode, null].map(csvCell).join(',')),
+      ...orderedDecisions.map(record => ['decision_service', record.createdAt, 'TypeSafe Jev', record.modelId, record.projectId, record.sessionId, true, record.inputTokens, null, record.outputTokens, null, record.durationMs, record.success, record.failureCode, record.selectedOption].map(csvCell).join(',')),
     ].join('\r\n');
   const blob = new Blob([body], { type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8' });
   const href = URL.createObjectURL(blob);
@@ -47,6 +50,9 @@ export function UsageView({ records, providers, projects, sessions }: {
 }) {
   const [days, setDays] = useState<7 | 30>(7);
   const [exportError, setExportError] = useState('');
+  const [decisionRecords, setDecisionRecords] = useState<DecisionUsageRecord[]>([]);
+  const [decisionUsageLoading, setDecisionUsageLoading] = useState(true);
+  const [decisionUsageError, setDecisionUsageError] = useState('');
   const data = useMemo(() => buildUsageDashboard(records, providers, projects, sessions, new Date(), days), [days, projects, providers, records, sessions]);
   const providersById = useMemo(() => new Map(providers.map(provider => [provider.id, provider.name])), [providers]);
   const projectsById = useMemo(() => new Map(projects.map(project => [project.id, project.name])), [projects]);
@@ -55,10 +61,26 @@ export function UsageView({ records, providers, projects, sessions }: {
   const maxRequests = Math.max(1, ...data.byProvider.map(item => item.requests), ...data.byModel.map(item => item.requests), ...data.byProject.map(item => item.requests));
   const shownRecords = data.records.slice(0, 100);
 
+  useEffect(() => {
+    let active = true;
+    if (!desktopAvailable) { setDecisionUsageLoading(false); return () => { active = false; }; }
+    void command('get_jev_decision_usage', undefined).then(items => {
+      if (active) setDecisionRecords(items);
+    }).catch(() => {
+      if (active) setDecisionUsageError('Jev decision history could not be loaded.');
+    }).finally(() => {
+      if (active) setDecisionUsageLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
+  const decisionTokens = decisionRecords.reduce((total, record) => total + record.inputTokens + record.outputTokens, 0);
+  const decisionFailures = decisionRecords.filter(record => !record.success).length;
+  const shownDecisions = decisionRecords.slice(0, 100);
+
   function handleExport(format: ExportFormat) {
     try {
       setExportError('');
-      exportUsage(records, format);
+      exportUsage(records, decisionRecords, format);
     } catch {
       setExportError('The usage export could not be created. Try again.');
     }
@@ -142,6 +164,32 @@ export function UsageView({ records, providers, projects, sessions }: {
         </table></div>
         {data.records.length > shownRecords.length && <p className="usage-history-more">Showing the latest {shownRecords.length} requests. Export to download the complete local record.</p>}
       </> : <div className="usage-history-empty"><Clock3 size={15} /><span>Requests will appear here as tasks use a model.</span></div>}
+    </section>
+    <section className="usage-history-section decision-usage-history" aria-labelledby="decision-usage-title">
+      <div className="usage-section-heading usage-history-heading">
+        <div><span className="usage-overline">SEPARATE DECISION SERVICE</span><h2 id="decision-usage-title">Jev decision activity</h2></div>
+        <span className="usage-updated">{decisionRecords.length.toLocaleString()} stored · {decisionFailures} failed</span>
+      </div>
+      <p className="usage-decision-description">TypeSafe Jev requests and token counts are tracked separately from coding-model usage. No cost is estimated here.</p>
+      <div className="usage-decision-summary"><span><strong>{decisionRecords.length.toLocaleString()}</strong> requests</span><span><strong>{formatTokens(decisionTokens)}</strong> reported tokens</span></div>
+      {decisionUsageError ? <p className="usage-export-error" role="alert"><AlertCircle size={13} />{decisionUsageError}</p> : decisionUsageLoading ? <div className="usage-history-empty" role="status"><Clock3 size={15} /><span>Loading Jev decision history…</span></div> : decisionRecords.length ? <>
+        <div className="usage-history-scroll"><table className="usage-history-table">
+          <caption className="sr-only">Jev decision-service request history</caption>
+          <thead><tr><th>Service / model</th><th>Project / task</th><th>Input / output</th><th>Latency</th><th>Result</th><th>Typed decision</th></tr></thead>
+          <tbody>{shownDecisions.map(record => {
+            const project = projectsById.get(record.projectId) ?? 'Project unavailable';
+            return <tr key={record.id} className={record.success ? '' : 'is-failed'}>
+              <td><strong>TypeSafe Jev</strong><small>{record.modelId}</small></td>
+              <td><strong>{project}</strong><small>{record.sessionTitle || record.sessionId.slice(0, 8)} · {new Date(record.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small></td>
+              <td>{record.inputTokens.toLocaleString()} / {record.outputTokens.toLocaleString()}</td>
+              <td>{(record.durationMs / 1000).toFixed(2)} s</td>
+              <td><span className={`usage-result ${record.success ? 'is-success' : 'is-failure'}`}>{record.success ? <Check size={11} /> : <X size={11} />}{record.success ? 'Success' : record.failureCode ?? 'Failed'}</span></td>
+              <td className="usage-decision-cell">{record.selectedOption ?? 'No decision returned'}{record.selectedProbability !== null && record.selectedProbability !== undefined && <small>{Math.round(record.selectedProbability * 100)}% selected probability</small>}</td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+        {decisionRecords.length > shownDecisions.length && <p className="usage-history-more">Showing the latest {shownDecisions.length} decisions.</p>}
+      </> : <div className="usage-history-empty"><Clock3 size={15} /><span>Decision requests appear here when Advisory or Assisted mode is enabled.</span></div>}
     </section>
     <p className="usage-disclaimer">Estimates use normalized USD per million token rates where available. Cached-input rates are applied when reported. Provider billing, tiers, free quotas, tools, taxes, and discounts may differ.</p>
   </section>;

@@ -3239,6 +3239,13 @@ pub fn get_jev_decision_preferences(
 }
 
 #[tauri::command]
+pub fn get_jev_decision_usage(
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<DecisionUsageRecord>> {
+    state.database.decision_usage()
+}
+
+#[tauri::command]
 pub async fn get_jev_availability(
     state: State<'_, SharedState>,
 ) -> AppResult<DecisionAvailability> {

@@ -925,6 +925,11 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .usage-result.is-failure { color: var(--wb-danger); }
 .usage-history-empty { display: flex; align-items: center; gap: 7px; padding: 15px 12px; color: var(--wb-muted); font-size: 9px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 7px; }
 .usage-history-empty svg { color: var(--wb-accent); }
+.usage-decision-description { margin: 0 0 10px; color: var(--wb-muted); font-size: 9px; line-height: 1.6; }
+.usage-decision-summary { display: flex; flex-wrap: wrap; gap: 15px; margin: 0 0 9px; color: var(--wb-muted); font-size: 9px; }
+.usage-decision-summary strong { color: var(--wb-ink); font-weight: 620; }
+.usage-history-table td.usage-decision-cell { max-width: 260px; overflow-wrap: anywhere; white-space: normal; }
+.usage-history-table td.usage-decision-cell small { max-width: none; white-space: normal; }
 .usage-history-more { margin: 6px 1px 0; color: var(--wb-muted); font-size: 8px; }
 .usage-disclaimer { margin: 12px 0 4px; color: var(--wb-muted); font-size: 10px; line-height: 1.6; }
 

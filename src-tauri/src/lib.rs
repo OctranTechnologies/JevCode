@@ -138,6 +138,7 @@ pub fn run() {
             commands::connect_jev_api_key,
             commands::disconnect_jev,
             commands::save_jev_decision_preferences,
+            commands::get_jev_decision_usage,
             commands::frontend_log,
             commands::set_permission_mode,
             commands::save_update_preferences,
