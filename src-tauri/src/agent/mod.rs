@@ -45,6 +45,7 @@ impl Default for AgentRuntimeConfig {
 
 pub struct AgentRuntime {
     config: AgentRuntimeConfig,
+    decision_engine: Option<std::sync::Arc<dyn crate::decisions::DecisionEngine>>,
 }
 
 struct RuntimeServices<'a> {
@@ -82,7 +83,21 @@ impl Default for AgentRuntime {
 
 impl AgentRuntime {
     pub fn new(config: AgentRuntimeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            decision_engine: None,
+        }
+    }
+
+    /// Inject a deterministic decision engine for runtime tests or host-provided
+    /// implementations. Production defaults to the native Jev adapter.
+    #[cfg(test)]
+    pub fn with_decision_engine(
+        mut self,
+        engine: std::sync::Arc<dyn crate::decisions::DecisionEngine>,
+    ) -> Self {
+        self.decision_engine = Some(engine);
+        self
     }
 
     async fn execute(
@@ -107,6 +122,11 @@ impl AgentRuntime {
             None,
         );
         checkpoint(state, sink, session)?;
+
+        if session.iterations == 0 {
+            Self::run_jev_advisory(state, sink, session, cancel, self.decision_engine.as_ref())
+                .await?;
+        }
 
         let definitions = if model.supports_tools {
             let mut available = tools::definitions();
@@ -324,6 +344,177 @@ impl AgentRuntime {
                     return Err(error);
                 }
             }
+        }
+    }
+
+    /// Advisory mode sends only the current user objective to the independent Jev
+    /// decision service. Its category suggestion is recorded for the user but does
+    /// not alter prompts, tools, routing, or the permission system.
+    async fn run_jev_advisory(
+        state: &SharedState,
+        sink: &dyn EventSink,
+        session: &mut AgentSession,
+        cancel: &mut watch::Receiver<bool>,
+        decision_engine: Option<&std::sync::Arc<dyn crate::decisions::DecisionEngine>>,
+    ) -> AppResult<()> {
+        let preferences = state.database.decision_preferences()?;
+        if preferences.mode != DecisionMode::Advisory {
+            return Ok(());
+        }
+
+        let Some(objective) = session
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == MessageRole::User)
+            .map(|message| message.content.chars().take(3_000).collect::<String>())
+            .filter(|objective| !objective.trim().is_empty())
+        else {
+            return Ok(());
+        };
+
+        let mut criteria = BTreeMap::new();
+        criteria.insert(
+            "coding".to_owned(),
+            "The request primarily asks to implement or modify project code.".to_owned(),
+        );
+        criteria.insert(
+            "debugging".to_owned(),
+            "The request primarily asks to investigate or fix existing behavior.".to_owned(),
+        );
+        criteria.insert(
+            "review".to_owned(),
+            "The request primarily asks to inspect, evaluate, or review existing work.".to_owned(),
+        );
+        criteria.insert(
+            "explanation".to_owned(),
+            "The request primarily asks for information, a plan, or an explanation.".to_owned(),
+        );
+        let request = crate::decisions::DecisionRequest {
+            model_id: preferences.model_id.clone(),
+            state: serde_json::json!({ "objective": objective }),
+            questions: BTreeMap::from([(
+                "task_category".to_owned(),
+                crate::decisions::DecisionQuestion::Choice {
+                    instructions: "Classify the user's current request by its primary intent."
+                        .to_owned(),
+                    criteria,
+                },
+            )]),
+        };
+
+        let started = Instant::now();
+        let result = if *cancel.borrow() {
+            Err(AppError::new("cancelled", "Run stopped by you."))
+        } else {
+            let operation = async {
+                let engine: std::sync::Arc<dyn crate::decisions::DecisionEngine> =
+                    if let Some(engine) = decision_engine {
+                        std::sync::Arc::clone(engine)
+                    } else {
+                        std::sync::Arc::new(crate::decisions::JevClient::new(&state.credentials)?)
+                    };
+                tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::select! {
+                    biased;
+                    _ = cancel.changed() => Err(AppError::new("cancelled", "Run stopped by you.")),
+                    result = engine.evaluate(request) => result,
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                Err(AppError::new(
+                    "decision_timeout",
+                    "Jev did not respond in time.",
+                ))
+            })
+            };
+            operation.await
+        };
+
+        let (
+            success,
+            selected_option,
+            selected_probability,
+            input_tokens,
+            output_tokens,
+            failure_code,
+            summary,
+        ) = match result {
+            Ok(response) => {
+                let answer = response.answers.get("task_category");
+                let (choice, probability) = match answer {
+                    Some(crate::decisions::DecisionAnswer::Choice {
+                        choice,
+                        probabilities,
+                        confidence,
+                    }) => (
+                        Some(choice.clone()),
+                        probabilities.get(choice).copied().or(*confidence),
+                    ),
+                    _ => (None, None),
+                };
+                if *cancel.borrow() {
+                    return Err(AppError::new("cancelled", "Run stopped by you."));
+                }
+                let label = choice
+                    .as_deref()
+                    .map(Self::decision_category_label)
+                    .unwrap_or("uncertain");
+                (
+                    choice.is_some(),
+                    choice,
+                    probability,
+                    response.input_tokens,
+                    response.output_tokens,
+                    None,
+                    format!("Jev advisory: request category is {label}. The coding agent remains in control."),
+                )
+            }
+            Err(error) if error.code == "cancelled" => return Err(error),
+            Err(error) => {
+                tracing::info!(session_id = %session.id, code = %error.code, "Jev advisory unavailable; continuing agent task");
+                (
+                    false,
+                    None,
+                    None,
+                    0,
+                    0,
+                    Some(error.code),
+                    "Jev advisory unavailable; continuing with the coding model.".to_owned(),
+                )
+            }
+        };
+
+        let record = DecisionUsageRecord {
+            id: id(),
+            session_id: session.id.clone(),
+            session_title: session.title.clone(),
+            project_id: session.project_id.clone(),
+            model_id: preferences.model_id,
+            input_tokens,
+            output_tokens,
+            duration_ms: started.elapsed().as_millis() as u64,
+            success,
+            failure_code,
+            selected_option,
+            selected_probability,
+            created_at: now(),
+        };
+        if let Err(error) = state.database.save_decision_usage(&record) {
+            tracing::warn!(session_id = %session.id, code = %error.code, "Could not save Jev decision usage");
+        }
+        record_activity(session, AgentActivityKind::DecisionAdvisory, summary, None);
+        checkpoint(state, sink, session)
+    }
+
+    fn decision_category_label(category: &str) -> &'static str {
+        match category {
+            "coding" => "implementation",
+            "debugging" => "debugging",
+            "review" => "review",
+            "explanation" => "explanation",
+            _ => "uncertain",
         }
     }
 
@@ -1163,6 +1354,7 @@ async fn drive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decisions::DecisionResponse;
     use crate::extensions::{ExtensionRegistry, ToolIntegration};
     use crate::{
         config::AppConfig, credentials::CredentialStore, persistence::Database, state::AppState,
@@ -1394,6 +1586,104 @@ mod tests {
             .any(|event| event.kind == AgentActivityKind::FileInspected));
         assert_eq!(state.database.usage().unwrap().len(), 2);
         assert!(!sink.deltas.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn advisory_jev_decision_is_recorded_separately_without_controlling_task() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, session) = setup_session(root.path());
+        state
+            .database
+            .save_decision_preferences(&DecisionPreferences {
+                mode: DecisionMode::Advisory,
+                model_id: "jev-test".into(),
+            })
+            .unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        let sink = Sink::default();
+        let provider = MockProvider::new(vec![response("Task completed.", vec![])]);
+        let engine = crate::decisions::MockDecisionEngine::with_responses([DecisionResponse {
+            model_id: "jev-test".into(),
+            answers: BTreeMap::from([(
+                "task_category".into(),
+                crate::decisions::DecisionAnswer::Choice {
+                    choice: "coding".into(),
+                    probabilities: BTreeMap::from([
+                        ("coding".into(), 0.9),
+                        ("debugging".into(), 0.04),
+                        ("review".into(), 0.03),
+                        ("explanation".into(), 0.03),
+                    ]),
+                    confidence: Some(0.9),
+                },
+            )]),
+            input_tokens: 12,
+            output_tokens: 4,
+            request_id: Some("mock-decision".into()),
+        }]);
+
+        run_inner(
+            state.clone(),
+            Box::new(sink),
+            session.clone(),
+            receiver,
+            Some(Box::new(provider)),
+            AgentRuntime::default().with_decision_engine(Arc::new(engine)),
+        )
+        .await;
+
+        let saved = state.database.session(&session.id).unwrap();
+        assert_eq!(saved.status, SessionStatus::Completed);
+        assert!(saved.activity_events.iter().any(|event| {
+            event.kind == AgentActivityKind::DecisionAdvisory
+                && event.summary.contains("implementation")
+        }));
+        assert_eq!(state.database.usage().unwrap().len(), 1);
+        let decisions = state.database.decision_usage().unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].selected_option.as_deref(), Some("coding"));
+        assert_eq!(decisions[0].input_tokens, 12);
+        assert!(decisions[0].success);
+    }
+
+    #[tokio::test]
+    async fn unavailable_jev_advisory_is_audited_but_does_not_block_task() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, session) = setup_session(root.path());
+        state
+            .database
+            .save_decision_preferences(&DecisionPreferences {
+                mode: DecisionMode::Advisory,
+                model_id: "jev-test".into(),
+            })
+            .unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        let provider = MockProvider::new(vec![response("Task completed.", vec![])]);
+        let runtime = AgentRuntime::default()
+            .with_decision_engine(Arc::new(crate::decisions::MockDecisionEngine::default()));
+
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(provider)),
+            runtime,
+        )
+        .await;
+
+        assert_eq!(
+            state.database.session(&session.id).unwrap().status,
+            SessionStatus::Completed
+        );
+        let decisions = state.database.decision_usage().unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert!(!decisions[0].success);
+        assert_eq!(
+            decisions[0].failure_code.as_deref(),
+            Some("decision_unavailable")
+        );
+        assert_eq!(state.database.usage().unwrap().len(), 1);
     }
 
     #[tokio::test]

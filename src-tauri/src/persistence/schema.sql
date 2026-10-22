@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS usage (
     created_at TEXT NOT NULL,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS decision_usage (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
 -- This table contains only non-secret account state. Credential bytes belong in
 -- the platform keychain, never in SQLite or serialized application settings.
 CREATE TABLE IF NOT EXISTS provider_accounts (
@@ -52,6 +58,7 @@ CREATE TABLE IF NOT EXISTS permission_rules (
 CREATE INDEX IF NOT EXISTS permission_rules_project ON permission_rules(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project_id, updated_at);
 CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id);
+CREATE INDEX IF NOT EXISTS decision_usage_session ON decision_usage(session_id);
 CREATE TABLE IF NOT EXISTS session_review_baselines (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -77,4 +84,4 @@ CREATE TABLE IF NOT EXISTS session_file_checkpoints (
     PRIMARY KEY(session_id, path)
 );
 CREATE INDEX IF NOT EXISTS session_file_checkpoints_session ON session_file_checkpoints(session_id, path);
-PRAGMA user_version = 8;
+PRAGMA user_version = 9;

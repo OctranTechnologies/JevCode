@@ -1070,6 +1070,27 @@ impl Database {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
+    pub fn save_decision_usage(&self, record: &DecisionUsageRecord) -> AppResult<()> {
+        self.connection()?.execute(
+            "INSERT INTO decision_usage (id, session_id, created_at, data) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                record.id,
+                record.session_id,
+                record.created_at,
+                serde_json::to_string(record)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn decision_usage(&self) -> AppResult<Vec<DecisionUsageRecord>> {
+        let connection = self.connection()?;
+        let mut statement =
+            connection.prepare("SELECT data FROM decision_usage ORDER BY created_at DESC")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
     pub fn provider_account(&self, provider_id: &str) -> AppResult<Option<ProviderAccount>> {
         let json: Option<String> = self
             .connection()?
@@ -1155,6 +1176,43 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jev_preferences_and_usage_survive_database_reopen_separately() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("decision-service.sqlite");
+        let record = DecisionUsageRecord {
+            id: "decision-1".into(),
+            session_id: "session-1".into(),
+            session_title: "Review task".into(),
+            project_id: "project-1".into(),
+            model_id: "jev-test".into(),
+            input_tokens: 14,
+            output_tokens: 3,
+            duration_ms: 98,
+            success: true,
+            failure_code: None,
+            selected_option: Some("review".into()),
+            selected_probability: Some(0.86),
+            created_at: now(),
+        };
+        {
+            let database = Database::open(&path).unwrap();
+            database
+                .save_decision_preferences(&DecisionPreferences {
+                    mode: DecisionMode::Advisory,
+                    model_id: "jev-test".into(),
+                })
+                .unwrap();
+            database.save_decision_usage(&record).unwrap();
+        }
+        let database = Database::open(&path).unwrap();
+        let preferences = database.decision_preferences().unwrap();
+        assert_eq!(preferences.mode, DecisionMode::Advisory);
+        assert_eq!(preferences.model_id, "jev-test");
+        assert_eq!(database.decision_usage().unwrap(), vec![record]);
+        assert!(database.usage().unwrap().is_empty());
+    }
 
     #[test]
     fn model_catalog_and_preferences_survive_database_reopen() {

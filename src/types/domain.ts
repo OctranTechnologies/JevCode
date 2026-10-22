@@ -176,7 +176,7 @@ export interface Tool {
   parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
 }
-export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted';
+export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory';
 export interface AgentActivityEvent {
   id: string;
   sessionId: string;

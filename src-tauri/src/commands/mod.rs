@@ -3261,6 +3261,13 @@ pub async fn connect_jev_api_key(
 
 #[tauri::command]
 pub fn disconnect_jev(state: State<'_, SharedState>) -> AppResult<DecisionAvailability> {
+    let previous = state.database.decision_preferences()?;
+    state
+        .database
+        .save_decision_preferences(&DecisionPreferences {
+            mode: DecisionMode::Off,
+            model_id: previous.model_id,
+        })?;
     state.credentials.delete("typesafe-jev")?;
     Ok(DecisionAvailability {
         connected: false,

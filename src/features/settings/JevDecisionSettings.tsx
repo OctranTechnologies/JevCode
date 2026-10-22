@@ -81,8 +81,6 @@ export function JevDecisionSettings() {
       setAvailability(await command('disconnect_jev', undefined));
       setApiKey('');
       setPreferences(current => ({ ...current, mode: 'off' }));
-      const safePreferences = { ...preferences, mode: 'off' as const };
-      setPreferences(await command('save_jev_decision_preferences', { preferences: safePreferences }));
       setNotice('Jev was disconnected and decision assistance is off.');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Jev could not be disconnected.');
@@ -142,7 +140,7 @@ export function JevDecisionSettings() {
 
     <section className="jev-preferences-section" aria-labelledby="jev-preferences-heading">
       <div className="permission-section-heading">
-        <div><h2 id="jev-preferences-heading">How Jev should help</h2><p>Decision requests are sent to TypeSafe using the selected Jev model.</p></div>
+        <div><h2 id="jev-preferences-heading">How Jev should help</h2><p>When enabled, the current user request is sent to TypeSafe using the selected Jev model. Repository file contents are not sent to Jev.</p></div>
         <ShieldCheck size={17} aria-hidden="true" />
       </div>
       <label className="permission-mode-control" htmlFor="jev-mode-select">

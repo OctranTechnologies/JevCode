@@ -27,7 +27,7 @@ sensitive actions, and review its changes before keeping them.
 - **Projects:** open local folders and Git repositories, browse files lazily, and view branch and working-tree status.
 - **Tasks:** resume conversations, inspect activity, and keep project instructions such as `AGENTS.md` in context.
 - **Multiple providers:** select models from connected providers without changing the agent runtime.
-- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers; its API key uses the OS credential store.
+- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers; its API key uses the OS credential store. Advisory mode sees only the current request and cannot approve actions.
 - **Controlled tools:** repository reads, edits, Git actions, and commands pass through validation and permission checks.
 - **Change review:** inspect diffs, accept or revert files, and preserve modifications that existed before a task.
 - **Isolated worktrees:** optionally run concurrent tasks in separate Git worktrees.
@@ -137,6 +137,11 @@ usage or billing totals.
 Provider-specific request formats stay in native adapters. The agent runtime
 uses a shared provider interface; model names and credentials are not embedded
 in the conversation UI.
+
+Jev is a separate optional decision service, not a coding-model provider. When
+Advisory mode is enabled, Jev receives the current user request and returns a
+typed task-category suggestion. Jev usage is stored separately from coding
+provider usage, and its result does not change tools, prompts, or permissions.
 
 ## Development checks
 

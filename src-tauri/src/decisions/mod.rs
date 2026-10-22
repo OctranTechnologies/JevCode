@@ -73,10 +73,12 @@ pub trait DecisionEngine: Send + Sync {
 /// A deterministic engine for runtime callers and offline integration flows.
 /// Responses are queued so tests can control each decision without network calls.
 #[derive(Clone, Default)]
+#[cfg(test)]
 pub struct MockDecisionEngine {
     responses: Arc<Mutex<VecDeque<DecisionResponse>>>,
 }
 
+#[cfg(test)]
 impl MockDecisionEngine {
     pub fn with_responses(responses: impl IntoIterator<Item = DecisionResponse>) -> Self {
         Self {
@@ -85,6 +87,7 @@ impl MockDecisionEngine {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl DecisionEngine for MockDecisionEngine {
     async fn evaluate(&self, _request: DecisionRequest) -> AppResult<DecisionResponse> {
