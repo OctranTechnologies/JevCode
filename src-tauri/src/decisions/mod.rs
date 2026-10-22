@@ -5,12 +5,16 @@ mod jev;
 
 pub use jev::JevClient;
 
-use crate::error::{AppError, AppResult};
+#[cfg(test)]
+use crate::error::AppError;
+use crate::error::AppResult;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
+#[cfg(test)]
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     sync::{Arc, Mutex},
 };
 
@@ -70,8 +74,7 @@ pub trait DecisionEngine: Send + Sync {
     async fn evaluate(&self, request: DecisionRequest) -> AppResult<DecisionResponse>;
 }
 
-/// A deterministic engine for runtime callers and offline integration flows.
-/// Responses are queued so tests can control each decision without network calls.
+/// A deterministic test engine whose queued responses avoid network calls.
 #[derive(Clone, Default)]
 #[cfg(test)]
 pub struct MockDecisionEngine {

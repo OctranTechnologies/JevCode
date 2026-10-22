@@ -1640,6 +1640,21 @@ mod tests {
         calls: Arc<Mutex<u32>>,
     }
 
+    struct BlockingDecisionEngine {
+        started: Arc<Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::decisions::DecisionEngine for BlockingDecisionEngine {
+        async fn evaluate(
+            &self,
+            _request: crate::decisions::DecisionRequest,
+        ) -> AppResult<DecisionResponse> {
+            self.started.notify_one();
+            std::future::pending().await
+        }
+    }
+
     #[async_trait::async_trait]
     impl ToolIntegration for MockExternalTool {
         fn owns(&self, name: &str) -> bool {
@@ -1942,6 +1957,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (state, _, mut session) = setup_session(root.path());
         session.permission_policy.shell = PermissionDecision::Deny;
+        session.messages.insert(
+            0,
+            AgentMessage::text(
+                MessageRole::System,
+                "Project instructions: preserve every user requirement.",
+            ),
+        );
         state.database.save_session(&session).unwrap();
         state
             .database
@@ -2064,6 +2086,10 @@ mod tests {
         assert!(provider_messages[0].iter().any(
             |message| message.role == MessageRole::User && message.content == "Inspect README"
         ));
+        assert!(provider_messages[0].iter().any(|message| {
+            message.role == MessageRole::System
+                && message.content == "Project instructions: preserve every user requirement."
+        }));
         let tool_names = captured_tools.lock().unwrap();
         let tools = &tool_names[0];
         assert!(!tools.iter().any(|name| name == "run_command"));
@@ -2073,6 +2099,145 @@ mod tests {
             tools.iter().position(|name| name == "git_status")
                 < tools.iter().position(|name| name == "read_file")
         );
+    }
+
+    #[tokio::test]
+    async fn malformed_assisted_response_fails_closed_to_normal_agent_context() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, mut session) = setup_session(root.path());
+        session.permission_policy.shell = PermissionDecision::Deny;
+        state.database.save_session(&session).unwrap();
+        state
+            .database
+            .save_decision_preferences(&DecisionPreferences {
+                mode: DecisionMode::Assisted,
+                model_id: "jev-test".into(),
+            })
+            .unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        let provider = MockProvider::new(vec![response("Normal path completed.", vec![])]);
+        let captured_messages = provider.captured_messages.clone();
+        let captured_tools = provider.captured_tools.clone();
+        let engine = crate::decisions::MockDecisionEngine::with_responses([DecisionResponse {
+            model_id: "jev-test".into(),
+            answers: BTreeMap::from([(
+                "task_category".into(),
+                crate::decisions::DecisionAnswer::Choice {
+                    choice: "coding".into(),
+                    probabilities: BTreeMap::from([
+                        ("coding".into(), 0.9),
+                        ("debugging".into(), 0.03),
+                        ("review".into(), 0.04),
+                        ("explanation".into(), 0.03),
+                    ]),
+                    confidence: Some(0.9),
+                },
+            )]),
+            input_tokens: 20,
+            output_tokens: 2,
+            request_id: None,
+        }]);
+
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(provider)),
+            AgentRuntime::default().with_decision_engine(Arc::new(engine)),
+        )
+        .await;
+
+        assert_eq!(
+            state.database.session(&session.id).unwrap().status,
+            SessionStatus::Completed
+        );
+        let decisions = state.database.decision_usage().unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert!(!decisions[0].success);
+        assert_eq!(decisions[0].failure_code.as_deref(), Some("provider_error"));
+        assert!(decisions[0].selected_option.is_none());
+        assert!(!captured_messages.lock().unwrap()[0]
+            .iter()
+            .any(|message| message.content.contains("Bounded Jev assistance")));
+        assert!(!captured_tools.lock().unwrap()[0]
+            .iter()
+            .any(|name| name == "run_command"));
+    }
+
+    #[tokio::test]
+    async fn jev_is_not_called_when_decision_mode_is_off() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, session) = setup_session(root.path());
+        let receiver = state.reserve_run(&session.id).unwrap();
+        let provider = MockProvider::new(vec![response("Task completed.", vec![])]);
+
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(provider)),
+            AgentRuntime::default()
+                .with_decision_engine(Arc::new(crate::decisions::MockDecisionEngine::default())),
+        )
+        .await;
+
+        assert_eq!(
+            state.database.session(&session.id).unwrap().status,
+            SessionStatus::Completed
+        );
+        assert!(state.database.decision_usage().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelling_during_a_jev_decision_stops_before_provider_request() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, session) = setup_session(root.path());
+        state
+            .database
+            .save_decision_preferences(&DecisionPreferences {
+                mode: DecisionMode::Advisory,
+                model_id: "jev-test".into(),
+            })
+            .unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        let started = Arc::new(Notify::new());
+        let started_signal = Arc::clone(&started);
+        let run_state = Arc::clone(&state);
+        let run_session = session.clone();
+        let task = tokio::spawn(async move {
+            run_inner(
+                run_state,
+                Box::new(Sink::default()),
+                run_session,
+                receiver,
+                Some(Box::new(MockProvider::new(vec![response(
+                    "This must not be requested.",
+                    vec![],
+                )]))),
+                AgentRuntime::default().with_decision_engine(Arc::new(BlockingDecisionEngine {
+                    started: started_signal,
+                })),
+            )
+            .await;
+        });
+        started.notified().await;
+        state
+            .runs
+            .lock()
+            .unwrap()
+            .get(&session.id)
+            .unwrap()
+            .send(true)
+            .unwrap();
+        task.await.unwrap();
+
+        assert_eq!(
+            state.database.session(&session.id).unwrap().status,
+            SessionStatus::Cancelled
+        );
+        assert!(state.database.usage().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -147,6 +147,9 @@ definitions, but never removes tools, runs actions, or changes permission checks
 The current request and project instructions remain in context. Jev usage is
 stored separately from coding-provider usage and shown in its own Usage page
 section without merging provider totals or inventing a cost estimate.
+If Jev is offline, times out, or returns an invalid decision, Jev guidance is
+omitted and the task continues through the normal agent path. Mock-driven tests
+cover this fallback, mode-off behavior, cancellation, and unchanged permissions.
 
 ## Development checks
 
