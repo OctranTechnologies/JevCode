@@ -3,7 +3,7 @@
 
 mod jev;
 
-pub use jev::{JevClient, JevModel};
+pub use jev::JevClient;
 
 use crate::error::{AppError, AppResult};
 use async_trait::async_trait;
@@ -13,15 +13,6 @@ use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum DecisionMode {
-    #[default]
-    Off,
-    Advisory,
-    Assisted,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

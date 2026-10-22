@@ -105,6 +105,10 @@ export type ModelCapability = 'tools' | 'vision' | 'reasoning' | 'streaming';
 export type ModelStatus = 'available' | 'deprecated' | 'unavailable';
 export interface ModelReference { providerId: string; modelId: string }
 export interface ModelPreferences { defaultModel: ModelReference | null; favorites: ModelReference[]; recent: ModelReference[] }
+export type DecisionMode = 'off' | 'advisory' | 'assisted';
+export interface DecisionPreferences { mode: DecisionMode; modelId: string }
+export interface DecisionModel { id: string; description: string; releaseDate: string }
+export interface DecisionAvailability { connected: boolean; models: DecisionModel[] }
 export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable'; deferredVersion: string | null; skippedVersion: string | null; remindAfter: string | null; downloadRequestedVersion: string | null }
 export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface AgentSession {

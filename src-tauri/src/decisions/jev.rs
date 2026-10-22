@@ -1,6 +1,7 @@
 use super::{DecisionAnswer, DecisionEngine, DecisionQuestion, DecisionRequest, DecisionResponse};
 use crate::{
     credentials::CredentialStore,
+    domain::DecisionModel,
     error::{AppError, AppResult},
 };
 use async_trait::async_trait;
@@ -11,23 +12,22 @@ use zeroize::Zeroizing;
 
 const API_BASE: &str = "https://api.typesafe.ai/v1";
 const API_KEY_ID: &str = "typesafe-jev";
-const DEFAULT_MODEL: &str = "jev-latest";
 
 pub struct JevClient {
     http: reqwest::Client,
     api_key: Zeroizing<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct JevModel {
-    pub name: String,
-    pub description: String,
-    pub release_date: String,
+#[derive(Debug, Deserialize)]
+struct JevModelItem {
+    name: String,
+    description: String,
+    release_date: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct JevModelList {
-    models: Vec<JevModel>,
+    models: Vec<JevModelItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +74,10 @@ impl JevClient {
         })
     }
 
-    pub async fn validate_key(credentials: &CredentialStore, secret: &str) -> AppResult<()> {
+    pub async fn validate_key(
+        credentials: &CredentialStore,
+        secret: &str,
+    ) -> AppResult<Vec<DecisionModel>> {
         if secret.trim().len() < 12 || secret.len() > 16_384 {
             return Err(AppError::new(
                 "invalid_credential",
@@ -89,7 +92,8 @@ impl JevClient {
                 "TypeSafe did not return any available Jev models.",
             ));
         }
-        credentials.save(API_KEY_ID, secret.trim())
+        credentials.save(API_KEY_ID, secret.trim())?;
+        Ok(models)
     }
 
     fn with_key(secret: &str) -> AppResult<Self> {
@@ -103,7 +107,7 @@ impl JevClient {
         })
     }
 
-    pub async fn available_models(&self) -> AppResult<Vec<JevModel>> {
+    pub async fn available_models(&self) -> AppResult<Vec<DecisionModel>> {
         let response = self
             .http
             .get(format!("{API_BASE}/models"))
@@ -114,7 +118,7 @@ impl JevClient {
         if !response.status().is_success() {
             return Err(map_http_error(response.status()));
         }
-        response
+        let models = response
             .json::<JevModelList>()
             .await
             .map(|catalog| catalog.models)
@@ -123,7 +127,15 @@ impl JevClient {
                     "provider_error",
                     "TypeSafe returned an invalid Jev model catalog.",
                 )
+            })?;
+        Ok(models
+            .into_iter()
+            .map(|model| DecisionModel {
+                id: model.name,
+                description: model.description,
+                release_date: model.release_date,
             })
+            .collect())
     }
 }
 

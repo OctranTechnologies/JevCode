@@ -1146,6 +1146,47 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .workspace-offline-banner { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 34px; padding: 7px 16px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border-bottom: 1px solid var(--wb-border); font-size: 11px; }
 .workspace-offline-banner svg { flex: 0 0 auto; }
 .settings-content-scroll .diagnostics-settings { width: min(900px, 100%); padding-top: 34px; }
+
+/* TypeSafe Jev is configured as a separate decision service, never as a chat provider. */
+.jev-decision-settings { padding-top: 34px; }
+.jev-decision-settings > .settings-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 21px; }
+.jev-decision-settings > .settings-heading-row h1 { margin: 0 0 5px; }
+.jev-decision-settings > .settings-heading-row .page-description { max-width: 68ch; margin: 0; color: var(--wb-muted); font-size: 10px; line-height: 1.65; }
+.jev-connection-card, .jev-preferences-section { padding: 16px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 9px; }
+.jev-connection-card { margin-bottom: 15px; }
+.jev-connection-heading { display: flex; align-items: center; gap: 11px; }
+.jev-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: var(--wb-accent-ink); background: var(--wb-accent); border-radius: 8px; font-size: 18px; font-weight: 700; }
+.jev-connection-heading > div:nth-child(2) { min-width: 0; }
+.jev-connection-heading h2 { margin: 0; color: var(--wb-ink); font-size: 12px; font-weight: 620; }
+.jev-connection-heading p { margin: 4px 0 0; color: var(--wb-muted); font-size: 9px; line-height: 1.55; }
+.jev-connection-state { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--wb-muted); font-size: 9px; white-space: nowrap; }
+.jev-connection-state > span { width: 6px; height: 6px; background: var(--wb-muted); border-radius: 50%; }
+.jev-connection-state.connected { color: var(--wb-success, #2e9b68); }
+.jev-connection-state.connected > span { background: currentColor; }
+.jev-inline-state { display: flex; align-items: center; gap: 7px; margin: 13px 0 0 45px; color: var(--wb-muted); font-size: 10px; }
+.jev-connected-details { margin: 12px 0 0 45px; }
+.jev-safe-note { display: flex; align-items: flex-start; gap: 7px; color: var(--wb-muted); font-size: 9px; line-height: 1.6; }
+.jev-safe-note svg { flex: 0 0 auto; color: var(--wb-accent); }
+.jev-connection-actions { display: flex; align-items: center; gap: 7px; margin-top: 12px; }
+.jev-connection-actions > span { margin-right: auto; color: var(--wb-muted); font-size: 9px; }
+.jev-key-form { margin: 13px 0 0 45px; }
+.jev-key-form label { display: grid; gap: 5px; min-width: 0; color: var(--wb-muted-strong); font-size: 9px; }
+.jev-key-form input { box-sizing: border-box; }
+.jev-preferences-section .permission-section-heading { margin-bottom: 4px; }
+.jev-preferences-section .permission-safety-note { margin-top: 17px; }
+.jev-settings-feedback { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 13px; padding: 10px 11px; border: 1px solid var(--wb-border); border-radius: 6px; font-size: 10px; line-height: 1.5; }
+.jev-settings-feedback svg { flex: 0 0 auto; margin-top: 1px; }
+.jev-settings-feedback.error { color: var(--wb-danger); background: var(--wb-danger-soft); border-color: color-mix(in srgb, var(--wb-danger) 24%, var(--wb-border)); }
+.jev-settings-feedback.success { color: var(--wb-success, #2e9b68); background: color-mix(in srgb, var(--wb-success, #2e9b68) 8%, var(--wb-surface)); }
+.jev-model-warning { margin: 8px 0 0; color: var(--wb-warning, #a86b10); font-size: 9px; line-height: 1.5; }
+@media (max-width: 760px) {
+  .jev-connection-heading { align-items: flex-start; flex-wrap: wrap; }
+  .jev-connection-state { margin-left: 45px; }
+  .jev-key-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
+  .jev-connected-details { margin-left: 0; }
+  .jev-connection-actions { flex-wrap: wrap; }
+  .jev-connection-actions > span { width: 100%; }
+}
 .diagnostics-settings .settings-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 20px; }
 .diagnostics-settings .settings-heading-row h1 { margin: 0 0 5px; }
 .diagnostic-connectivity { display: flex; align-items: flex-start; gap: 11px; padding: 13px 14px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 8px; }

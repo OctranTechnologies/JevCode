@@ -27,6 +27,7 @@ sensitive actions, and review its changes before keeping them.
 - **Projects:** open local folders and Git repositories, browse files lazily, and view branch and working-tree status.
 - **Tasks:** resume conversations, inspect activity, and keep project instructions such as `AGENTS.md` in context.
 - **Multiple providers:** select models from connected providers without changing the agent runtime.
+- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers; its API key uses the OS credential store.
 - **Controlled tools:** repository reads, edits, Git actions, and commands pass through validation and permission checks.
 - **Change review:** inspect diffs, accept or revert files, and preserve modifications that existed before a task.
 - **Isolated worktrees:** optionally run concurrent tasks in separate Git worktrees.
@@ -130,6 +131,7 @@ usage or billing totals.
 | Projects and Git | `src-tauri/src/workspaces`, `src-tauri/src/git` | Canonical project roots, repository metadata, and worktrees |
 | Persistence | `src-tauri/src/persistence` | SQLite schema, projects, tasks, preferences, and usage |
 | Extensions | `src-tauri/src/extensions`, `src-tauri/src/mcp.rs` | MCP and future provider-neutral tool integrations |
+| Decision service | `src-tauri/src/decisions` | Typed decision interface and Jev adapter, separate from chat providers and runtime |
 | Updater | `src/services/updater.ts`, Tauri updater plugin | Signed update checks, download state, and installation |
 
 Provider-specific request formats stay in native adapters. The agent runtime

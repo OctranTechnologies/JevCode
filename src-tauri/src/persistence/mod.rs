@@ -868,6 +868,29 @@ impl Database {
         Ok(())
     }
 
+    pub fn decision_preferences(&self) -> AppResult<DecisionPreferences> {
+        let value: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM app_preferences WHERE key = 'decision_preferences'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default())
+    }
+
+    pub fn save_decision_preferences(&self, preferences: &DecisionPreferences) -> AppResult<()> {
+        let value = serde_json::to_string(preferences)?;
+        self.connection()?.execute(
+            "INSERT INTO app_preferences(key, value) VALUES ('decision_preferences', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [value],
+        )?;
+        Ok(())
+    }
+
     pub fn permission_rules(&self) -> AppResult<Vec<PermissionRule>> {
         let connection = self.connection()?;
         let mut statement = connection

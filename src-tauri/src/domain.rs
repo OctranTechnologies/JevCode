@@ -96,6 +96,46 @@ pub struct ModelPreferences {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum DecisionMode {
+    #[default]
+    Off,
+    Advisory,
+    Assisted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionPreferences {
+    pub mode: DecisionMode,
+    pub model_id: String,
+}
+
+impl Default for DecisionPreferences {
+    fn default() -> Self {
+        Self {
+            mode: DecisionMode::Off,
+            model_id: "jev-latest".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionModel {
+    pub id: String,
+    pub description: String,
+    pub release_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionAvailability {
+    pub connected: bool,
+    pub models: Vec<DecisionModel>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum UpdateChannel {
     #[default]
     Stable,

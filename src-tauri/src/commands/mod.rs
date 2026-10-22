@@ -3232,6 +3232,92 @@ pub async fn get_provider_available_models(
 }
 
 #[tauri::command]
+pub fn get_jev_decision_preferences(
+    state: State<'_, SharedState>,
+) -> AppResult<DecisionPreferences> {
+    state.database.decision_preferences()
+}
+
+#[tauri::command]
+pub async fn get_jev_availability(
+    state: State<'_, SharedState>,
+) -> AppResult<DecisionAvailability> {
+    jev_availability(state.inner()).await
+}
+
+#[tauri::command]
+pub async fn connect_jev_api_key(
+    secret: String,
+    state: State<'_, SharedState>,
+) -> AppResult<DecisionAvailability> {
+    let secret = Zeroizing::new(secret);
+    let models =
+        crate::decisions::JevClient::validate_key(&state.credentials, secret.as_str()).await?;
+    Ok(DecisionAvailability {
+        connected: true,
+        models,
+    })
+}
+
+#[tauri::command]
+pub fn disconnect_jev(state: State<'_, SharedState>) -> AppResult<DecisionAvailability> {
+    state.credentials.delete("typesafe-jev")?;
+    Ok(DecisionAvailability {
+        connected: false,
+        models: Vec::new(),
+    })
+}
+
+#[tauri::command]
+pub async fn save_jev_decision_preferences(
+    preferences: DecisionPreferences,
+    state: State<'_, SharedState>,
+) -> AppResult<DecisionPreferences> {
+    if preferences.model_id.trim().is_empty() || preferences.model_id.len() > 128 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Choose an available Jev model.",
+        ));
+    }
+    if preferences.mode != DecisionMode::Off {
+        let availability = jev_availability(state.inner()).await?;
+        if !availability.connected {
+            return Err(AppError::new(
+                "credentials_required",
+                "Connect Jev before enabling decision assistance.",
+            ));
+        }
+        if !availability
+            .models
+            .iter()
+            .any(|model| model.id == preferences.model_id)
+        {
+            return Err(AppError::new(
+                "model_unavailable",
+                "That Jev model is no longer available. Refresh the model list and choose another.",
+            ));
+        }
+    }
+    state.database.save_decision_preferences(&preferences)?;
+    Ok(preferences)
+}
+
+async fn jev_availability(state: &SharedState) -> AppResult<DecisionAvailability> {
+    if !state.credentials.has("typesafe-jev")? {
+        return Ok(DecisionAvailability {
+            connected: false,
+            models: Vec::new(),
+        });
+    }
+    let client = crate::decisions::JevClient::new(&state.credentials)?;
+    let models = client.available_models().await?;
+    Ok(DecisionAvailability {
+        connected: true,
+        models,
+    })
+}
+
+#[tauri::command]
 pub fn frontend_log(level: String, event: String) {
     // Only fixed event identifiers are accepted; sanitizing arbitrary text can
     // still leak an alphanumeric credential into the application log.
