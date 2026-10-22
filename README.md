@@ -138,10 +138,14 @@ Provider-specific request formats stay in native adapters. The agent runtime
 uses a shared provider interface; model names and credentials are not embedded
 in the conversation UI.
 
-Jev is a separate optional decision service, not a coding-model provider. When
-Advisory mode is enabled, Jev receives the current user request and returns a
-typed task-category suggestion. Jev usage is stored separately from coding
-provider usage, and its result does not change tools, prompts, or permissions.
+Jev is a separate optional decision service, not a coding-model provider. Both
+enabled modes send the current request and context-availability counts to
+TypeSafe; repository file contents are not sent to Jev. Advisory mode records
+only a typed task-category suggestion. Assisted mode can add fixed-choice
+workflow/context guidance to the coding-model request and reorder eligible tool
+definitions, but never removes tools, runs actions, or changes permission checks.
+The current request and project instructions remain in context. Jev usage is
+stored separately from coding-provider usage.
 
 ## Development checks
 

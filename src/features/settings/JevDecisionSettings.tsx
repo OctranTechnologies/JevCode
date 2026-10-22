@@ -152,7 +152,7 @@ export function JevDecisionSettings() {
         </select>
       </label>
       <p className="permission-mode-description">
-        {preferences.mode === 'off' ? 'Jev is not used in coding tasks.' : preferences.mode === 'advisory' ? 'Jev may suggest context and workflow choices. The agent and permission system remain in control.' : 'Jev can rank bounded context and workflow options. It never grants permissions or bypasses approval.'}
+        {preferences.mode === 'off' ? 'Jev is not used in coding tasks.' : preferences.mode === 'advisory' ? 'Jev may suggest a task category. The agent and permission system remain in control.' : 'Jev can rank context focus and the order of eligible tool definitions, and suggest a workflow. It never removes policy checks or grants permissions.'}
       </p>
       <label className="permission-mode-control" htmlFor="jev-model-select">
         <span>Jev model</span>

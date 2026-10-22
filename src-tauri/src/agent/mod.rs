@@ -66,6 +66,16 @@ struct ModelTurn<'a> {
     tools: &'a [Tool],
 }
 
+#[derive(Debug, Clone)]
+struct DecisionGuidance {
+    category: String,
+    workflow: String,
+    context_focus: String,
+    tool_focus: String,
+    scope_score: u8,
+    clarification_probability: f64,
+}
+
 #[derive(Clone)]
 struct ToolExecutionContext {
     policy: PermissionPolicy,
@@ -123,22 +133,29 @@ impl AgentRuntime {
         );
         checkpoint(state, sink, session)?;
 
-        if session.iterations == 0 {
+        let guidance = if session.iterations == 0 {
             Self::run_jev_advisory(state, sink, session, cancel, self.decision_engine.as_ref())
-                .await?;
-        }
+                .await?
+        } else {
+            None
+        };
 
         let definitions = if model.supports_tools {
             let mut available = tools::definitions();
             available.extend(state.extensions.definitions(&project.id).await?);
-            available
+            let mut filtered = available
                 .into_iter()
                 .filter(|tool| {
                     tool.permission == ToolCategory::UserInteraction
                         || session.permission_policy.decision(&tool.permission)
                             != PermissionDecision::Deny
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            if let Some(guidance) = guidance.as_ref() {
+                filtered
+                    .sort_by_key(|tool| tool_relevance_priority(&tool.name, &guidance.tool_focus));
+            }
+            filtered
         } else {
             vec![]
         };
@@ -166,7 +183,10 @@ impl AgentRuntime {
                 ));
             }
 
-            let (prepared_messages, compacted) = prepare_context(session);
+            let (mut prepared_messages, compacted) = prepare_context(session);
+            if let Some(guidance) = guidance.as_ref() {
+                add_decision_guidance(&mut prepared_messages, guidance);
+            }
             if compacted {
                 record_activity(
                     session,
@@ -347,19 +367,20 @@ impl AgentRuntime {
         }
     }
 
-    /// Advisory mode sends only the current user objective to the independent Jev
-    /// decision service. Its category suggestion is recorded for the user but does
-    /// not alter prompts, tools, routing, or the permission system.
+    /// Send only the current user objective and context-availability metadata to
+    /// Jev. Advisory mode records a category suggestion; Assisted mode may rank
+    /// bounded workflow/context/tool hints. Neither mode can execute tools or
+    /// grant permissions.
     async fn run_jev_advisory(
         state: &SharedState,
         sink: &dyn EventSink,
         session: &mut AgentSession,
         cancel: &mut watch::Receiver<bool>,
         decision_engine: Option<&std::sync::Arc<dyn crate::decisions::DecisionEngine>>,
-    ) -> AppResult<()> {
+    ) -> AppResult<Option<DecisionGuidance>> {
         let preferences = state.database.decision_preferences()?;
-        if preferences.mode != DecisionMode::Advisory {
-            return Ok(());
+        if preferences.mode == DecisionMode::Off {
+            return Ok(None);
         }
 
         let Some(objective) = session
@@ -370,37 +391,94 @@ impl AgentRuntime {
             .map(|message| message.content.chars().take(3_000).collect::<String>())
             .filter(|objective| !objective.trim().is_empty())
         else {
-            return Ok(());
+            return Ok(None);
         };
 
-        let mut criteria = BTreeMap::new();
-        criteria.insert(
-            "coding".to_owned(),
-            "The request primarily asks to implement or modify project code.".to_owned(),
-        );
-        criteria.insert(
-            "debugging".to_owned(),
-            "The request primarily asks to investigate or fix existing behavior.".to_owned(),
-        );
-        criteria.insert(
-            "review".to_owned(),
-            "The request primarily asks to inspect, evaluate, or review existing work.".to_owned(),
-        );
-        criteria.insert(
-            "explanation".to_owned(),
-            "The request primarily asks for information, a plan, or an explanation.".to_owned(),
-        );
+        let mut questions = BTreeMap::from([(
+            "task_category".to_owned(),
+            crate::decisions::DecisionQuestion::Choice {
+                instructions: "Classify the user's current request by its primary intent."
+                    .to_owned(),
+                criteria: decision_criteria(&[
+                    ("coding", "Implement or modify project code."),
+                    ("debugging", "Investigate or fix existing behavior."),
+                    ("review", "Inspect, evaluate, or review existing work."),
+                    (
+                        "explanation",
+                        "Give information, a plan, or an explanation.",
+                    ),
+                ]),
+            },
+        )]);
+        let mut available_context = serde_json::json!({
+            "projectInstructionCount": session.project_instruction_files.len(),
+            "repositoryFactCount": session.working_context.repository_facts.len(),
+            "recentActivityKinds": session.activity_events.iter().rev().take(8).map(|event| &event.kind).collect::<Vec<_>>(),
+        });
+        if preferences.mode == DecisionMode::Assisted {
+            questions.insert(
+                "workflow".to_owned(),
+                crate::decisions::DecisionQuestion::Choice {
+                    instructions: "Choose a useful first workflow phase; the coding model retains control of execution.".to_owned(),
+                    criteria: decision_criteria(&[
+                        ("explore", "Inspect relevant project context before deciding."),
+                        ("implement", "The request is specific enough to begin implementation."),
+                        ("verify", "Prioritize validation or tests for this request."),
+                        ("explain", "Answer or plan without changing files."),
+                    ]),
+                },
+            );
+            questions.insert(
+                "context_focus".to_owned(),
+                crate::decisions::DecisionQuestion::Choice {
+                    instructions: "Rank one secondary context source for attention. The current request and project instructions must always remain in context.".to_owned(),
+                    criteria: decision_criteria(&[
+                        ("repository_facts", "Previously discovered repository facts."),
+                        ("recent_activity", "Recent visible tool and task activity."),
+                        ("earlier_task_decisions", "Earlier user-approved decisions in this task."),
+                        ("current_request", "The latest user request, always retained regardless."),
+                    ]),
+                },
+            );
+            questions.insert(
+                "tool_focus".to_owned(),
+                crate::decisions::DecisionQuestion::Choice {
+                    instructions: "Choose which existing tool group the coding model should consider first. Do not remove or create tools.".to_owned(),
+                    criteria: decision_criteria(&[
+                        ("inspect", "Read-only file and project inspection."),
+                        ("search", "Repository and symbol search."),
+                        ("edit", "Workspace file edits."),
+                        ("verify", "Git inspection and test or build commands."),
+                        ("respond", "Answer or ask the user before acting."),
+                    ]),
+                },
+            );
+            questions.insert(
+                "scope".to_owned(),
+                crate::decisions::DecisionQuestion::Score {
+                    instructions:
+                        "Estimate the breadth of the requested change, not its importance."
+                            .to_owned(),
+                    criteria: vec![
+                        "One small file or example".to_owned(),
+                        "Several files or one module".to_owned(),
+                        "Cross-cutting project changes".to_owned(),
+                    ],
+                },
+            );
+            questions.insert(
+                "needs_clarification".to_owned(),
+                crate::decisions::DecisionQuestion::Noul {
+                    instructions: "Estimate the probability that a missing user decision blocks safe, correct progress. Do not flag a request when a reversible reasonable default is clear.".to_owned(),
+                },
+            );
+            available_context["hasPriorTaskDecisions"] =
+                serde_json::json!(!session.working_context.decisions.is_empty());
+        }
         let request = crate::decisions::DecisionRequest {
             model_id: preferences.model_id.clone(),
-            state: serde_json::json!({ "objective": objective }),
-            questions: BTreeMap::from([(
-                "task_category".to_owned(),
-                crate::decisions::DecisionQuestion::Choice {
-                    instructions: "Classify the user's current request by its primary intent."
-                        .to_owned(),
-                    criteria,
-                },
-            )]),
+            state: serde_json::json!({ "objective": objective, "availableContext": available_context }),
+            questions,
         };
 
         let started = Instant::now();
@@ -440,36 +518,34 @@ impl AgentRuntime {
             output_tokens,
             failure_code,
             summary,
+            guidance,
         ) = match result {
             Ok(response) => {
-                let answer = response.answers.get("task_category");
-                let (choice, probability) = match answer {
-                    Some(crate::decisions::DecisionAnswer::Choice {
-                        choice,
-                        probabilities,
-                        confidence,
-                    }) => (
-                        Some(choice.clone()),
-                        probabilities.get(choice).copied().or(*confidence),
-                    ),
-                    _ => (None, None),
-                };
                 if *cancel.borrow() {
                     return Err(AppError::new("cancelled", "Run stopped by you."));
                 }
-                let label = choice
-                    .as_deref()
-                    .map(Self::decision_category_label)
-                    .unwrap_or("uncertain");
-                (
-                    choice.is_some(),
-                    choice,
-                    probability,
-                    response.input_tokens,
-                    response.output_tokens,
-                    None,
-                    format!("Jev advisory: request category is {label}. The coding agent remains in control."),
-                )
+                match Self::parse_decision_guidance(&response, preferences.mode) {
+                    Ok((guidance, selected_option, probability, summary)) => (
+                        true,
+                        Some(selected_option),
+                        probability,
+                        response.input_tokens,
+                        response.output_tokens,
+                        None,
+                        summary,
+                        guidance,
+                    ),
+                    Err(error) => (
+                        false,
+                        None,
+                        None,
+                        response.input_tokens,
+                        response.output_tokens,
+                        Some(error.code),
+                        "Jev returned an incomplete decision; continuing under normal agent controls.".to_owned(),
+                        None,
+                    ),
+                }
             }
             Err(error) if error.code == "cancelled" => return Err(error),
             Err(error) => {
@@ -481,7 +557,9 @@ impl AgentRuntime {
                     0,
                     0,
                     Some(error.code),
-                    "Jev advisory unavailable; continuing with the coding model.".to_owned(),
+                    "Jev decision service unavailable; continuing under normal agent controls."
+                        .to_owned(),
+                    None,
                 )
             }
         };
@@ -505,17 +583,82 @@ impl AgentRuntime {
             tracing::warn!(session_id = %session.id, code = %error.code, "Could not save Jev decision usage");
         }
         record_activity(session, AgentActivityKind::DecisionAdvisory, summary, None);
-        checkpoint(state, sink, session)
+        checkpoint(state, sink, session)?;
+        Ok(guidance)
     }
 
-    fn decision_category_label(category: &str) -> &'static str {
-        match category {
+    fn parse_decision_guidance(
+        response: &crate::decisions::DecisionResponse,
+        mode: DecisionMode,
+    ) -> AppResult<(Option<DecisionGuidance>, String, Option<f64>, String)> {
+        let (category, category_probability) = decision_choice(response, "task_category")?;
+        let category_label = match category.as_str() {
             "coding" => "implementation",
             "debugging" => "debugging",
             "review" => "review",
             "explanation" => "explanation",
-            _ => "uncertain",
+            _ => {
+                return Err(AppError::new(
+                    "provider_error",
+                    "Jev returned an unknown category.",
+                ))
+            }
+        };
+        if mode == DecisionMode::Advisory {
+            return Ok((
+                None,
+                category,
+                category_probability,
+                format!("Jev advisory: request category is {category_label}. The coding agent remains in control."),
+            ));
         }
+
+        let (workflow, _) = decision_choice(response, "workflow")?;
+        let (context_focus, _) = decision_choice(response, "context_focus")?;
+        let (tool_focus, _) = decision_choice(response, "tool_focus")?;
+        let scope_score = decision_score(response, "scope")?;
+        let clarification_probability = decision_probability(response, "needs_clarification")?;
+        if !["explore", "implement", "verify", "explain"].contains(&workflow.as_str())
+            || ![
+                "repository_facts",
+                "recent_activity",
+                "earlier_task_decisions",
+                "current_request",
+            ]
+            .contains(&context_focus.as_str())
+            || !["inspect", "search", "edit", "verify", "respond"].contains(&tool_focus.as_str())
+        {
+            return Err(AppError::new(
+                "provider_error",
+                "Jev returned an unsupported assistance choice.",
+            ));
+        }
+        let guidance = DecisionGuidance {
+            category,
+            workflow: workflow.clone(),
+            context_focus: context_focus.clone(),
+            tool_focus: tool_focus.clone(),
+            scope_score,
+            clarification_probability,
+        };
+        let scope_label = match scope_score {
+            0 => "small",
+            1 => "multi-file",
+            _ => "cross-cutting",
+        };
+        let clarification_note = if clarification_probability >= 0.7 {
+            " Consider whether a clarification is needed before an irreversible step."
+        } else {
+            ""
+        };
+        let selected = format!(
+            "category={};workflow={workflow};context={context_focus};tools={tool_focus};scope={scope_score};clarification={clarification_probability:.2}",
+            guidance.category
+        );
+        let summary = format!(
+            "Jev assisted suggestion: {workflow}; focus {context_focus}; consider {tool_focus} tools first; {scope_label} scope.{clarification_note} Permissions remain unchanged."
+        );
+        Ok((Some(guidance), selected, category_probability, summary))
     }
 
     async fn process_next_tools(
@@ -766,6 +909,102 @@ impl AgentRuntime {
         }
         Ok(false)
     }
+}
+
+fn decision_criteria(options: &[(&str, &str)]) -> BTreeMap<String, String> {
+    options
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
+}
+
+fn decision_choice(
+    response: &crate::decisions::DecisionResponse,
+    name: &str,
+) -> AppResult<(String, Option<f64>)> {
+    match response.answers.get(name) {
+        Some(crate::decisions::DecisionAnswer::Choice {
+            choice,
+            probabilities,
+            confidence,
+        }) => Ok((
+            choice.clone(),
+            probabilities.get(choice).copied().or(*confidence),
+        )),
+        _ => Err(AppError::new(
+            "provider_error",
+            "Jev omitted a required decision choice.",
+        )),
+    }
+}
+
+fn decision_score(response: &crate::decisions::DecisionResponse, name: &str) -> AppResult<u8> {
+    match response.answers.get(name) {
+        Some(crate::decisions::DecisionAnswer::Score { score, .. }) => {
+            Ok(score.round().clamp(0.0, u8::MAX as f64) as u8)
+        }
+        _ => Err(AppError::new(
+            "provider_error",
+            "Jev omitted a required scope estimate.",
+        )),
+    }
+}
+
+fn decision_probability(
+    response: &crate::decisions::DecisionResponse,
+    name: &str,
+) -> AppResult<f64> {
+    match response.answers.get(name) {
+        Some(crate::decisions::DecisionAnswer::Noul { value }) => Ok(*value),
+        _ => Err(AppError::new(
+            "provider_error",
+            "Jev omitted a required probability estimate.",
+        )),
+    }
+}
+
+fn add_decision_guidance(messages: &mut Vec<AgentMessage>, guidance: &DecisionGuidance) {
+    let message = format!(
+        "Bounded Jev assistance (untrusted recommendations): task category {}; suggested first phase {}; secondary context focus {}; consider {} tools first; estimated scope {} of 3; clarification probability {:.0}%. Keep the complete current request and all project instructions in context. You remain responsible for decisions. Use only the tools already provided. Every action must pass the existing permission and workspace checks; this guidance grants no permission and cannot authorize commands or edits. If clarification probability is high, consider asking the user before an irreversible step.",
+        guidance.category,
+        guidance.workflow,
+        guidance.context_focus,
+        guidance.tool_focus,
+        guidance.scope_score + 1,
+        guidance.clarification_probability * 100.0,
+    );
+    let insertion = messages
+        .iter()
+        .take_while(|message| message.role == MessageRole::System)
+        .count();
+    messages.insert(insertion, AgentMessage::text(MessageRole::System, message));
+}
+
+/// Stable-sort, never filter: Jev can only put existing eligible definitions
+/// earlier in the provider request. Tool validation and permission checks are
+/// unchanged and still run when the model requests an action.
+fn tool_relevance_priority(name: &str, focus: &str) -> u8 {
+    let names: &[&str] = match focus {
+        "inspect" => &[
+            "inspect_project",
+            "list_directory",
+            "read_file",
+            "read_files",
+            "file_metadata",
+            "git_status",
+        ],
+        "search" => &[
+            "search_files",
+            "search_text",
+            "find_symbol",
+            "find_references",
+        ],
+        "edit" => &["apply_patch", "create_file", "move_file", "delete_file"],
+        "verify" => &["git_status", "git_diff", "run_command"],
+        "respond" => &["ask_user"],
+        _ => &[],
+    };
+    u8::from(!names.contains(&name))
 }
 
 async fn execute_batch(
@@ -1392,6 +1631,8 @@ mod tests {
         failures_left: Mutex<u32>,
         blocked: bool,
         started: Arc<Notify>,
+        captured_messages: Arc<Mutex<Vec<Vec<AgentMessage>>>>,
+        captured_tools: Arc<Mutex<Vec<Vec<String>>>>,
     }
 
     #[derive(Clone)]
@@ -1435,6 +1676,8 @@ mod tests {
                 failures_left: Mutex::new(0),
                 blocked: false,
                 started: Arc::new(Notify::new()),
+                captured_messages: Arc::new(Mutex::new(Vec::new())),
+                captured_tools: Arc::new(Mutex::new(Vec::new())),
             }
         }
         fn blocking() -> Self {
@@ -1451,8 +1694,16 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl LlmProvider for MockProvider {
-        async fn complete(&self, _: ProviderRequest<'_>) -> AppResult<ProviderResponse> {
+        async fn complete(&self, request: ProviderRequest<'_>) -> AppResult<ProviderResponse> {
             *self.calls.lock().unwrap() += 1;
+            self.captured_messages
+                .lock()
+                .unwrap()
+                .push(request.messages.to_vec());
+            self.captured_tools
+                .lock()
+                .unwrap()
+                .push(request.tools.iter().map(|tool| tool.name.clone()).collect());
             if self.blocked {
                 self.started.notify_one();
                 std::future::pending().await
@@ -1684,6 +1935,144 @@ mod tests {
             Some("decision_unavailable")
         );
         assert_eq!(state.database.usage().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn assisted_jev_ranks_hints_without_removing_tools_or_bypassing_policy() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, mut session) = setup_session(root.path());
+        session.permission_policy.shell = PermissionDecision::Deny;
+        state.database.save_session(&session).unwrap();
+        state
+            .database
+            .save_decision_preferences(&DecisionPreferences {
+                mode: DecisionMode::Assisted,
+                model_id: "jev-test".into(),
+            })
+            .unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        let provider = MockProvider::new(vec![response("Task completed.", vec![])]);
+        let captured_messages = provider.captured_messages.clone();
+        let captured_tools = provider.captured_tools.clone();
+        let engine = crate::decisions::MockDecisionEngine::with_responses([DecisionResponse {
+            model_id: "jev-test".into(),
+            answers: BTreeMap::from([
+                (
+                    "task_category".into(),
+                    crate::decisions::DecisionAnswer::Choice {
+                        choice: "review".into(),
+                        probabilities: BTreeMap::from([
+                            ("coding".into(), 0.05),
+                            ("debugging".into(), 0.05),
+                            ("review".into(), 0.85),
+                            ("explanation".into(), 0.05),
+                        ]),
+                        confidence: Some(0.85),
+                    },
+                ),
+                (
+                    "workflow".into(),
+                    crate::decisions::DecisionAnswer::Choice {
+                        choice: "verify".into(),
+                        probabilities: BTreeMap::from([
+                            ("explore".into(), 0.05),
+                            ("implement".into(), 0.05),
+                            ("verify".into(), 0.85),
+                            ("explain".into(), 0.05),
+                        ]),
+                        confidence: Some(0.85),
+                    },
+                ),
+                (
+                    "context_focus".into(),
+                    crate::decisions::DecisionAnswer::Choice {
+                        choice: "repository_facts".into(),
+                        probabilities: BTreeMap::from([
+                            ("repository_facts".into(), 0.7),
+                            ("recent_activity".into(), 0.1),
+                            ("earlier_task_decisions".into(), 0.1),
+                            ("current_request".into(), 0.1),
+                        ]),
+                        confidence: Some(0.7),
+                    },
+                ),
+                (
+                    "tool_focus".into(),
+                    crate::decisions::DecisionAnswer::Choice {
+                        choice: "verify".into(),
+                        probabilities: BTreeMap::from([
+                            ("inspect".into(), 0.05),
+                            ("search".into(), 0.05),
+                            ("edit".into(), 0.05),
+                            ("verify".into(), 0.8),
+                            ("respond".into(), 0.05),
+                        ]),
+                        confidence: Some(0.8),
+                    },
+                ),
+                (
+                    "scope".into(),
+                    crate::decisions::DecisionAnswer::Score {
+                        score: 2.0,
+                        probabilities: BTreeMap::from([
+                            ("0".into(), 0.05),
+                            ("1".into(), 0.1),
+                            ("2".into(), 0.85),
+                        ]),
+                        confidence: Some(0.85),
+                    },
+                ),
+                (
+                    "needs_clarification".into(),
+                    crate::decisions::DecisionAnswer::Noul { value: 0.8 },
+                ),
+            ]),
+            input_tokens: 30,
+            output_tokens: 12,
+            request_id: None,
+        }]);
+
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(provider)),
+            AgentRuntime::default().with_decision_engine(Arc::new(engine)),
+        )
+        .await;
+
+        let saved = state.database.session(&session.id).unwrap();
+        assert_eq!(saved.status, SessionStatus::Completed);
+        assert!(saved.activity_events.iter().any(|event| {
+            event.kind == AgentActivityKind::DecisionAdvisory
+                && event.summary.contains("focus repository_facts")
+                && event.summary.contains("Permissions remain unchanged")
+        }));
+        let decision_usage = state.database.decision_usage().unwrap();
+        assert_eq!(decision_usage.len(), 1);
+        assert!(decision_usage[0]
+            .selected_option
+            .as_deref()
+            .unwrap()
+            .contains("tools=verify"));
+        let provider_messages = captured_messages.lock().unwrap();
+        assert!(provider_messages[0].iter().any(|message| {
+            message.role == MessageRole::System
+                && message.content.contains("Bounded Jev assistance")
+        }));
+        assert!(provider_messages[0].iter().any(
+            |message| message.role == MessageRole::User && message.content == "Inspect README"
+        ));
+        let tool_names = captured_tools.lock().unwrap();
+        let tools = &tool_names[0];
+        assert!(!tools.iter().any(|name| name == "run_command"));
+        assert!(tools.iter().any(|name| name == "read_file"));
+        assert!(tools.iter().any(|name| name == "apply_patch"));
+        assert!(
+            tools.iter().position(|name| name == "git_status")
+                < tools.iter().position(|name| name == "read_file")
+        );
     }
 
     #[tokio::test]
