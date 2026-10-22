@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 mod config;
 mod credentials;
+mod decisions;
 pub mod domain;
 mod error;
 mod extensions;
