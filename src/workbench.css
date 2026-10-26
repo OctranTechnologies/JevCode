@@ -207,7 +207,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .toolbar-model-wrap { padding-left: 4px; border-left: 1px solid var(--wb-border); }
 .toolbar-model-wrap select { max-width: 145px; font-size: 10px; font-weight: 520; }
 .toolbar-search { position: relative; }
-.toolbar-search kbd { position: absolute; top: 1px; right: -4px; transform: translate(30%,-23%); }
+.toolbar-search kbd { position: absolute; top: 1px; right: -4px; visibility: hidden; opacity: 0; pointer-events: none; transform: translate(30%,-23%); transition: opacity 120ms ease, visibility 120ms ease; }
+.toolbar-search:hover kbd, .toolbar-search:focus-visible kbd { visibility: visible; opacity: 1; }
 .inspector-toggle.is-active { color: var(--wb-accent); background: var(--wb-accent-soft); }
 .settings-toolbar { justify-content: flex-start; }
 .settings-toolbar > div { display: flex; flex-direction: column; gap: 2px; }
