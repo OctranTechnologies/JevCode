@@ -11,6 +11,9 @@
   --wb-ink: #ededee;
   --wb-muted: #aeb2bb;
   --wb-muted-strong: #c5c8ce;
+  --wb-scrollbar-thumb: color-mix(in srgb, var(--wb-muted) 34%, transparent);
+  --wb-scrollbar-hover: color-mix(in srgb, var(--wb-accent) 55%, transparent);
+  --wb-scrollbar-active: color-mix(in srgb, var(--wb-accent) 78%, transparent);
   --wb-accent: #ff5e1a;
   --wb-accent-hover: #ff7a42;
   --wb-accent-ink: #1c100b;
@@ -90,7 +93,6 @@ body { color: var(--wb-ink); background: var(--wb-canvas); }
 button, input, textarea, select { color: inherit; }
 button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role='separator']:focus-visible { outline-color: var(--wb-accent); }
 ::selection { background: var(--wb-accent-soft); color: var(--wb-ink); }
-::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--wb-muted) 34%, transparent); }
 
 .workbench {
   --sidebar-size: 288px;
