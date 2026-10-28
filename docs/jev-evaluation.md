@@ -2,8 +2,9 @@
 
 Stage 0 adds an opt-in Shadow mode and a replayable synthetic evaluation suite.
 Stage 1 adds task completion evidence, a bounded recovery hint, and scope checks.
-Shadow suggestions can appear in the task timeline, but they never steer coding
-actions, permissions, or file state.
+Stage 2 adds a local-only focus baseline for observed files, test-like files,
+and tools already available to the task. Shadow suggestions can appear in the
+task timeline, but they never steer coding actions, permissions, or file state.
 
 ## What is sent to TypeSafe
 
@@ -43,6 +44,27 @@ adds only the compact evidence fields above. Stage 1 adds up to five requests,
 for a maximum of six Jev task requests total when counting the initial Shadow
 evaluation. Requests can count toward TypeSafe usage. The task-local completion
 receipt is still created if Jev is disconnected or unavailable.
+
+### Stage 2 local focus baseline
+
+After a successful repository search returns at least two candidate paths, the
+runtime records one deterministic local baseline in the task timeline. It ranks
+workspace-relative file paths using objective/path token overlap, identifies
+test-like paths already discovered by the file tools, and ranks tools from the
+current task's available tool definitions using objective keywords and prior
+tool-call counts. The candidate paths come only from successful, bounded,
+workspace-scoped `read_file`, `read_files`, `search_files`, `search_text`,
+`find_symbol`, and `find_references` results. Existing tools continue to apply
+ignore rules and workspace validation.
+
+This baseline is not a Jev decision and does not change which files are read,
+which tests run, or which tools the coding model can use. It does not grant or
+modify tool permissions. The local task timeline stores the selected relative
+path and tool label so users can compare it with actual task activity. No Stage
+2 filename, path, tool name, description, or test candidate is sent to TypeSafe.
+Jev-based ranking remains gated on explicit user authorization for those data
+fields. This foundation alone does not demonstrate reduced reads, test time, or
+regressions.
 
 ### The synthetic evaluation suite
 

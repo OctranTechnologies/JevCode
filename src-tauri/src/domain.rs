@@ -331,6 +331,9 @@ pub struct WorkingContext {
     /// Workspace-relative write targets already checked by the Stage 1 scope signal.
     #[serde(default)]
     pub stage1_scope_checked_paths: Vec<String>,
+    /// Bounds the local-only Stage 2 focus baseline to one report per task.
+    #[serde(default)]
+    pub stage2_focus_baseline_emitted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -431,6 +434,7 @@ pub enum AgentActivityKind {
     DecisionAdvisory,
     JevRecoveryHint,
     JevScopeWarning,
+    FocusBaseline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

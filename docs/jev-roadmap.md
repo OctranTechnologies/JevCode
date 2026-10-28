@@ -397,6 +397,23 @@ available even when Jev is off or unavailable; in that case it reports local
 evidence only. No live Jev run or task-quality benchmark was performed during
 implementation.
 
+### Stage 2 foundation status
+
+The first Stage 2 foundation records one **local-only focus baseline** after a
+successful search has produced at least two candidate paths. It ranks observed
+workspace-relative files against objective terms and changed-file names,
+identifies test-like paths already discovered by existing file tools, and ranks
+the tools currently available to the task using objective keywords and prior
+tool-call counts. The concise result appears in task activity. It does not
+change which files the agent reads, which tests run, which tools are available,
+or any permission decision.
+
+No Stage 2 paths, filenames, tool names, descriptions, or test candidates are
+sent to Jev. Jev-based ranking of these fields needs explicit user consent
+because names can reveal project details. The local baseline is groundwork for
+comparison, not proof of fewer irrelevant reads, faster tests, or unchanged
+regression rates. The Stage 2 promotion gate remains open.
+
 ## Research references
 
 These sources informed the patterns above. Vendor cookbook results are examples

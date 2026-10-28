@@ -9,7 +9,7 @@ use crate::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -170,7 +170,7 @@ impl AgentRuntime {
         loop {
             while !session.queued_tool_calls.is_empty() {
                 if self
-                    .process_next_tools(state, sink, session, project, cancel)
+                    .process_next_tools(state, sink, session, project, &definitions, cancel)
                     .await?
                 {
                     return Ok(());
@@ -632,6 +632,7 @@ impl AgentRuntime {
         sink: &dyn EventSink,
         session: &mut AgentSession,
         project: &Project,
+        available_tools: &[Tool],
         cancel: &mut watch::Receiver<bool>,
     ) -> AppResult<bool> {
         let call = session.queued_tool_calls.remove(0);
@@ -876,9 +877,88 @@ impl AgentRuntime {
             append_result(session, result);
             checkpoint(state, sink, session)?;
         }
+        self.maybe_record_local_focus_baseline(state, sink, session, available_tools)?;
         self.maybe_shadow_recovery_hint(state, sink, session, cancel)
             .await?;
         Ok(false)
+    }
+
+    fn maybe_record_local_focus_baseline(
+        &self,
+        state: &SharedState,
+        sink: &dyn EventSink,
+        session: &mut AgentSession,
+        available_tools: &[Tool],
+    ) -> AppResult<()> {
+        if session.working_context.stage2_focus_baseline_emitted
+            || !session.messages.iter().any(|message| {
+                message.tool_result.as_ref().is_some_and(|result| {
+                    !result.is_error
+                        && matches!(
+                            result.name.as_str(),
+                            "search_files" | "search_text" | "find_symbol" | "find_references"
+                        )
+                })
+            })
+        {
+            return Ok(());
+        }
+        let files = focus_file_candidates(session);
+        if files.len() < 2 {
+            return Ok(());
+        }
+        let objective = focus_objective(session);
+        let successful_tool_ids = session
+            .messages
+            .iter()
+            .filter_map(|message| message.tool_result.as_ref())
+            .filter(|result| !result.is_error)
+            .map(|result| result.tool_call_id.as_str())
+            .collect::<HashSet<_>>();
+        let changed_paths = session
+            .messages
+            .iter()
+            .flat_map(|message| message.tool_calls.iter())
+            .filter(|call| successful_tool_ids.contains(call.id.as_str()))
+            .filter_map(|call| match call.name.as_str() {
+                "apply_patch" | "create_file" | "delete_file" => call.arguments["path"].as_str(),
+                "move_file" => call.arguments["destination"].as_str(),
+                _ => None,
+            })
+            .filter_map(normalize_workspace_relative_path)
+            .collect::<Vec<_>>();
+        let preferred_file = rank_focus_path(&files, &objective, &changed_paths);
+        let tests = files
+            .iter()
+            .filter(|path| is_test_candidate_path(path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let preferred_test = rank_focus_path(&tests, &objective, &changed_paths);
+        let preferred_tool = rank_focus_tool(available_tools, session, &objective);
+
+        session.working_context.stage2_focus_baseline_emitted = true;
+        let mut recommendations = vec![format!(
+            "file {}",
+            preferred_file.as_deref().unwrap_or("none")
+        )];
+        if !tests.is_empty() {
+            recommendations.push(format!(
+                "test {}",
+                preferred_test.as_deref().unwrap_or("none")
+            ));
+        }
+        if let Some(tool) = preferred_tool {
+            recommendations.push(format!("tool {tool}"));
+        }
+        let summary = format!(
+            "Local focus baseline (not applied; no project metadata sent to Jev): {}; candidates {} files, {} test files, {} available tools.",
+            recommendations.join("; "),
+            files.len(),
+            tests.len(),
+            available_tools.len(),
+        );
+        record_activity(session, AgentActivityKind::FocusBaseline, summary, None);
+        checkpoint(state, sink, session)
     }
 
     async fn evaluate_shadow_signal(
@@ -1086,7 +1166,7 @@ impl AgentRuntime {
                 .collect::<Vec<_>>()
                 .join(",")
         });
-        record_stage1_usage(
+        record_shadow_usage(
             state,
             session,
             &preferences.model_id,
@@ -1171,7 +1251,7 @@ impl AgentRuntime {
         });
         let valid = answer.is_some();
         let selected = answer.as_ref().map(|(choice, _)| choice.clone());
-        record_stage1_usage(
+        record_shadow_usage(
             state,
             session,
             &preferences.model_id,
@@ -1257,7 +1337,7 @@ impl AgentRuntime {
         });
         let valid = answer.is_some();
         let selected = answer.as_ref().map(|(choice, _)| choice.clone());
-        record_stage1_usage(
+        record_shadow_usage(
             state,
             session,
             &preferences.model_id,
@@ -1560,7 +1640,208 @@ fn repeated_failure_signal(session: &AgentSession) -> Option<RepeatedFailureSign
         })
 }
 
-fn record_stage1_usage(
+fn focus_objective(session: &AgentSession) -> String {
+    if !session.working_context.objective.trim().is_empty() {
+        return session.working_context.objective.clone();
+    }
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::User)
+        .map(|message| message.content.clone())
+        .unwrap_or_default()
+}
+
+/// Extract only paths returned by the existing workspace-scoped file tools.
+/// This local shortlist never leaves the machine in the Stage 2 baseline.
+fn focus_file_candidates(session: &AgentSession) -> Vec<String> {
+    let calls = session
+        .messages
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+        .map(|call| (call.id.as_str(), call))
+        .collect::<HashMap<_, _>>();
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+    for message in &session.messages {
+        let Some(result) = message
+            .tool_result
+            .as_ref()
+            .filter(|result| !result.is_error)
+        else {
+            continue;
+        };
+        let Some(call) = calls.get(result.tool_call_id.as_str()).copied() else {
+            continue;
+        };
+        let structured = result.structured_content.as_ref();
+        let mut paths = Vec::new();
+        match call.name.as_str() {
+            "read_file" => {
+                if let Some(path) = call.arguments["path"].as_str() {
+                    paths.push(path.to_owned());
+                }
+            }
+            "read_files" => {
+                paths.extend(
+                    call.arguments["paths"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            "search_files" => {
+                paths.extend(
+                    structured
+                        .and_then(|value| value.get("paths"))
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            "search_text" | "find_symbol" | "find_references" => {
+                paths.extend(
+                    structured
+                        .and_then(|value| value.get("matches"))
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|entry| entry.get("path"))
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned),
+                );
+            }
+            _ => {}
+        }
+        for raw in paths {
+            if let Some(path) = normalize_workspace_relative_path(&raw) {
+                if seen.insert(path.clone()) {
+                    candidates.push(path);
+                    if candidates.len() == 32 {
+                        return candidates;
+                    }
+                }
+            }
+        }
+    }
+    candidates
+}
+
+fn is_test_candidate_path(path: &str) -> bool {
+    let normalized = path.to_ascii_lowercase();
+    let file_name = normalized.rsplit('/').next().unwrap_or(&normalized);
+    normalized.split('/').any(|part| part == "tests")
+        || file_name.starts_with("test_")
+        || file_name.starts_with("test-")
+        || file_name.contains(".test.")
+        || file_name.contains(".spec.")
+        || file_name.ends_with("_test.rs")
+        || file_name.ends_with("_test.py")
+}
+
+fn focus_tokens(value: &str) -> HashSet<String> {
+    const STOP_WORDS: &[&str] = &[
+        "about", "after", "also", "and", "are", "for", "from", "into", "make", "need", "that",
+        "the", "this", "with", "you", "your",
+    ];
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| token.len() > 2 && !STOP_WORDS.contains(token))
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn rank_focus_path(
+    candidates: &[String],
+    objective: &str,
+    changed_paths: &[String],
+) -> Option<String> {
+    let objective_tokens = focus_tokens(objective);
+    let changed_tokens = changed_paths
+        .iter()
+        .flat_map(|path| focus_tokens(path))
+        .collect::<HashSet<_>>();
+    let mut best: Option<(usize, String)> = None;
+    for candidate in candidates {
+        let path_tokens = focus_tokens(candidate);
+        let objective_match = path_tokens.intersection(&objective_tokens).count();
+        let change_match = path_tokens.intersection(&changed_tokens).count();
+        let score = objective_match * 2 + change_match;
+        if best
+            .as_ref()
+            .is_none_or(|(best_score, _)| score > *best_score)
+        {
+            best = Some((score, candidate.clone()));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+fn rank_focus_tool(
+    available_tools: &[Tool],
+    session: &AgentSession,
+    objective: &str,
+) -> Option<String> {
+    let objective_tokens = focus_tokens(objective);
+    let call_counts = session
+        .messages
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+        .fold(HashMap::<&str, usize>::new(), |mut counts, call| {
+            *counts.entry(&call.name).or_default() += 1;
+            counts
+        });
+    let mut best: Option<(usize, usize, String)> = None;
+    for tool in available_tools {
+        let aliases = match tool.name.as_str() {
+            "read_file" | "read_files" | "list_directory" | "file_metadata" => {
+                "inspect read explore understand"
+            }
+            "search_files" | "search_text" | "find_symbol" | "find_references" => {
+                "search find locate trace"
+            }
+            "apply_patch" | "create_file" | "move_file" | "delete_file" => {
+                "edit change implement fix add remove"
+            }
+            "run_command" => "test run verify build check",
+            "git_status" | "git_diff" | "git_log" | "git_show" => {
+                "git review changes commit branch"
+            }
+            "ask_user" => "ask question clarify",
+            _ => tool.name.as_str(),
+        };
+        let relevance = focus_tokens(aliases)
+            .intersection(&objective_tokens)
+            .count();
+        let usage = call_counts.get(tool.name.as_str()).copied().unwrap_or(0);
+        if best.as_ref().is_none_or(|(best_relevance, best_usage, _)| {
+            (relevance, usage) > (*best_relevance, *best_usage)
+        }) {
+            best = Some((relevance, usage, tool.name.clone()));
+        }
+    }
+    best.map(|(_, _, name)| safe_tool_display_name(&name))
+}
+
+fn safe_tool_display_name(name: &str) -> String {
+    let display = name
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(96)
+        .collect::<String>();
+    if display.trim().is_empty() {
+        "unnamed tool".into()
+    } else {
+        display
+    }
+}
+
+fn record_shadow_usage(
     state: &SharedState,
     session: &AgentSession,
     model_id: &str,
@@ -1594,7 +1875,7 @@ fn record_stage1_usage(
         created_at: now(),
     };
     if let Err(error) = state.database.save_decision_usage(&record) {
-        tracing::warn!(session_id = %session.id, code = %error.code, "Could not save Jev Stage 1 usage");
+        tracing::warn!(session_id = %session.id, code = %error.code, "Could not save Jev shadow usage");
     }
 }
 
