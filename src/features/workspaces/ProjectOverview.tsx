@@ -9,6 +9,7 @@ import { command } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import { displayPath } from '../../lib/paths';
 import { TaskWorktreesPanel } from './TaskWorktreesPanel';
+import { ProjectMemoryPanel } from './ProjectMemoryPanel';
 import type {
   AgentSession, ChangedFile, PermissionDecision, PermissionPolicy, Project,
   ProjectFileEntry, ProjectOverview as ProjectOverviewData, Provider, TerminalResult,
@@ -208,6 +209,8 @@ export function ProjectOverview({
           <PermissionSelect label="Outside project" value={permissions.externalFiles} onChange={value => setPermissions(current => ({ ...current, externalFiles: value }))} disabled={!desktopAllowed} />
         </div>
       </section>
+
+      <ProjectMemoryPanel projectId={project.id} desktopAllowed={desktopAllowed} />
     </div>
   </div>;
 }

@@ -66,6 +66,26 @@ Jev-based ranking remains gated on explicit user authorization for those data
 fields. This foundation alone does not demonstrate reduced reads, test time, or
 regressions.
 
+### Stage 3 local project-memory foundation
+
+Project Overview lets the user create short project-scoped notes, choose a
+category, attach a workspace-relative source file, edit, pin in the local list,
+or delete. Native code rejects absolute paths, parent traversal, symlinked
+sources, ignored/restricted files, and sources larger than 64 KiB. It stores a
+SHA-256 fingerprint rather than source contents. Opening the panel rechecks the
+fingerprint and marks notes current, stale, missing, or unavailable. The user
+must explicitly refresh a changed source baseline after reviewing it. A
+matching fingerprint establishes only that the source file is unchanged; it
+does not prove that the note is accurate.
+
+The note and source path are saved locally in SQLite. Source fingerprints stay
+native and are omitted from the renderer response. Notes are not included in
+task prompts and are not sent to Jev or coding providers in this stage. Pinning
+only sorts the note to the top of the local list. The interface warns against
+saving secrets, credentials, raw tool output, and large code blocks. Jev's
+future memory suggestions and any remote reuse require a separate, explicit
+content-sharing decision and evaluation before they are enabled.
+
 ### The synthetic evaluation suite
 
 The Settings → Decision assistance **Run evaluation** action replays four fixed

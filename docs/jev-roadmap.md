@@ -414,6 +414,25 @@ because names can reveal project details. The local baseline is groundwork for
 comparison, not proof of fewer irrelevant reads, faster tests, or unchanged
 regression rates. The Stage 2 promotion gate remains open.
 
+### Stage 3 local memory foundation
+
+Project Overview now supports user-authored project notes with categories,
+source paths, timestamps, and edit, local pin, and delete controls. Native code
+rejects traversal, symlinks, ignored/restricted files, and large source files;
+it stores a SHA-256 fingerprint rather than the source contents. Opening the
+panel rechecks the fingerprint and marks notes current, stale, missing, or
+unavailable. A matching fingerprint means only that the source file has not
+changed; it does not verify the note's accuracy. The source baseline can be
+refreshed after the user reviews it.
+
+This first slice remains local: note content and source paths are not included
+in task prompts and are not sent to Jev or coding providers. Pinning only sorts
+the local list. The UI warns against saving secrets, credentials, unreviewed
+tool output, or large code blocks. Jev suggestions, automatic promotion, and
+remote reuse have not been implemented; sharing note content or source paths
+requires an explicit user decision. The Stage 3 quality and privacy gate remains
+open.
+
 ## Research references
 
 These sources informed the patterns above. Vendor cookbook results are examples

@@ -67,6 +67,13 @@ CREATE INDEX IF NOT EXISTS sessions_project ON sessions(project_id, updated_at);
 CREATE INDEX IF NOT EXISTS usage_session ON usage(session_id);
 CREATE INDEX IF NOT EXISTS decision_usage_session ON decision_usage(session_id);
 CREATE INDEX IF NOT EXISTS decision_evaluations_created ON decision_evaluations(created_at DESC);
+CREATE TABLE IF NOT EXISTS project_memories (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_memories_project ON project_memories(project_id, updated_at DESC);
 CREATE TABLE IF NOT EXISTS session_review_baselines (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -92,4 +99,4 @@ CREATE TABLE IF NOT EXISTS session_file_checkpoints (
     PRIMARY KEY(session_id, path)
 );
 CREATE INDEX IF NOT EXISTS session_file_checkpoints_session ON session_file_checkpoints(session_id, path);
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;

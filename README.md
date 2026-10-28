@@ -27,7 +27,7 @@ sensitive actions, and review its changes before keeping them.
 - **Projects:** open local folders and Git repositories, browse files lazily, and view branch and working-tree status.
 - **Tasks:** resume conversations, inspect activity, and keep project instructions such as `AGENTS.md` in context.
 - **Multiple providers:** select models from connected providers without changing the agent runtime.
-- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers. Stage 1 adds a completion checklist, bounded recovery hints, and scope warnings. Stage 2 records a local-only baseline for relevant files, discovered test files, and tools already available to the task. The Stage 2 shortlist is not sent to Jev, and suggestions do not change agent behavior or permissions.
+- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers. Stage 1 adds a completion checklist, bounded recovery hints, and scope warnings. Stage 2 records a local-only baseline for relevant files, discovered test files, and available tools. Project memory adds user-reviewed local notes with source freshness, edit, pin, and delete controls. Neither feature sends its file shortlist or saved memory to Jev or coding providers.
 - **Controlled tools:** repository reads, edits, Git actions, and commands pass through validation and permission checks.
 - **Change review:** inspect diffs, accept or revert files, and preserve modifications that existed before a task.
 - **Isolated worktrees:** optionally run concurrent tasks in separate Git worktrees.
@@ -148,6 +148,13 @@ outcomes), up to three candidate paths for scope checks, and one repeated failed
 tool category/count for a recovery hint. Stage 2 currently creates a local-only
 focus baseline from observed workspace paths, test-like filenames, and the
 task's available tools. Stage 2 filenames and tool names are not sent to Jev.
+Project Overview also supports concise user-authored project notes. Notes are
+stored in the local SQLite database, show their workspace-relative source and
+freshness, and can be edited, pinned in the local list, or deleted. A changed
+or missing source is visibly marked. Pinned notes are not included in task
+context, and project-memory text and source paths are not sent to Jev or coding
+providers in this stage. Avoid saving secrets, credentials, raw tool output, or
+large code blocks.
 Jev-generated Stage 1 suggestions appear as advisory task activity only. Jev
 never runs tools, changes permissions, blocks or reverts edits, or claims a test
 passed. The local task receipt keeps actual changed-file
@@ -161,7 +168,8 @@ without merging provider totals or inventing a cost estimate. A user-triggered
 synthetic evaluation baseline records the Jev model version and answer matches
 without reading or sending project data; see
 [docs/jev-evaluation.md](docs/jev-evaluation.md) for the exact Stage 1 payload
-limits, Stage 2 local baseline, and privacy boundaries.
+limits, Stage 2 local baseline, Stage 3 local memory foundation, and privacy
+boundaries.
 If Jev is offline, times out, or returns an invalid decision, Jev guidance is
 omitted and the task continues through the normal agent path. Mock-driven tests
 cover this fallback, mode-off behavior, cancellation, and unchanged permissions.

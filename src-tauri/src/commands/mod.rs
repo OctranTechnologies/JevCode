@@ -5,7 +5,7 @@ use crate::{
     error::{AppError, AppResult},
     git,
     mcp::{McpServerActionInput, SaveMcpServerInput},
-    providers, review,
+    project_memory, providers, review,
     state::SharedState,
     tools, workspaces,
 };
@@ -391,6 +391,158 @@ pub fn update_project_settings(
     project.permissions = input.permissions;
     state.database.save_project(&project)?;
     Ok(project)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveProjectMemoryInput {
+    project_id: String,
+    id: Option<String>,
+    title: String,
+    category: ProjectMemoryCategory,
+    content: String,
+    source_path: Option<String>,
+    pinned: bool,
+}
+
+#[tauri::command]
+pub fn list_project_memories(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<ProjectMemoryView>> {
+    let project = state.database.project(&project_id)?;
+    let root = std::fs::canonicalize(&project.path).map_err(|_| {
+        AppError::new(
+            "project_unavailable",
+            "This project folder is unavailable. Reopen it from its current location.",
+        )
+    })?;
+    project_memory::recheck_project(&state.database, &project_id, &root)
+        .map(|memories| memories.into_iter().map(project_memory::to_view).collect())
+}
+
+#[tauri::command]
+pub fn save_project_memory(
+    input: SaveProjectMemoryInput,
+    state: State<'_, SharedState>,
+) -> AppResult<ProjectMemoryView> {
+    let project = state.database.project(&input.project_id)?;
+    let root = std::fs::canonicalize(&project.path).map_err(|_| {
+        AppError::new(
+            "project_unavailable",
+            "This project folder is unavailable. Reopen it from its current location.",
+        )
+    })?;
+    let title = input.title.trim().to_owned();
+    let content = input.content.trim().to_owned();
+    if title.is_empty()
+        || title.chars().count() > 120
+        || title.chars().any(char::is_control)
+        || content.is_empty()
+        || content.chars().count() > 2_500
+        || content
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(AppError::new(
+            "invalid_input",
+            "Use a title up to 120 characters and a concise note up to 2,500 characters.",
+        ));
+    }
+    let source_path = input
+        .source_path
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| project_memory::normalize_source_path(&path))
+        .transpose()?;
+    let prior = input
+        .id
+        .as_deref()
+        .map(|memory_id| state.database.project_memory(&project.id, memory_id))
+        .transpose()?;
+    if prior.is_none() && state.database.project_memories(&project.id)?.len() >= 100 {
+        return Err(AppError::new(
+            "memory_limit",
+            "This project already has 100 saved memories. Remove one before adding another.",
+        ));
+    }
+    let created_at = prior
+        .as_ref()
+        .map(|memory| memory.created_at.clone())
+        .unwrap_or_else(now);
+    let (source_fingerprint, source_status) = match (source_path.as_deref(), prior.as_ref()) {
+        (None, _) => (None, ProjectMemorySourceStatus::Unverified),
+        (Some(path), Some(previous)) if previous.source_path.as_deref() == Some(path) => {
+            let fingerprint = previous.source_fingerprint.clone();
+            let status = match (
+                fingerprint.as_deref(),
+                project_memory::source_fingerprint(&root, path),
+            ) {
+                (Some(expected), Ok(actual)) if expected == actual => {
+                    ProjectMemorySourceStatus::Current
+                }
+                (Some(_), Ok(_)) => ProjectMemorySourceStatus::Stale,
+                (_, Err(error)) if error.code == "not_found" || error.code == "invalid_path" => {
+                    ProjectMemorySourceStatus::Missing
+                }
+                _ => ProjectMemorySourceStatus::Unavailable,
+            };
+            (fingerprint, status)
+        }
+        (Some(path), _) => (
+            Some(project_memory::source_fingerprint(&root, path)?),
+            ProjectMemorySourceStatus::Current,
+        ),
+    };
+    let timestamp = now();
+    let memory = ProjectMemory {
+        id: prior
+            .as_ref()
+            .map(|memory| memory.id.clone())
+            .unwrap_or_else(id),
+        project_id: project.id,
+        title,
+        category: input.category,
+        content,
+        source_path,
+        source_fingerprint,
+        source_status,
+        source_checked_at: Some(timestamp.clone()),
+        pinned: input.pinned,
+        created_at,
+        updated_at: timestamp,
+    };
+    state.database.save_project_memory(&memory)?;
+    Ok(project_memory::to_view(memory))
+}
+
+#[tauri::command]
+pub fn refresh_project_memory_source(
+    project_id: String,
+    memory_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<ProjectMemoryView> {
+    let project = state.database.project(&project_id)?;
+    let root = std::fs::canonicalize(&project.path).map_err(|_| {
+        AppError::new(
+            "project_unavailable",
+            "This project folder is unavailable. Reopen it from its current location.",
+        )
+    })?;
+    let mut memory = state.database.project_memory(&project_id, &memory_id)?;
+    project_memory::reset_source(&state.database, &root, &mut memory)?;
+    Ok(project_memory::to_view(memory))
+}
+
+#[tauri::command]
+pub fn delete_project_memory(
+    project_id: String,
+    memory_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    state.database.project(&project_id)?;
+    state
+        .database
+        .delete_project_memory(&project_id, &memory_id)
 }
 
 #[tauri::command]

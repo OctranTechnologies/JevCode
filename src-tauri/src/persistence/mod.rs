@@ -72,6 +72,7 @@ impl Database {
         Self::migrate_openai_auth_preference(&connection)?;
         Self::migrate_google_accounts(&connection)?;
         Self::migrate_jev_evaluation(&connection)?;
+        Self::migrate_project_memories(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -310,6 +311,20 @@ impl Database {
              );
              CREATE INDEX IF NOT EXISTS decision_evaluations_created ON decision_evaluations(created_at DESC);
              PRAGMA user_version = 15;",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_project_memories(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS project_memories (
+                 id TEXT PRIMARY KEY,
+                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 updated_at TEXT NOT NULL,
+                 data TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS project_memories_project ON project_memories(project_id, updated_at DESC);
+             PRAGMA user_version = 16;",
         )?;
         Ok(())
     }
@@ -1014,6 +1029,73 @@ impl Database {
 
     pub fn save_project(&self, project: &Project) -> AppResult<()> {
         self.connection()?.execute("INSERT INTO projects (id, path, created_at, last_opened_at, is_recent, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO UPDATE SET path = excluded.path, last_opened_at = excluded.last_opened_at, is_recent = excluded.is_recent, data = excluded.data", params![project.id, project.path, project.created_at, project.last_opened_at, project.is_recent, serde_json::to_string(project)?])?;
+        Ok(())
+    }
+
+    pub fn project_memories(&self, project_id: &str) -> AppResult<Vec<ProjectMemory>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT data FROM project_memories WHERE project_id = ?1 ORDER BY pinned DESC, updated_at DESC",
+        )?;
+        let rows = statement.query_map([project_id], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    pub fn project_memory(&self, project_id: &str, id: &str) -> AppResult<ProjectMemory> {
+        let data = self
+            .connection()?
+            .query_row(
+                "SELECT data FROM project_memories WHERE project_id = ?1 AND id = ?2",
+                params![project_id, id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        data.map(|data| serde_json::from_str(&data).map_err(Into::into))
+            .unwrap_or_else(|| {
+                Err(AppError::new(
+                    "not_found",
+                    "This project memory no longer exists.",
+                ))
+            })
+    }
+
+    pub fn save_project_memory(&self, memory: &ProjectMemory) -> AppResult<()> {
+        if memory.id.trim().is_empty()
+            || memory.id.len() > 128
+            || memory.title.trim().is_empty()
+            || memory.title.chars().count() > 120
+            || memory.content.trim().is_empty()
+            || memory.content.chars().count() > 2_500
+        {
+            return Err(AppError::new(
+                "invalid_input",
+                "Project memory fields exceed their limits or are empty.",
+            ));
+        }
+        let updated = self.connection()?.execute(
+            "INSERT INTO project_memories (id, project_id, updated_at, data) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data WHERE project_memories.project_id = excluded.project_id",
+            params![memory.id, memory.project_id, memory.updated_at, serde_json::to_string(memory)?],
+        )?;
+        if updated == 0 {
+            return Err(AppError::new(
+                "not_found",
+                "This project memory no longer exists in the selected project.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn delete_project_memory(&self, project_id: &str, id: &str) -> AppResult<()> {
+        let removed = self.connection()?.execute(
+            "DELETE FROM project_memories WHERE project_id = ?1 AND id = ?2",
+            params![project_id, id],
+        )?;
+        if removed == 0 {
+            return Err(AppError::new(
+                "not_found",
+                "This project memory no longer exists.",
+            ));
+        }
         Ok(())
     }
 

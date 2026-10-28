@@ -270,6 +270,21 @@ export interface Project {
   isRecent: boolean;
   createdAt: string;
 }
+export type ProjectMemoryCategory = 'convention' | 'architecture' | 'workflow' | 'testing' | 'decision' | 'other';
+export type ProjectMemorySourceStatus = 'current' | 'stale' | 'missing' | 'unverified' | 'unavailable';
+export interface ProjectMemoryView {
+  id: string;
+  projectId: string;
+  title: string;
+  category: ProjectMemoryCategory;
+  content: string;
+  sourcePath: string | null;
+  sourceStatus: ProjectMemorySourceStatus;
+  sourceCheckedAt: string | null;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface ProjectFileEntry { name: string; path: string; kind: 'file' | 'directory'; sizeBytes: number; isSymlink: boolean }
 export interface ChangedFile { path: string; status: string }
 export type ChangeKind = 'added' | 'modified' | 'deleted';

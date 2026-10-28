@@ -11,6 +11,7 @@ mod git;
 mod mcp;
 mod permissions;
 mod persistence;
+mod project_memory;
 mod providers;
 mod review;
 mod state;
@@ -80,6 +81,10 @@ pub fn run() {
             commands::create_project,
             commands::remove_project_from_recents,
             commands::update_project_settings,
+            commands::list_project_memories,
+            commands::save_project_memory,
+            commands::refresh_project_memory_source,
+            commands::delete_project_memory,
             commands::list_project_directory,
             commands::project_overview,
             commands::project_branches,

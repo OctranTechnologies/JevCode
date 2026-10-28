@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, DecisionAvailability, DecisionEvaluationRecord, DecisionPreferences, DecisionUsageRecord, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
-import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, decisionAvailabilitySchema, decisionEvaluationRecordSchema, decisionPreferencesSchema, decisionUsageRecordSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
+import type { AgentSession, AgentStreamChunk, AppDiagnostics, Bootstrap, DecisionAvailability, DecisionEvaluationRecord, DecisionPreferences, DecisionUsageRecord, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProjectMemoryCategory, ProjectMemoryView, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
+import { agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, decisionAvailabilitySchema, decisionEvaluationRecordSchema, decisionPreferencesSchema, decisionUsageRecordSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectFileSchema, projectMemorySchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export { openAIAuthAttemptEventSchema };
@@ -18,6 +18,10 @@ interface Commands {
   create_project: { args: { name: string; parentPath: string }; result: Project };
   remove_project_from_recents: { args: { projectId: string }; result: Project };
   update_project_settings: { args: { input: { projectId: string; projectInstructions: string; preferredModel: string | null; permissions: PermissionPolicy } }; result: Project };
+  list_project_memories: { args: { projectId: string }; result: ProjectMemoryView[] };
+  save_project_memory: { args: { input: { projectId: string; id: string | null; title: string; category: ProjectMemoryCategory; content: string; sourcePath: string | null; pinned: boolean } }; result: ProjectMemoryView };
+  refresh_project_memory_source: { args: { projectId: string; memoryId: string }; result: ProjectMemoryView };
+  delete_project_memory: { args: { projectId: string; memoryId: string }; result: null };
   list_project_directory: { args: { projectId: string; path: string }; result: import('../types/domain').ProjectFileEntry[] };
   project_overview: { args: { projectId: string }; result: import('../types/domain').ProjectOverview };
   project_branches: { args: { projectId: string }; result: string[] };
@@ -94,6 +98,7 @@ interface Commands {
 }
 const responses = {
   bootstrap: bootstrapSchema, get_app_diagnostics: appDiagnosticsSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
+  list_project_memories: z.array(projectMemorySchema), save_project_memory: projectMemorySchema, refresh_project_memory_source: projectMemorySchema, delete_project_memory: z.null(),
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
   reveal_project: z.null(), run_project_terminal: terminalResultSchema, project_branch: z.string().nullable(), project_task_worktrees: z.array(taskWorktreeSchema), task_worktree_diff: z.string(), commit_task_worktree: taskWorktreeActionSchema, apply_task_worktree: taskWorktreeActionSchema, remove_task_worktree: sessionSchema, create_session: sessionSchema, send_message: sessionSchema,

@@ -641,6 +641,63 @@ pub struct Project {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectMemoryCategory {
+    Convention,
+    Architecture,
+    Workflow,
+    Testing,
+    Decision,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectMemorySourceStatus {
+    Current,
+    Stale,
+    Missing,
+    #[default]
+    Unverified,
+    Unavailable,
+}
+
+/// User-reviewed, project-scoped note. The source fingerprint is kept in the
+/// native database model and is intentionally omitted from the renderer view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMemory {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub category: ProjectMemoryCategory,
+    pub content: String,
+    pub source_path: Option<String>,
+    pub source_fingerprint: Option<String>,
+    pub source_status: ProjectMemorySourceStatus,
+    pub source_checked_at: Option<String>,
+    pub pinned: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMemoryView {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub category: ProjectMemoryCategory,
+    pub content: String,
+    pub source_path: Option<String>,
+    pub source_status: ProjectMemorySourceStatus,
+    pub source_checked_at: Option<String>,
+    pub pinned: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 fn default_true() -> bool {
     true
 }
