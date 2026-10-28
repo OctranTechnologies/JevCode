@@ -105,7 +105,7 @@ export type ModelCapability = 'tools' | 'vision' | 'reasoning' | 'streaming';
 export type ModelStatus = 'available' | 'deprecated' | 'unavailable';
 export interface ModelReference { providerId: string; modelId: string }
 export interface ModelPreferences { defaultModel: ModelReference | null; favorites: ModelReference[]; recent: ModelReference[] }
-export type DecisionMode = 'off' | 'advisory' | 'assisted';
+export type DecisionMode = 'off' | 'shadow' | 'advisory' | 'assisted';
 export interface DecisionPreferences { mode: DecisionMode; modelId: string }
 export interface DecisionModel { id: string; description: string; releaseDate: string }
 export interface DecisionAvailability { connected: boolean; models: DecisionModel[] }
@@ -115,6 +115,8 @@ export interface DecisionUsageRecord {
   sessionTitle: string;
   projectId: string;
   modelId: string;
+  resolvedModelId: string | null;
+  shadowMode: boolean;
   inputTokens: number;
   outputTokens: number;
   durationMs: number;
@@ -122,6 +124,24 @@ export interface DecisionUsageRecord {
   failureCode: string | null;
   selectedOption: string | null;
   selectedProbability: number | null;
+  createdAt: string;
+}
+export interface DecisionEvaluationRecord {
+  id: string;
+  runId: string;
+  suiteVersion: string;
+  caseId: string;
+  caseTitle: string;
+  requestedModelId: string;
+  resolvedModelId: string | null;
+  expectedAnswers: Record<string, string[]>;
+  actualAnswers: Record<string, string>;
+  matchedFields: string[];
+  mismatchedFields: string[];
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+  failureCode: string | null;
   createdAt: string;
 }
 export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable'; deferredVersion: string | null; skippedVersion: string | null; remindAfter: string | null; downloadRequestedVersion: string | null }

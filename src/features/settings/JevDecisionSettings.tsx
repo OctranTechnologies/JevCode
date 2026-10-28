@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { CircleAlert, CircleCheck, KeyRound, LoaderCircle, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { CircleAlert, CircleCheck, FlaskConical, KeyRound, LoaderCircle, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { command, desktopAvailable } from '../../lib/ipc';
-import type { DecisionAvailability, DecisionMode, DecisionPreferences } from '../../types/domain';
+import type { DecisionAvailability, DecisionEvaluationRecord, DecisionMode, DecisionPreferences } from '../../types/domain';
 
 const defaultPreferences: DecisionPreferences = { mode: 'off', modelId: 'jev-latest' };
 
 export function JevDecisionSettings() {
   const [preferences, setPreferences] = useState(defaultPreferences);
   const [availability, setAvailability] = useState<DecisionAvailability>({ connected: false, models: [] });
+  const [evaluations, setEvaluations] = useState<DecisionEvaluationRecord[]>([]);
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -19,12 +20,14 @@ export function JevDecisionSettings() {
     setLoading(true);
     setError(null);
     try {
-      const [saved, status] = await Promise.all([
+      const [saved, status, baseline] = await Promise.all([
         command('get_jev_decision_preferences', undefined),
         command('get_jev_availability', undefined),
+        command('get_jev_evaluations', undefined),
       ]);
       setPreferences(saved);
       setAvailability(status);
+      setEvaluations(baseline);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Jev settings could not be loaded.');
     } finally {
@@ -97,8 +100,30 @@ export function JevDecisionSettings() {
     await save({ ...preferences, modelId });
   }
 
+  async function runEvaluation() {
+    if (busy || !availability.connected) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await command('run_jev_evaluation', undefined);
+      setEvaluations(current => [...result.slice().reverse(), ...current].slice(0, 100));
+      const matches = result.filter(item => !item.failureCode && item.mismatchedFields.length === 0).length;
+      const failed = result.filter(item => item.failureCode).length;
+      setNotice(`${matches} of ${result.length} synthetic examples matched${failed ? `; ${failed} request${failed === 1 ? '' : 's'} failed` : ''}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The Jev evaluation could not be completed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const selectedModelAvailable = availability.models.some(model => model.id === preferences.modelId);
   const desktopMissing = !desktopAvailable;
+  const latestEvaluationRunId = evaluations[0]?.runId;
+  const latestEvaluationRun = latestEvaluationRunId
+    ? evaluations.filter(item => item.runId === latestEvaluationRunId)
+    : [];
 
   return <section className="settings-content jev-decision-settings" aria-labelledby="jev-decision-title">
     <div className="settings-heading-row">
@@ -147,12 +172,13 @@ export function JevDecisionSettings() {
         <span>Decision mode</span>
         <select id="jev-mode-select" value={preferences.mode} disabled={busy || loading || desktopMissing || !availability.connected} onChange={event => void changeMode(event.target.value as DecisionMode)}>
           <option value="off">Off</option>
+          <option value="shadow">Shadow evaluation</option>
           <option value="advisory">Advisory</option>
           <option value="assisted">Assisted</option>
         </select>
       </label>
       <p className="permission-mode-description">
-        {preferences.mode === 'off' ? 'Jev is not used in coding tasks.' : preferences.mode === 'advisory' ? 'Jev may suggest a task category. The agent and permission system remain in control.' : 'Jev can rank context focus and the order of eligible tool definitions, and suggest a workflow. It never removes policy checks or grants permissions.'}
+        {preferences.mode === 'off' ? 'Jev is not used in coding tasks.' : preferences.mode === 'shadow' ? 'Jev evaluates the request and records its full suggestions for comparison, but those suggestions do not change the task.' : preferences.mode === 'advisory' ? 'Jev may suggest a task category. The agent and permission system remain in control.' : 'Jev can rank context focus and the order of eligible tool definitions, and suggest a workflow. It never removes policy checks or grants permissions.'}
       </p>
       <label className="permission-mode-control" htmlFor="jev-model-select">
         <span>Jev model</span>
@@ -163,6 +189,31 @@ export function JevDecisionSettings() {
       </label>
       {availability.connected && !selectedModelAvailable && <p className="jev-model-warning">The saved model is no longer available. Select an available model before enabling Jev.</p>}
       <div className="permission-safety-note"><ShieldCheck size={15} /><span>Jev is a decision aid, not a coding model or security authority. Jev suggestions cannot approve file edits, terminal commands, network access, or dangerous actions.</span></div>
+    </section>
+
+    <section className="jev-evaluation-section" aria-labelledby="jev-evaluation-title">
+      <div className="jev-evaluation-heading">
+        <div><h2 id="jev-evaluation-title">Decision quality baseline</h2><p>Replay four fixed examples against the selected Jev model and compare its decisions with a small expected-answer set.</p></div>
+        <button className="account-button quiet" type="button" onClick={() => void runEvaluation()} disabled={!availability.connected || !selectedModelAvailable || busy || loading || desktopMissing}>
+          {busy ? <LoaderCircle size={13} className="spin" /> : <FlaskConical size={13} />}{busy ? 'Evaluating…' : 'Run evaluation'}
+        </button>
+      </div>
+      <p className="jev-evaluation-privacy">This sends only four synthetic example requests and decision metadata. No active task text, project path, or repository files are sent. TypeSafe may count these requests toward Jev usage.</p>
+      {latestEvaluationRun.length > 0 && <div className="jev-evaluation-results" aria-live="polite">
+        <div className="jev-evaluation-summary">
+          {latestEvaluationRun.filter(item => !item.failureCode && item.mismatchedFields.length === 0).length}/{latestEvaluationRun.length} matched · {latestEvaluationRun.reduce((total, item) => total + item.inputTokens + item.outputTokens, 0).toLocaleString()} tokens · suite {latestEvaluationRun[0].suiteVersion}
+        </div>
+        {latestEvaluationRun.map(item => {
+          const passed = !item.failureCode && item.mismatchedFields.length === 0;
+          const comparison = Object.entries(item.expectedAnswers)
+            .map(([field, expected]) => `${field}: ${item.actualAnswers[field] ?? 'no answer'} (expected ${expected.join(' or ')})`)
+            .join(' · ');
+          return <article className={`jev-evaluation-result${passed ? ' is-match' : ' is-mismatch'}`} key={item.id}>
+            <div><strong>{item.caseTitle}</strong><small>{item.resolvedModelId ?? item.requestedModelId}{item.failureCode ? ` · ${item.failureCode}` : ''}</small><small>{comparison}</small></div>
+            <span>{item.failureCode ? 'Failed' : passed ? 'Matched' : `Review ${item.mismatchedFields.join(', ')}`}</span>
+          </article>;
+        })}
+      </div>}
     </section>
   </section>;
 }

@@ -138,15 +138,20 @@ Provider-specific request formats stay in native adapters. The agent runtime
 uses a shared provider interface; model names and credentials are not embedded
 in the conversation UI.
 
-Jev is a separate optional decision service, not a coding-model provider. Both
-enabled modes send the current request and context-availability counts to
-TypeSafe; repository file contents are not sent to Jev. Advisory mode records
-only a typed task-category suggestion. Assisted mode can add fixed-choice
+Jev is a separate optional decision service, not a coding-model provider. Its
+Off, Shadow, Advisory, and Assisted modes are independent from the selected
+coding model. Enabled task modes send the current request and context-availability
+counts to TypeSafe; repository file contents are not sent to Jev. Shadow mode
+records full structured suggestions but never applies them to the task. Advisory
+records a task-category suggestion. Assisted mode can add fixed-choice
 workflow/context guidance to the coding-model request and reorder eligible tool
 definitions, but never removes tools, runs actions, or changes permission checks.
 The current request and project instructions remain in context. Jev usage is
 stored separately from coding-provider usage and shown in its own Usage page
-section without merging provider totals or inventing a cost estimate.
+section without merging provider totals or inventing a cost estimate. A
+user-triggered synthetic evaluation baseline records the Jev model version and
+answer matches without reading or sending project data; see
+[docs/jev-evaluation.md](docs/jev-evaluation.md).
 If Jev is offline, times out, or returns an invalid decision, Jev guidance is
 omitted and the task continues through the normal agent path. Mock-driven tests
 cover this fallback, mode-off behavior, cancellation, and unchanged permissions.

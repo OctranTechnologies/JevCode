@@ -139,6 +139,8 @@ pub fn run() {
             commands::disconnect_jev,
             commands::save_jev_decision_preferences,
             commands::get_jev_decision_usage,
+            commands::get_jev_evaluations,
+            commands::run_jev_evaluation,
             commands::frontend_log,
             commands::set_permission_mode,
             commands::save_update_preferences,

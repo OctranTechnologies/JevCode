@@ -394,91 +394,23 @@ impl AgentRuntime {
             return Ok(None);
         };
 
-        let mut questions = BTreeMap::from([(
-            "task_category".to_owned(),
-            crate::decisions::DecisionQuestion::Choice {
-                instructions: "Classify the user's current request by its primary intent."
-                    .to_owned(),
-                criteria: decision_criteria(&[
-                    ("coding", "Implement or modify project code."),
-                    ("debugging", "Investigate or fix existing behavior."),
-                    ("review", "Inspect, evaluate, or review existing work."),
-                    (
-                        "explanation",
-                        "Give information, a plan, or an explanation.",
-                    ),
-                ]),
-            },
-        )]);
         let mut available_context = serde_json::json!({
             "projectInstructionCount": session.project_instruction_files.len(),
             "repositoryFactCount": session.working_context.repository_facts.len(),
             "recentActivityKinds": session.activity_events.iter().rev().take(8).map(|event| &event.kind).collect::<Vec<_>>(),
         });
-        if preferences.mode == DecisionMode::Assisted {
-            questions.insert(
-                "workflow".to_owned(),
-                crate::decisions::DecisionQuestion::Choice {
-                    instructions: "Choose a useful first workflow phase; the coding model retains control of execution.".to_owned(),
-                    criteria: decision_criteria(&[
-                        ("explore", "Inspect relevant project context before deciding."),
-                        ("implement", "The request is specific enough to begin implementation."),
-                        ("verify", "Prioritize validation or tests for this request."),
-                        ("explain", "Answer or plan without changing files."),
-                    ]),
-                },
-            );
-            questions.insert(
-                "context_focus".to_owned(),
-                crate::decisions::DecisionQuestion::Choice {
-                    instructions: "Rank one secondary context source for attention. The current request and project instructions must always remain in context.".to_owned(),
-                    criteria: decision_criteria(&[
-                        ("repository_facts", "Previously discovered repository facts."),
-                        ("recent_activity", "Recent visible tool and task activity."),
-                        ("earlier_task_decisions", "Earlier user-approved decisions in this task."),
-                        ("current_request", "The latest user request, always retained regardless."),
-                    ]),
-                },
-            );
-            questions.insert(
-                "tool_focus".to_owned(),
-                crate::decisions::DecisionQuestion::Choice {
-                    instructions: "Choose which existing tool group the coding model should consider first. Do not remove or create tools.".to_owned(),
-                    criteria: decision_criteria(&[
-                        ("inspect", "Read-only file and project inspection."),
-                        ("search", "Repository and symbol search."),
-                        ("edit", "Workspace file edits."),
-                        ("verify", "Git inspection and test or build commands."),
-                        ("respond", "Answer or ask the user before acting."),
-                    ]),
-                },
-            );
-            questions.insert(
-                "scope".to_owned(),
-                crate::decisions::DecisionQuestion::Score {
-                    instructions:
-                        "Estimate the breadth of the requested change, not its importance."
-                            .to_owned(),
-                    criteria: vec![
-                        "One small file or example".to_owned(),
-                        "Several files or one module".to_owned(),
-                        "Cross-cutting project changes".to_owned(),
-                    ],
-                },
-            );
-            questions.insert(
-                "needs_clarification".to_owned(),
-                crate::decisions::DecisionQuestion::Noul {
-                    instructions: "Estimate the probability that a missing user decision blocks safe, correct progress. Do not flag a request when a reversible reasonable default is clear.".to_owned(),
-                },
-            );
+        let include_guidance = matches!(
+            preferences.mode,
+            DecisionMode::Assisted | DecisionMode::Shadow
+        );
+        if include_guidance {
             available_context["hasPriorTaskDecisions"] =
                 serde_json::json!(!session.working_context.decisions.is_empty());
         }
         let request = crate::decisions::DecisionRequest {
             model_id: preferences.model_id.clone(),
             state: serde_json::json!({ "objective": objective, "availableContext": available_context }),
-            questions,
+            questions: crate::decisions::runtime_questions(include_guidance),
         };
 
         let started = Instant::now();
@@ -510,10 +442,12 @@ impl AgentRuntime {
             operation.await
         };
 
+        let shadow_mode = preferences.mode == DecisionMode::Shadow;
         let (
             success,
             selected_option,
             selected_probability,
+            resolved_model_id,
             input_tokens,
             output_tokens,
             failure_code,
@@ -524,21 +458,40 @@ impl AgentRuntime {
                 if *cancel.borrow() {
                     return Err(AppError::new("cancelled", "Run stopped by you."));
                 }
-                match Self::parse_decision_guidance(&response, preferences.mode) {
-                    Ok((guidance, selected_option, probability, summary)) => (
-                        true,
-                        Some(selected_option),
-                        probability,
-                        response.input_tokens,
-                        response.output_tokens,
-                        None,
-                        summary,
-                        guidance,
-                    ),
+                let resolved_model_id =
+                    (!response.model_id.trim().is_empty()).then(|| response.model_id.clone());
+                let parse_mode = if shadow_mode {
+                    DecisionMode::Assisted
+                } else {
+                    preferences.mode
+                };
+                match Self::parse_decision_guidance(&response, parse_mode) {
+                    Ok((guidance, selected_option, probability, summary)) => {
+                        let (summary, guidance) = if shadow_mode {
+                            (
+                                format!("Jev shadow suggestion recorded; it did not steer this task. {selected_option}"),
+                                None,
+                            )
+                        } else {
+                            (summary, guidance)
+                        };
+                        (
+                            true,
+                            Some(selected_option),
+                            probability,
+                            resolved_model_id,
+                            response.input_tokens,
+                            response.output_tokens,
+                            None,
+                            summary,
+                            guidance,
+                        )
+                    }
                     Err(error) => (
                         false,
                         None,
                         None,
+                        resolved_model_id,
                         response.input_tokens,
                         response.output_tokens,
                         Some(error.code),
@@ -552,6 +505,7 @@ impl AgentRuntime {
                 tracing::info!(session_id = %session.id, code = %error.code, "Jev advisory unavailable; continuing agent task");
                 (
                     false,
+                    None,
                     None,
                     None,
                     0,
@@ -570,6 +524,8 @@ impl AgentRuntime {
             session_title: session.title.clone(),
             project_id: session.project_id.clone(),
             model_id: preferences.model_id,
+            resolved_model_id,
+            shadow_mode,
             input_tokens,
             output_tokens,
             duration_ms: started.elapsed().as_millis() as u64,
@@ -909,13 +865,6 @@ impl AgentRuntime {
         }
         Ok(false)
     }
-}
-
-fn decision_criteria(options: &[(&str, &str)]) -> BTreeMap<String, String> {
-    options
-        .iter()
-        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-        .collect()
 }
 
 fn decision_choice(

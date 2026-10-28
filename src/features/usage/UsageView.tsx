@@ -27,9 +27,9 @@ function exportUsage(records: UsageRecord[], decisionRecords: DecisionUsageRecor
   const body = format === 'json'
     ? JSON.stringify({ source: 'local_agent_usage', exportedAt: new Date().toISOString(), notice, codingModelRequests: orderedRecords, separateDecisionServiceRequests: orderedDecisions }, null, 2)
     : [
-      ['record_type', 'timestamp', 'provider_or_service', 'model', 'project_id', 'session_id', 'usage_available', 'input_tokens', 'cached_input_tokens', 'output_tokens', 'estimated_cost_usd', 'latency_ms', 'success', 'failure_code', 'decision'].map(csvCell).join(','),
-      ...orderedRecords.map(record => ['coding_model', record.createdAt, record.providerId, record.modelId, record.projectId, record.sessionId, record.usageAvailable, record.usageAvailable ? record.inputTokens : null, record.usageAvailable ? record.cachedInputTokens : null, record.usageAvailable ? record.outputTokens : null, record.costUsd, record.durationMs, record.success, record.failureCode, null].map(csvCell).join(',')),
-      ...orderedDecisions.map(record => ['decision_service', record.createdAt, 'TypeSafe Jev', record.modelId, record.projectId, record.sessionId, true, record.inputTokens, null, record.outputTokens, null, record.durationMs, record.success, record.failureCode, record.selectedOption].map(csvCell).join(',')),
+      ['record_type', 'timestamp', 'provider_or_service', 'model', 'resolved_model', 'shadow_mode', 'project_id', 'session_id', 'usage_available', 'input_tokens', 'cached_input_tokens', 'output_tokens', 'estimated_cost_usd', 'latency_ms', 'success', 'failure_code', 'decision'].map(csvCell).join(','),
+      ...orderedRecords.map(record => ['coding_model', record.createdAt, record.providerId, record.modelId, null, null, record.projectId, record.sessionId, record.usageAvailable, record.usageAvailable ? record.inputTokens : null, record.usageAvailable ? record.cachedInputTokens : null, record.usageAvailable ? record.outputTokens : null, record.costUsd, record.durationMs, record.success, record.failureCode, null].map(csvCell).join(',')),
+      ...orderedDecisions.map(record => ['decision_service', record.createdAt, 'TypeSafe Jev', record.modelId, record.resolvedModelId, record.shadowMode, record.projectId, record.sessionId, true, record.inputTokens, null, record.outputTokens, null, record.durationMs, record.success, record.failureCode, record.selectedOption].map(csvCell).join(',')),
     ].join('\r\n');
   const blob = new Blob([body], { type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8' });
   const href = URL.createObjectURL(blob);
@@ -179,7 +179,7 @@ export function UsageView({ records, providers, projects, sessions }: {
           <tbody>{shownDecisions.map(record => {
             const project = projectsById.get(record.projectId) ?? 'Project unavailable';
             return <tr key={record.id} className={record.success ? '' : 'is-failed'}>
-              <td><strong>TypeSafe Jev</strong><small>{record.modelId}</small></td>
+              <td><strong>TypeSafe Jev</strong><small>{record.resolvedModelId ?? record.modelId}</small>{record.resolvedModelId && record.resolvedModelId !== record.modelId && <small>Selected {record.modelId}</small>}{record.shadowMode && <small>Shadow · not applied</small>}</td>
               <td><strong>{project}</strong><small>{record.sessionTitle || record.sessionId.slice(0, 8)} · {new Date(record.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small></td>
               <td>{record.inputTokens.toLocaleString()} / {record.outputTokens.toLocaleString()}</td>
               <td>{(record.durationMs / 1000).toFixed(2)} s</td>
@@ -189,7 +189,7 @@ export function UsageView({ records, providers, projects, sessions }: {
           })}</tbody>
         </table></div>
         {decisionRecords.length > shownDecisions.length && <p className="usage-history-more">Showing the latest {shownDecisions.length} decisions.</p>}
-      </> : <div className="usage-history-empty"><Clock3 size={15} /><span>Decision requests appear here when Advisory or Assisted mode is enabled.</span></div>}
+      </> : <div className="usage-history-empty"><Clock3 size={15} /><span>Decision requests appear here when Shadow, Advisory, or Assisted mode is enabled.</span></div>}
     </section>
     <p className="usage-disclaimer">Estimates use normalized USD per million token rates where available. Cached-input rates are applied when reported. Provider billing, tiers, free quotas, tools, taxes, and discounts may differ.</p>
   </section>;

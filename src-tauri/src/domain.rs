@@ -99,6 +99,7 @@ pub struct ModelPreferences {
 pub enum DecisionMode {
     #[default]
     Off,
+    Shadow,
     Advisory,
     Assisted,
 }
@@ -143,7 +144,14 @@ pub struct DecisionUsageRecord {
     pub session_id: String,
     pub session_title: String,
     pub project_id: String,
+    /// Configured model name or alias selected by the user.
     pub model_id: String,
+    /// Model identifier returned by TypeSafe for this request, when available.
+    #[serde(default)]
+    pub resolved_model_id: Option<String>,
+    /// True when the structured answer was recorded but not used to steer the task.
+    #[serde(default)]
+    pub shadow_mode: bool,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub duration_ms: u64,
@@ -151,6 +159,29 @@ pub struct DecisionUsageRecord {
     pub failure_code: Option<String>,
     pub selected_option: Option<String>,
     pub selected_probability: Option<f64>,
+    pub created_at: String,
+}
+
+/// Result of replaying one synthetic Jev evaluation case. Records contain only
+/// fixture identifiers and structured decisions, never repository/task content.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionEvaluationRecord {
+    pub id: String,
+    pub run_id: String,
+    pub suite_version: String,
+    pub case_id: String,
+    pub case_title: String,
+    pub requested_model_id: String,
+    pub resolved_model_id: Option<String>,
+    pub expected_answers: std::collections::BTreeMap<String, Vec<String>>,
+    pub actual_answers: std::collections::BTreeMap<String, String>,
+    pub matched_fields: Vec<String>,
+    pub mismatched_fields: Vec<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub duration_ms: u64,
+    pub failure_code: Option<String>,
     pub created_at: String,
 }
 

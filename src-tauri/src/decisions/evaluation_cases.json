@@ -1,0 +1,45 @@
+{
+  "version": "jevcode-stage0-v1",
+  "cases": [
+    {
+      "id": "small-implementation",
+      "title": "Small implementation request",
+      "objective": "Add a small pure helper that formats a greeting from a supplied name.",
+      "expected": {
+        "task_category": ["coding"],
+        "workflow": ["implement"],
+        "tool_focus": ["edit"]
+      }
+    },
+    {
+      "id": "missing-test-runtime",
+      "title": "Test blocked by missing runtime",
+      "objective": "Debug a test command that failed because the Python interpreter was not found. Find the cause before changing application code.",
+      "expected": {
+        "task_category": ["debugging"],
+        "workflow": ["explore"],
+        "tool_focus": ["inspect"]
+      }
+    },
+    {
+      "id": "explanation-only",
+      "title": "Explanation without edits",
+      "objective": "Explain how a typical desktop app separates its web UI from native filesystem commands. Do not make code changes.",
+      "expected": {
+        "task_category": ["explanation"],
+        "workflow": ["explain"],
+        "tool_focus": ["respond"]
+      }
+    },
+    {
+      "id": "cross-cutting-auth-change",
+      "title": "Cross-cutting authentication change",
+      "objective": "Plan a new account authentication flow spanning native session handling, the settings UI, and error recovery. Inspect the existing architecture before implementation.",
+      "expected": {
+        "task_category": ["coding"],
+        "workflow": ["explore"],
+        "tool_focus": ["inspect"]
+      }
+    }
+  ]
+}

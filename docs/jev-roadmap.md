@@ -348,6 +348,27 @@ limitations; they are useful reasons to test literal, numeric, long-context,
 and adversarial cases, not proof that every limitation applies unchanged to
 later Jev versions.
 
+### Stage 0 foundation status
+
+Stage 0 is implemented in the application:
+
+- A versioned, synthetic four-case evaluation suite can be replayed from
+  Settings → Decision assistance. Results are stored locally with expected and
+  actual answer labels, match fields, usage, and the requested and resolved Jev
+  model IDs.
+- A Shadow decision mode records the full bounded suggestion set without
+  injecting suggestions into the coding-model request or changing tool order.
+- Jev usage history records the provider-returned model ID when present, making
+  mutable aliases visible in the Usage page.
+- The evaluation path accepts no prompt or project path from the renderer. Its
+  fixtures contain no user or repository content. The privacy fields and limits
+  are documented in [Jev evaluation data](jev-evaluation.md).
+
+The feature is opt-in and does not include a benchmark claim. A user must run
+the evaluation with a connected Jev account to produce live results; each run
+uses four real Jev requests and may count toward TypeSafe usage. No live run was
+performed as part of implementation.
+
 ## Research references
 
 These sources informed the patterns above. Vendor cookbook results are examples

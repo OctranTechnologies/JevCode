@@ -71,6 +71,7 @@ impl Database {
         Self::migrate_openai_account_selection(&connection)?;
         Self::migrate_openai_auth_preference(&connection)?;
         Self::migrate_google_accounts(&connection)?;
+        Self::migrate_jev_evaluation(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -294,6 +295,21 @@ impl Database {
                  account_id TEXT NOT NULL
              );
              PRAGMA user_version = 14;",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_jev_evaluation(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS decision_evaluations (
+                 id TEXT PRIMARY KEY,
+                 suite_version TEXT NOT NULL,
+                 case_id TEXT NOT NULL,
+                 created_at TEXT NOT NULL,
+                 data TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS decision_evaluations_created ON decision_evaluations(created_at DESC);
+             PRAGMA user_version = 15;",
         )?;
         Ok(())
     }
@@ -1091,6 +1107,40 @@ impl Database {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
+    pub fn save_decision_evaluation_run(
+        &self,
+        records: &[DecisionEvaluationRecord],
+    ) -> AppResult<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        for record in records {
+            transaction.execute(
+                "INSERT INTO decision_evaluations (id, suite_version, case_id, created_at, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    record.id,
+                    record.suite_version,
+                    record.case_id,
+                    record.created_at,
+                    serde_json::to_string(record)?
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn decision_evaluations(&self) -> AppResult<Vec<DecisionEvaluationRecord>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT data FROM decision_evaluations ORDER BY created_at DESC, rowid DESC LIMIT 100",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
     pub fn provider_account(&self, provider_id: &str) -> AppResult<Option<ProviderAccount>> {
         let json: Option<String> = self
             .connection()?
@@ -1187,6 +1237,8 @@ mod tests {
             session_title: "Review task".into(),
             project_id: "project-1".into(),
             model_id: "jev-test".into(),
+            resolved_model_id: Some("jev-1.14.0".into()),
+            shadow_mode: false,
             input_tokens: 14,
             output_tokens: 3,
             duration_ms: 98,

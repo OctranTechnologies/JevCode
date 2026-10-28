@@ -3246,6 +3246,38 @@ pub fn get_jev_decision_usage(
 }
 
 #[tauri::command]
+pub fn get_jev_evaluations(
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<DecisionEvaluationRecord>> {
+    state.database.decision_evaluations()
+}
+
+#[tauri::command]
+pub async fn run_jev_evaluation(
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<DecisionEvaluationRecord>> {
+    static EVALUATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = EVALUATION_LOCK.try_lock().map_err(|_| {
+        AppError::new(
+            "decision_evaluation_running",
+            "A Jev evaluation is already running.",
+        )
+    })?;
+    let preferences = state.database.decision_preferences()?;
+    let engine = crate::decisions::JevClient::new(&state.credentials)?;
+    let models = engine.available_models().await?;
+    if !models.iter().any(|model| model.id == preferences.model_id) {
+        return Err(AppError::new(
+            "model_unavailable",
+            "The selected Jev model is no longer available. Refresh models and choose another.",
+        ));
+    }
+    let results = crate::decisions::replay_evaluation_suite(&engine, &preferences.model_id).await?;
+    state.database.save_decision_evaluation_run(&results)?;
+    Ok(results)
+}
+
+#[tauri::command]
 pub async fn get_jev_availability(
     state: State<'_, SharedState>,
 ) -> AppResult<DecisionAvailability> {
