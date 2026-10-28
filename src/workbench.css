@@ -476,6 +476,8 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .agent-activity-summary svg { flex: 0 0 auto; color: var(--wb-accent); }
 .agent-activity-summary time { margin-left: auto; font-size: 9px; }
 .agent-activity-summary:has(svg) { line-height: 1.5; }
+.agent-activity-summary.is-task-overlap-warning { margin-left: 32px; padding: 7px 9px; color: var(--wb-muted-strong); background: color-mix(in srgb, var(--wb-governance) 7%, var(--wb-surface)); border-left: 2px solid var(--wb-governance); border-radius: 4px; }
+.agent-activity-summary.is-task-overlap-warning svg { color: var(--wb-governance); }
 .streaming-label { display: inline-flex; align-items: center; gap: 5px; color: var(--wb-muted); font-size: 9px; }
 .streaming-label i { width: 6px; height: 6px; background: var(--wb-accent); border-radius: 50%; animation: task-pulse 1.2s infinite; }
 .task-demo-tag { margin-left: auto; padding: 2px 5px; color: var(--wb-muted); font-size: 8px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 4px; }

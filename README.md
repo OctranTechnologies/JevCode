@@ -27,7 +27,7 @@ sensitive actions, and review its changes before keeping them.
 - **Projects:** open local folders and Git repositories, browse files lazily, and view branch and working-tree status.
 - **Tasks:** resume conversations, inspect activity, and keep project instructions such as `AGENTS.md` in context.
 - **Multiple providers:** select models from connected providers without changing the agent runtime.
-- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers. Stage 1 adds a completion checklist, bounded recovery hints, and scope warnings. Stage 2 records a local-only baseline for relevant files, discovered test files, and available tools. Project memory adds user-reviewed local notes with source freshness, edit, pin, and delete controls. Neither feature sends its file shortlist or saved memory to Jev or coding providers.
+- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers. Stage 1 adds a completion checklist, bounded recovery hints, and scope warnings. Stage 2 records a local-only focus baseline. Stage 3 adds source-checked local project notes. Stage 4 adds a local warning when concurrent direct tasks target overlapping files; it does not block edits or send task paths to Jev.
 - **Controlled tools:** repository reads, edits, Git actions, and commands pass through validation and permission checks.
 - **Change review:** inspect diffs, accept or revert files, and preserve modifications that existed before a task.
 - **Isolated worktrees:** optionally run concurrent tasks in separate Git worktrees.
@@ -155,6 +155,14 @@ or missing source is visibly marked. Pinned notes are not included in task
 context, and project-memory text and source paths are not sent to Jev or coding
 providers in this stage. Avoid saving secrets, credentials, raw tool output, or
 large code blocks.
+For concurrent tasks using the same direct project checkout, the native runtime
+also checks built-in file-write targets for exact or parent/child path overlap
+and adds an advisory timeline warning. The overlap comparison and other-task
+paths stay local; Jev does not receive another task's title or write history.
+The existing Shadow scope check may independently send the current candidate
+path as documented below. This warning does not block edits or reliably detect
+arbitrary shell or MCP writes. Use isolated workspaces when tasks need physical
+separation.
 Jev-generated Stage 1 suggestions appear as advisory task activity only. Jev
 never runs tools, changes permissions, blocks or reverts edits, or claims a test
 passed. The local task receipt keeps actual changed-file
@@ -168,8 +176,8 @@ without merging provider totals or inventing a cost estimate. A user-triggered
 synthetic evaluation baseline records the Jev model version and answer matches
 without reading or sending project data; see
 [docs/jev-evaluation.md](docs/jev-evaluation.md) for the exact Stage 1 payload
-limits, Stage 2 local baseline, Stage 3 local memory foundation, and privacy
-boundaries.
+limits, Stage 2 local baseline, Stage 3 local memory foundation, Stage 4 local
+overlap guidance, and privacy boundaries.
 If Jev is offline, times out, or returns an invalid decision, Jev guidance is
 omitted and the task continues through the normal agent path. Mock-driven tests
 cover this fallback, mode-off behavior, cancellation, and unchanged permissions.

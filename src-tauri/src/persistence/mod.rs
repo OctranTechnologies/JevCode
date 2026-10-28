@@ -1114,6 +1114,14 @@ impl Database {
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
     }
 
+    pub fn sessions_for_project(&self, project_id: &str) -> AppResult<Vec<AgentSession>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT data FROM sessions WHERE project_id = ?1 ORDER BY updated_at DESC")?;
+        let rows = statement.query_map([project_id], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
     pub fn session(&self, id: &str) -> AppResult<AgentSession> {
         let json: Option<String> = self
             .connection()?

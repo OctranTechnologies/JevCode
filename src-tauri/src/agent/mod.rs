@@ -658,6 +658,10 @@ impl AgentRuntime {
             }
         };
 
+        if let Err(error) = self.maybe_record_task_overlap_warning(state, sink, session, &call) {
+            tracing::warn!(session_id = %session.id, code = %error.code, "Could not check for direct-workspace task overlap");
+        }
+
         self.maybe_shadow_scope_review(state, sink, session, &call, cancel)
             .await?;
 
@@ -1178,6 +1182,84 @@ impl AgentRuntime {
         Ok(report)
     }
 
+    fn maybe_record_task_overlap_warning(
+        &self,
+        state: &SharedState,
+        sink: &dyn EventSink,
+        session: &mut AgentSession,
+        call: &ToolCall,
+    ) -> AppResult<()> {
+        let candidate_paths = write_call_paths(call);
+        if candidate_paths.is_empty() || session.workspace_mode != WorkspaceMode::Direct {
+            return Ok(());
+        }
+        if session.activity_events.iter().any(|event| {
+            event.kind == AgentActivityKind::TaskOverlapWarning
+                && event.tool_call_id.as_deref() == Some(call.id.as_str())
+        }) {
+            return Ok(());
+        }
+
+        let mut overlaps = Vec::new();
+        for other in state.database.sessions_for_project(&session.project_id)? {
+            if other.id == session.id
+                || other.archived_at.is_some()
+                || other.workspace_mode != WorkspaceMode::Direct
+                || !matches!(
+                    &other.status,
+                    SessionStatus::Queued
+                        | SessionStatus::Planning
+                        | SessionStatus::Working
+                        | SessionStatus::WaitingForPermission
+                        | SessionStatus::WaitingForUser
+                )
+            {
+                continue;
+            }
+            let other_paths = session_write_paths(&other);
+            for candidate in &candidate_paths {
+                for observed in &other_paths {
+                    if file_path_scopes_overlap(candidate, observed) {
+                        overlaps.push((
+                            candidate.clone(),
+                            safe_task_label(&other.title),
+                            observed.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        if overlaps.is_empty() {
+            return Ok(());
+        }
+
+        overlaps.sort();
+        overlaps.dedup();
+        let examples = overlaps
+            .iter()
+            .take(3)
+            .map(|(candidate, title, observed)| {
+                format!("`{candidate}` overlaps `{observed}` in “{title}”")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let more = overlaps.len().saturating_sub(3);
+        let suffix = if more > 0 {
+            format!("; and {more} more path overlap(s)")
+        } else {
+            String::new()
+        };
+        record_activity(
+            session,
+            AgentActivityKind::TaskOverlapWarning,
+            format!(
+                "Possible task overlap: {examples}{suffix}. These tasks share the same project checkout. Consider pausing one or using an isolated workspace. This warning does not block the edit."
+            ),
+            Some(call.id.clone()),
+        );
+        checkpoint(state, sink, session)
+    }
+
     async fn maybe_shadow_scope_review(
         &self,
         state: &SharedState,
@@ -1523,6 +1605,69 @@ fn completion_test_runs(session: &AgentSession) -> Vec<CompletionTestRun> {
         run.label = format!("Test run {}", index + 1);
     }
     runs
+}
+
+fn write_call_paths(call: &ToolCall) -> Vec<String> {
+    let keys: &[&str] = match call.name.as_str() {
+        "apply_patch" | "create_file" | "delete_file" => &["path"],
+        "move_file" => &["source", "destination"],
+        _ => return Vec::new(),
+    };
+    keys.iter()
+        .filter_map(|key| call.arguments.get(*key)?.as_str())
+        .filter_map(normalize_workspace_relative_path)
+        .collect()
+}
+
+fn session_write_paths(session: &AgentSession) -> HashSet<String> {
+    let results = session
+        .messages
+        .iter()
+        .filter_map(|message| message.tool_result.as_ref())
+        .map(|result| (result.tool_call_id.as_str(), !result.is_error))
+        .collect::<HashMap<_, _>>();
+    let mut paths = session
+        .messages
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+        .filter(|call| !matches!(results.get(call.id.as_str()), Some(false)))
+        .flat_map(write_call_paths)
+        .collect::<HashSet<_>>();
+    if let Some(call) = session.pending_tool_call.as_ref() {
+        paths.extend(write_call_paths(call));
+    }
+    for call in &session.queued_tool_calls {
+        paths.extend(write_call_paths(call));
+    }
+    paths
+}
+
+fn file_path_scopes_overlap(left: &str, right: &str) -> bool {
+    let (left, right) = if cfg!(any(target_os = "windows", target_os = "macos")) {
+        (left.to_lowercase(), right.to_lowercase())
+    } else {
+        (left.to_owned(), right.to_owned())
+    };
+    left == right
+        || left
+            .strip_prefix(&right)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(&left)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn safe_task_label(title: &str) -> String {
+    let label = title
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(80)
+        .collect::<String>();
+    if label.trim().is_empty() {
+        "Untitled task".into()
+    } else {
+        label
+    }
 }
 
 fn scope_candidate_path(call: &ToolCall) -> Option<String> {

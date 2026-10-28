@@ -435,6 +435,7 @@ pub enum AgentActivityKind {
     JevRecoveryHint,
     JevScopeWarning,
     FocusBaseline,
+    TaskOverlapWarning,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

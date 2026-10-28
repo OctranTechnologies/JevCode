@@ -433,6 +433,25 @@ remote reuse have not been implemented; sharing note content or source paths
 requires an explicit user decision. The Stage 3 quality and privacy gate remains
 open.
 
+### Stage 4 first orchestration slice
+
+Before a built-in file edit, create, delete, or move runs, the native runtime
+compares its workspace-relative targets with active tasks in the same project
+that use the direct checkout. It checks successful, pending, queued, and
+in-flight built-in file targets for exact and parent/child path overlap, then
+adds a local task-timeline warning. Isolated worktrees are excluded. The
+warning is advisory and never blocks a tool or changes permission decisions.
+The overlap comparison, other-task paths, and task titles are not sent to Jev.
+The existing Stage 1 Shadow scope signal can independently send the current
+candidate path under its already documented payload limits.
+
+This is a deterministic collision check, not semantic overlap analysis. It
+does not reliably detect arbitrary shell or MCP writes. User-configured model
+budgets, model recommendations, semantic task-overlap guidance, and
+side-by-side competing approaches remain open. Semantic comparison of task
+objectives or paths requires a separate user decision about sharing those data
+with Jev. The Stage 4 rollout gate remains open.
+
 ## Research references
 
 These sources informed the patterns above. Vendor cookbook results are examples

@@ -226,7 +226,7 @@ export interface Tool {
   parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
 }
-export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory' | 'jev_recovery_hint' | 'jev_scope_warning' | 'focus_baseline';
+export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory' | 'jev_recovery_hint' | 'jev_scope_warning' | 'focus_baseline' | 'task_overlap_warning';
 export interface AgentActivityEvent {
   id: string;
   sessionId: string;

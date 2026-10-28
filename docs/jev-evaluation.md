@@ -86,6 +86,27 @@ saving secrets, credentials, raw tool output, and large code blocks. Jev's
 future memory suggestions and any remote reuse require a separate, explicit
 content-sharing decision and evaluation before they are enabled.
 
+### Stage 4 local task-overlap guidance
+
+Before a built-in file edit/create/delete/move call runs, the native runtime
+compares its workspace-relative targets with successful, pending, queued, or
+in-flight file targets from other active tasks in the same project that also
+use the direct checkout. Exact and parent/child path overlaps produce a local
+task-timeline warning. Tasks in isolated worktrees are excluded. The warning
+does not block or approve the write; it suggests pausing one task or using an
+isolated workspace. Compared paths and task titles stay local and are not sent
+to Jev as overlap context. The existing Stage 1 Shadow scope signal may
+independently send the current candidate path under its documented limits; it
+does not send the other task's title or write history.
+
+This is a deterministic path collision warning, not semantic conflict
+analysis. It does not reliably detect files written by arbitrary shell
+commands or external MCP tools, and it cannot guarantee that paths with
+different names have no logical overlap. Model budgets, automatic model
+recommendations, semantic task-overlap suggestions, and competing approaches
+remain unimplemented. Semantic comparison requires a separate decision about
+sharing task objectives or paths with Jev.
+
 ### The synthetic evaluation suite
 
 The Settings → Decision assistance **Run evaluation** action replays four fixed

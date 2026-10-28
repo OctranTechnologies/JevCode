@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import {
-  AlertCircle, ArrowUpRight, Check, ChevronDown, CircleDot, CircleHelp, Clock3, FileCode2, GitBranch, ShieldCheck,
+  AlertCircle, AlertTriangle, ArrowUpRight, Check, ChevronDown, CircleDot, CircleHelp, Clock3, FileCode2, GitBranch, ShieldCheck,
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
@@ -64,10 +64,10 @@ export function Conversation({
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
       {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span><span className="working-dots"><i /><i /><i /></span></div>}
       {session?.activityEvents
-        .filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning', 'focus_baseline'].includes(event.kind))
+        .filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning', 'focus_baseline', 'task_overlap_warning'].includes(event.kind))
         .map(event => (
-          <div className="agent-activity-summary" key={event.id}>
-            <CircleDot size={12} />
+          <div className={`agent-activity-summary${event.kind === 'task_overlap_warning' ? ' is-task-overlap-warning' : ''}`} key={event.id}>
+            {event.kind === 'task_overlap_warning' ? <AlertTriangle size={12} /> : <CircleDot size={12} />}
             <span>{event.summary}</span>
             <time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time>
           </div>
