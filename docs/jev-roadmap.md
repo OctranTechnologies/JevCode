@@ -369,6 +369,34 @@ the evaluation with a connected Jev account to produce live results; each run
 uses four real Jev requests and may count toward TypeSafe usage. No live run was
 performed as part of implementation.
 
+### Stage 1 foundation status
+
+Stage 1's first shadow-only implementation is in place:
+
+- Completed tasks persist a checklist derived from the original request, a list
+  of task-scoped changed paths from the review baseline, and recorded test-run
+  exit outcomes. Jev may add a tentative per-item evidence match in Shadow mode;
+  the UI labels it as a suggestion and shows local evidence separately.
+- The runtime recognizes repeated identical failed command or search actions
+  from local tool events. In Shadow mode, it can ask Jev once for a bounded
+  recovery suggestion. The decision is recorded in the task timeline; it never
+  retries, executes a tool, stops the task, or prompts the user automatically.
+- Before a built-in file-write tool runs, Shadow mode can ask Jev about up to
+  three safe workspace-relative destination paths. A likely-unrelated answer
+  adds a timeline warning. It does not change the permission decision, block an
+  edit, or revert a file.
+- These requests send only bounded requirement text, workspace-relative file
+  names, aggregate test outcomes, or generic repeated-tool metadata. They do not
+  send file contents, diffs, terminal output, or command/search arguments. The
+  Settings page discloses the additional Shadow-mode request budget. Exact
+  limits are documented in [Jev evaluation data](jev-evaluation.md).
+
+This is an initial measurement release, not a claim that the Stage 1 gate has
+been met. Jev classifications remain shadow suggestions. The checklist is
+available even when Jev is off or unavailable; in that case it reports local
+evidence only. No live Jev run or task-quality benchmark was performed during
+implementation.
+
 ## Research references
 
 These sources informed the patterns above. Vendor cookbook results are examples

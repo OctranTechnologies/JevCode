@@ -1,12 +1,13 @@
 # Jev shadow mode and evaluation data
 
 Stage 0 adds an opt-in Shadow mode and a replayable synthetic evaluation suite.
-Shadow mode records Jev's full structured suggestions but never applies them to
-the coding-model prompt, tool ordering, or task behavior.
+Stage 1 adds task completion evidence, a bounded recovery hint, and scope checks.
+Shadow suggestions can appear in the task timeline, but they never steer coding
+actions, permissions, or file state.
 
 ## What is sent to TypeSafe
 
-### A real task in Shadow mode
+### Initial task classification
 
 The Jev request contains:
 
@@ -19,6 +20,29 @@ It does **not** include project paths, file contents, diffs, command arguments,
 credential values, or tool results. The user objective is still sent to
 TypeSafe, as it is for the existing Advisory and Assisted modes. Keep Shadow
 mode off if the user does not want that request sent to Jev.
+
+### Stage 1 task signals in Shadow mode
+
+Stage 1 makes up to five additional, bounded Jev requests per task:
+
+- One completion review can include up to 8 extracted request items, up to 24
+  task-scoped workspace-relative changed-file paths, a test-run count, and only
+  the aggregate test outcome (`passed`, `failed`, `unknown`, or `not_run`). It
+  does not include file contents, diff text, test names, or command output.
+- Up to 3 scope checks can include the current objective and one candidate
+  workspace-relative write path. Absolute paths and paths containing parent
+  traversal are rejected locally.
+- At most 1 recovery check can include the objective, a generic tool category
+  (`command` or `search`), and a repeat count after the same failed invocation
+  recurs. The command/search arguments and tool output are not sent.
+
+The objective is capped at 3,000 characters, each checklist item at 700
+characters, each stored path at 300 characters, and all counters are bounded.
+Jev sees request text that the existing task mode already sends; Shadow mode
+adds only the compact evidence fields above. Stage 1 adds up to five requests,
+for a maximum of six Jev task requests total when counting the initial Shadow
+evaluation. Requests can count toward TypeSafe usage. The task-local completion
+receipt is still created if Jev is disconnected or unavailable.
 
 ### The synthetic evaluation suite
 
@@ -40,8 +64,9 @@ Normal Jev decision history records the configured model ID, the model ID
 returned by TypeSafe when provided, token counts, latency, result status, and
 the bounded structured choice summary. A boolean identifies Shadow-mode
 records. Existing session/project identifiers remain the local correlation
-keys; the user objective and repository content are not copied into the
-decision-usage record.
+keys; task text, file paths, and repository content are not copied into the
+decision-usage record. The completion receipt and its task-scoped paths are
+stored inside the local task record so the UI can display them after restart.
 
 Evaluation results are stored in SQLite separately from coding-provider usage.
 Each result contains the suite version, run and case IDs, case title, requested
@@ -73,6 +98,12 @@ tasks and actual outcomes before enabling any new assisted behavior.
 ## Safety boundaries
 
 - Shadow answers never reach the coding provider and never steer tools.
+- The completion checklist labels Jev output as a tentative match, separately
+  from locally captured file and test evidence. It never infers a passed test.
+- Recovery suggestions are one-shot and informational. They do not retry,
+  execute a tool, stop a task, or ask a question automatically.
+- Scope warnings never block, approve, or revert an edit. Existing permission
+  checks still run in their normal order.
 - Evaluation fixtures are local, static, and bounded; the command accepts no
   caller-provided prompt or repository path.
 - Evaluation is user-triggered, runs one suite at a time, and uses the selected

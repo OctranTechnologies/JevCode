@@ -322,6 +322,58 @@ pub struct WorkingContext {
     pub compacted_through: Option<String>,
     #[serde(default)]
     pub compacted_turns: u32,
+    /// Local completion evidence and optional Jev shadow classifications.
+    #[serde(default)]
+    pub completion_review: Option<CompletionReview>,
+    /// Bounds Stage 1 recovery suggestions to one attempt per task.
+    #[serde(default)]
+    pub stage1_stall_signal_emitted: bool,
+    /// Workspace-relative write targets already checked by the Stage 1 scope signal.
+    #[serde(default)]
+    pub stage1_scope_checked_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionReview {
+    pub requirements: Vec<CompletionRequirement>,
+    pub changed_files: Vec<String>,
+    pub test_runs: Vec<CompletionTestRun>,
+    pub omitted_requirement_count: u32,
+    pub jev_shadow_assessed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionRequirement {
+    pub text: String,
+    pub assessment: Option<CompletionAssessment>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionAssessment {
+    Supported,
+    Partial,
+    NoEvidence,
+    Unclear,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionTestRun {
+    pub label: String,
+    pub status: CompletionTestStatus,
+    pub exit_code: Option<i32>,
+    pub tool_call_id: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionTestStatus {
+    Passed,
+    Failed,
+    Unknown,
 }
 
 impl AgentSession {
@@ -377,6 +429,8 @@ pub enum AgentActivityKind {
     TestRun,
     ContextCompacted,
     DecisionAdvisory,
+    JevRecoveryHint,
+    JevScopeWarning,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

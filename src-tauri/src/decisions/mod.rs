@@ -4,7 +4,7 @@
 mod evaluation;
 mod jev;
 
-pub use evaluation::{replay_evaluation_suite, EVALUATION_SUITE_VERSION};
+pub use evaluation::replay_evaluation_suite;
 pub use jev::JevClient;
 
 #[cfg(test)]

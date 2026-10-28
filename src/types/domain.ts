@@ -187,6 +187,20 @@ export interface WorkingContext {
   protectedInstructions: string[];
   compactedThrough: string | null;
   compactedTurns: number;
+  completionReview: CompletionReview | null;
+  stage1StallSignalEmitted: boolean;
+  stage1ScopeCheckedPaths: string[];
+}
+export type CompletionAssessment = 'supported' | 'partial' | 'no_evidence' | 'unclear';
+export type CompletionTestStatus = 'passed' | 'failed' | 'unknown';
+export interface CompletionRequirement { text: string; assessment: CompletionAssessment | null }
+export interface CompletionTestRun { label: string; status: CompletionTestStatus; exitCode: number | null; toolCallId: string }
+export interface CompletionReview {
+  requirements: CompletionRequirement[];
+  changedFiles: string[];
+  testRuns: CompletionTestRun[];
+  omittedRequirementCount: number;
+  jevShadowAssessed: boolean;
 }
 export interface AgentStreamChunk { sessionId: string; delta: string; reset: boolean }
 export interface ToolOutputChunk { sessionId: string; toolCallId: string; stream: 'stdout' | 'stderr'; chunk: string }
@@ -211,7 +225,7 @@ export interface Tool {
   parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
 }
-export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory';
+export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory' | 'jev_recovery_hint' | 'jev_scope_warning';
 export interface AgentActivityEvent {
   id: string;
   sessionId: string;

@@ -7,8 +7,9 @@ use crate::{
     state::SharedState,
     tools, usage,
 };
+use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -74,6 +75,12 @@ struct DecisionGuidance {
     tool_focus: String,
     scope_score: u8,
     clarification_probability: f64,
+}
+
+struct ShadowDecisionOutcome {
+    response: Option<crate::decisions::DecisionResponse>,
+    failure_code: Option<String>,
+    duration_ms: u64,
 }
 
 #[derive(Clone)]
@@ -163,7 +170,7 @@ impl AgentRuntime {
         loop {
             while !session.queued_tool_calls.is_empty() {
                 if self
-                    .process_next_tools(state, sink, session, project)
+                    .process_next_tools(state, sink, session, project, cancel)
                     .await?
                 {
                     return Ok(());
@@ -235,6 +242,8 @@ impl AgentRuntime {
                 continue;
             }
 
+            session.working_context.completion_review =
+                Some(self.build_completion_review(state, session, cancel).await?);
             session.status = SessionStatus::Completed;
             session.working_context.outstanding_tasks.clear();
             record_activity(
@@ -623,6 +632,7 @@ impl AgentRuntime {
         sink: &dyn EventSink,
         session: &mut AgentSession,
         project: &Project,
+        cancel: &mut watch::Receiver<bool>,
     ) -> AppResult<bool> {
         let call = session.queued_tool_calls.remove(0);
         session.tool_calls += 1;
@@ -646,6 +656,9 @@ impl AgentRuntime {
                 return Ok(false);
             }
         };
+
+        self.maybe_shadow_scope_review(state, sink, session, &call, cancel)
+            .await?;
 
         if call.name == "ask_user" {
             let question = call.arguments["question"].as_str().ok_or_else(|| {
@@ -863,7 +876,725 @@ impl AgentRuntime {
             append_result(session, result);
             checkpoint(state, sink, session)?;
         }
+        self.maybe_shadow_recovery_hint(state, sink, session, cancel)
+            .await?;
         Ok(false)
+    }
+
+    async fn evaluate_shadow_signal(
+        &self,
+        state: &SharedState,
+        cancel: &mut watch::Receiver<bool>,
+        model_id: String,
+        signal_state: serde_json::Value,
+        questions: BTreeMap<String, crate::decisions::DecisionQuestion>,
+    ) -> AppResult<ShadowDecisionOutcome> {
+        let started = Instant::now();
+        if *cancel.borrow() {
+            return Err(AppError::new("cancelled", "Run stopped by you."));
+        }
+        let engine: AppResult<std::sync::Arc<dyn crate::decisions::DecisionEngine>> =
+            if let Some(engine) = self.decision_engine.as_ref() {
+                Ok(std::sync::Arc::clone(engine))
+            } else {
+                crate::decisions::JevClient::new(&state.credentials)
+                    .map(|client| std::sync::Arc::new(client) as _)
+            };
+        let result = match engine {
+            Ok(engine) => {
+                let request = crate::decisions::DecisionRequest {
+                    model_id,
+                    state: signal_state,
+                    questions,
+                };
+                let evaluation = engine.evaluate(request);
+                tokio::pin!(evaluation);
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.changed() => Err(AppError::new("cancelled", "Run stopped by you.")),
+                        response = &mut evaluation => response,
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| {
+                    Err(AppError::new(
+                        "decision_timeout",
+                        "Jev did not respond in time.",
+                    ))
+                })
+            }
+            Err(error) => Err(error),
+        };
+        if *cancel.borrow() {
+            return Err(AppError::new("cancelled", "Run stopped by you."));
+        }
+        let (response, failure_code) = match result {
+            Ok(response) => (Some(response), None),
+            Err(error) if error.code == "cancelled" => return Err(error),
+            Err(error) => {
+                tracing::info!(code = %error.code, "Jev Stage 1 shadow signal unavailable");
+                (None, Some(error.code))
+            }
+        };
+        Ok(ShadowDecisionOutcome {
+            response,
+            failure_code,
+            duration_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
+    async fn build_completion_review(
+        &self,
+        state: &SharedState,
+        session: &AgentSession,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> AppResult<CompletionReview> {
+        let (requirements, omitted_requirement_count) = completion_requirements(session);
+        let changes = match review::list_changes(&state.database, session).await {
+            Ok(changes) => changes,
+            Err(error) => {
+                tracing::warn!(session_id = %session.id, code = %error.code, "Could not collect completion review changes");
+                SessionChanges {
+                    session_id: session.id.clone(),
+                    files: Vec::new(),
+                    additions: 0,
+                    deletions: 0,
+                    tests_summary: None,
+                    working_tree: "unknown".into(),
+                    baseline_head: None,
+                    baseline_at: session.created_at.clone(),
+                }
+            }
+        };
+        let changed_files = changes
+            .files
+            .iter()
+            .filter_map(|file| normalize_workspace_relative_path(&file.path))
+            .take(24)
+            .collect::<Vec<_>>();
+        let test_runs = completion_test_runs(session);
+        let mut report = CompletionReview {
+            requirements,
+            changed_files,
+            test_runs,
+            omitted_requirement_count,
+            jev_shadow_assessed: false,
+        };
+        let preferences = match state.database.decision_preferences() {
+            Ok(preferences) => preferences,
+            Err(error) => {
+                tracing::warn!(session_id = %session.id, code = %error.code, "Could not load Jev preferences for the completion receipt");
+                return Ok(report);
+            }
+        };
+        if preferences.mode != DecisionMode::Shadow || report.requirements.is_empty() {
+            return Ok(report);
+        }
+        if *cancel.borrow() {
+            return Ok(report);
+        }
+
+        let objective = session
+            .working_context
+            .objective
+            .chars()
+            .take(3_000)
+            .collect::<String>();
+        let requirements_state = report
+            .requirements
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                serde_json::json!({
+                    "id": format!("requirement_{index}"),
+                    "text": item.text.chars().take(700).collect::<String>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let test_state = if report.test_runs.is_empty() {
+            "not_run"
+        } else if report
+            .test_runs
+            .iter()
+            .any(|run| run.status == CompletionTestStatus::Failed)
+        {
+            "failed"
+        } else if report
+            .test_runs
+            .iter()
+            .all(|run| run.status == CompletionTestStatus::Passed)
+        {
+            "passed"
+        } else {
+            "unknown"
+        };
+        let request_state = serde_json::json!({
+            "objective": objective,
+            "requirements": requirements_state,
+            "evidence": {
+                "changedWorkspaceRelativeFiles": report.changed_files.clone(),
+                "testOutcome": test_state,
+                "testRunCount": report.test_runs.len(),
+            }
+        });
+        let questions = completion_questions(report.requirements.len());
+        let outcome = self
+            .evaluate_shadow_signal(
+                state,
+                cancel,
+                preferences.model_id.clone(),
+                request_state,
+                questions,
+            )
+            .await;
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) if error.code == "cancelled" => return Ok(report),
+            Err(error) => return Err(error),
+        };
+        let mut selected = BTreeMap::new();
+        let mut valid_count = 0usize;
+        if let Some(response) = outcome.response.as_ref() {
+            for (index, requirement) in report.requirements.iter_mut().enumerate() {
+                if let Some((assessment, probability)) =
+                    completion_assessment(response, &format!("requirement_{index}"))
+                {
+                    requirement.assessment = Some(assessment);
+                    let key = match assessment {
+                        CompletionAssessment::Supported => "supported",
+                        CompletionAssessment::Partial => "partial",
+                        CompletionAssessment::NoEvidence => "not_observed",
+                        CompletionAssessment::Unclear => "unclear",
+                    };
+                    selected.insert(key, selected.get(key).copied().unwrap_or(0usize) + 1);
+                    let _ = probability;
+                    valid_count += 1;
+                }
+            }
+            report.jev_shadow_assessed = valid_count == report.requirements.len();
+            if !report.jev_shadow_assessed {
+                for item in &mut report.requirements {
+                    item.assessment = None;
+                }
+            }
+        }
+        let selected_option = (!selected.is_empty()).then(|| {
+            selected
+                .iter()
+                .map(|(key, count)| format!("{key}={count}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        });
+        record_stage1_usage(
+            state,
+            session,
+            &preferences.model_id,
+            &outcome,
+            report.jev_shadow_assessed,
+            selected_option,
+            None,
+        );
+        Ok(report)
+    }
+
+    async fn maybe_shadow_scope_review(
+        &self,
+        state: &SharedState,
+        sink: &dyn EventSink,
+        session: &mut AgentSession,
+        call: &ToolCall,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> AppResult<()> {
+        if !matches!(
+            call.name.as_str(),
+            "apply_patch" | "create_file" | "delete_file" | "move_file"
+        ) || session.working_context.stage1_scope_checked_paths.len() >= 3
+        {
+            return Ok(());
+        }
+        let Some(path) = scope_candidate_path(call) else {
+            return Ok(());
+        };
+        if session
+            .working_context
+            .stage1_scope_checked_paths
+            .iter()
+            .any(|checked| checked == &path)
+        {
+            return Ok(());
+        }
+        let preferences = match state.database.decision_preferences() {
+            Ok(preferences) => preferences,
+            Err(error) => {
+                tracing::warn!(session_id = %session.id, code = %error.code, "Could not load Jev preferences for the scope signal");
+                return Ok(());
+            }
+        };
+        if preferences.mode != DecisionMode::Shadow {
+            return Ok(());
+        }
+        let objective = session
+            .working_context
+            .objective
+            .chars()
+            .take(3_000)
+            .collect::<String>();
+        let question = crate::decisions::DecisionQuestion::Choice {
+            instructions: "Classify whether this workspace-relative candidate path appears directly requested, plausibly supporting, or likely unrelated to the objective. This is only a shadow warning; do not direct the application to block or undo work.".into(),
+            criteria: decision_criteria(&[
+                ("direct", "The objective explicitly calls for this area."),
+                ("supporting", "The path plausibly supports the requested outcome."),
+                ("unrelated", "The path appears unrelated to the requested outcome."),
+                ("unclear", "There is not enough information to tell."),
+            ]),
+        };
+        let outcome = self
+            .evaluate_shadow_signal(
+                state,
+                cancel,
+                preferences.model_id.clone(),
+                serde_json::json!({ "objective": objective, "candidateWorkspaceRelativePath": path.clone() }),
+                BTreeMap::from([("scope_fit".into(), question)]),
+            )
+            .await?;
+        session
+            .working_context
+            .stage1_scope_checked_paths
+            .push(path.clone());
+        let answer = outcome.response.as_ref().and_then(|response| {
+            decision_choice(response, "scope_fit")
+                .ok()
+                .filter(|(choice, _)| {
+                    ["direct", "supporting", "unrelated", "unclear"].contains(&choice.as_str())
+                })
+        });
+        let valid = answer.is_some();
+        let selected = answer.as_ref().map(|(choice, _)| choice.clone());
+        record_stage1_usage(
+            state,
+            session,
+            &preferences.model_id,
+            &outcome,
+            valid,
+            selected.clone(),
+            answer.and_then(|(_, probability)| probability),
+        );
+        if selected.as_deref() == Some("unrelated") {
+            record_activity(
+                session,
+                AgentActivityKind::JevScopeWarning,
+                format!("Jev shadow warning: {path} may be outside this task's scope. No action was blocked or reverted."),
+                Some(call.id.clone()),
+            );
+            checkpoint(state, sink, session)?;
+        }
+        Ok(())
+    }
+
+    async fn maybe_shadow_recovery_hint(
+        &self,
+        state: &SharedState,
+        sink: &dyn EventSink,
+        session: &mut AgentSession,
+        cancel: &mut watch::Receiver<bool>,
+    ) -> AppResult<()> {
+        if session.working_context.stage1_stall_signal_emitted {
+            return Ok(());
+        }
+        let Some(signal) = repeated_failure_signal(session) else {
+            return Ok(());
+        };
+        let preferences = match state.database.decision_preferences() {
+            Ok(preferences) => preferences,
+            Err(error) => {
+                tracing::warn!(session_id = %session.id, code = %error.code, "Could not load Jev preferences for the recovery signal");
+                return Ok(());
+            }
+        };
+        if preferences.mode != DecisionMode::Shadow {
+            return Ok(());
+        }
+        // Persist the one-shot bound before making the optional network request.
+        session.working_context.stage1_stall_signal_emitted = true;
+        checkpoint(state, sink, session)?;
+        let question = crate::decisions::DecisionQuestion::Choice {
+            instructions: "Choose one bounded next-step suggestion after repeated identical failed tool actions. Do not claim to have performed the action, and do not change permissions or retry automatically.".into(),
+            criteria: decision_criteria(&[
+                ("inspect_environment", "Inspect the environment or project setup."),
+                ("search_differently", "Search for different evidence."),
+                ("different_approach", "Try a different approach through existing tools."),
+                ("ask_user", "Ask the user a specific question."),
+                ("stop_report", "Stop and report the blocker."),
+            ]),
+        };
+        let outcome = self
+            .evaluate_shadow_signal(
+                state,
+                cancel,
+                preferences.model_id.clone(),
+                serde_json::json!({
+                    "objective": session.working_context.objective.chars().take(3_000).collect::<String>(),
+                    "repeatedActionKind": signal.kind,
+                    "repeatedFailedActionCount": signal.repetitions,
+                }),
+                BTreeMap::from([("recovery".into(), question)]),
+            )
+            .await?;
+        let answer = outcome.response.as_ref().and_then(|response| {
+            decision_choice(response, "recovery")
+                .ok()
+                .filter(|(choice, _)| {
+                    [
+                        "inspect_environment",
+                        "search_differently",
+                        "different_approach",
+                        "ask_user",
+                        "stop_report",
+                    ]
+                    .contains(&choice.as_str())
+                })
+        });
+        let valid = answer.is_some();
+        let selected = answer.as_ref().map(|(choice, _)| choice.clone());
+        record_stage1_usage(
+            state,
+            session,
+            &preferences.model_id,
+            &outcome,
+            valid,
+            selected.clone(),
+            answer.and_then(|(_, probability)| probability),
+        );
+        if let Some(choice) = selected {
+            let suggestion = match choice.as_str() {
+                "inspect_environment" => "inspect the environment or project setup",
+                "search_differently" => "search for different evidence",
+                "different_approach" => "try a different approach",
+                "ask_user" => "ask the user a specific question",
+                _ => "stop and report the blocker",
+            };
+            record_activity(
+                session,
+                AgentActivityKind::JevRecoveryHint,
+                format!("Jev shadow recovery hint: {suggestion} after {} repeated failed {} actions. No action was taken automatically.", signal.repetitions, signal.kind),
+                None,
+            );
+            checkpoint(state, sink, session)?;
+        }
+        Ok(())
+    }
+}
+
+fn decision_criteria(options: &[(&str, &str)]) -> BTreeMap<String, String> {
+    options
+        .iter()
+        .map(|(key, label)| ((*key).to_owned(), (*label).to_owned()))
+        .collect()
+}
+
+fn completion_requirements(session: &AgentSession) -> (Vec<CompletionRequirement>, u32) {
+    let source = if !session.working_context.objective.trim().is_empty() {
+        session.working_context.objective.as_str()
+    } else {
+        session
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::User)
+            .map(|message| message.content.as_str())
+            .unwrap_or_default()
+    };
+    let list_items = source
+        .lines()
+        .filter_map(|line| strip_requirement_marker(line.trim()))
+        .map(normalize_requirement)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let candidates = if list_items.len() >= 2 {
+        list_items
+    } else {
+        let normalized = normalize_requirement(source);
+        if normalized.is_empty() {
+            Vec::new()
+        } else {
+            vec![normalized]
+        }
+    };
+    let omitted = candidates.len().saturating_sub(8) as u32;
+    let requirements = candidates
+        .into_iter()
+        .take(8)
+        .map(|text| CompletionRequirement {
+            text: text.chars().take(700).collect(),
+            assessment: None,
+        })
+        .collect();
+    (requirements, omitted)
+}
+
+fn strip_requirement_marker(line: &str) -> Option<&str> {
+    for marker in ["- ", "* ", "+ ", "• "] {
+        if let Some(rest) = line.strip_prefix(marker) {
+            return Some(rest.trim());
+        }
+    }
+    let digits = line
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .count();
+    if digits > 0 {
+        let remainder = &line[digits..];
+        if let Some(rest) = remainder
+            .strip_prefix(". ")
+            .or_else(|| remainder.strip_prefix(") "))
+        {
+            return Some(rest.trim());
+        }
+    }
+    None
+}
+
+fn normalize_requirement(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn completion_questions(count: usize) -> BTreeMap<String, crate::decisions::DecisionQuestion> {
+    (0..count)
+        .map(|index| {
+            (
+                format!("requirement_{index}"),
+                crate::decisions::DecisionQuestion::Choice {
+                    instructions: "Classify the request item against only the supplied changed workspace-relative paths and aggregate test outcome. This is a tentative evidence match, not a code-correctness claim or test result. Choose supported, partial, not_observed, or unclear.".into(),
+                    criteria: decision_criteria(&[
+                        ("supported", "The listed evidence appears to support the requirement."),
+                        ("partial", "The evidence appears to cover only part of the requirement."),
+                        ("not_observed", "No matching evidence is apparent in the provided summary."),
+                        ("unclear", "The evidence is insufficient to classify the requirement."),
+                    ]),
+                },
+            )
+        })
+        .collect()
+}
+
+fn completion_assessment(
+    response: &crate::decisions::DecisionResponse,
+    name: &str,
+) -> Option<(CompletionAssessment, Option<f64>)> {
+    let (choice, probability) = decision_choice(response, name).ok()?;
+    let assessment = match choice.as_str() {
+        "supported" => CompletionAssessment::Supported,
+        "partial" => CompletionAssessment::Partial,
+        "not_observed" => CompletionAssessment::NoEvidence,
+        "unclear" => CompletionAssessment::Unclear,
+        _ => return None,
+    };
+    Some((assessment, probability))
+}
+
+fn completion_test_runs(session: &AgentSession) -> Vec<CompletionTestRun> {
+    let calls = session
+        .messages
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+        .map(|call| (call.id.as_str(), call))
+        .collect::<HashMap<_, _>>();
+    let mut runs = session
+        .messages
+        .iter()
+        .filter_map(|message| message.tool_result.as_ref())
+        .filter_map(|result| {
+            let call = calls.get(result.tool_call_id.as_str()).copied()?;
+            is_test_invocation(call).then_some(result)
+        })
+        .map(|result| {
+            let exit_code = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("exitCode"))
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok());
+            let timed_out = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("timedOut"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let status = if timed_out || result.is_error || exit_code.is_some_and(|code| code != 0)
+            {
+                CompletionTestStatus::Failed
+            } else if exit_code == Some(0) {
+                CompletionTestStatus::Passed
+            } else {
+                CompletionTestStatus::Unknown
+            };
+            CompletionTestRun {
+                label: String::new(),
+                status,
+                exit_code,
+                tool_call_id: result.tool_call_id.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    if runs.len() > 8 {
+        runs.drain(..runs.len() - 8);
+    }
+    for (index, run) in runs.iter_mut().enumerate() {
+        run.label = format!("Test run {}", index + 1);
+    }
+    runs
+}
+
+fn scope_candidate_path(call: &ToolCall) -> Option<String> {
+    let key = if call.name == "move_file" {
+        "destination"
+    } else {
+        "path"
+    };
+    normalize_workspace_relative_path(call.arguments.get(key)?.as_str()?)
+}
+
+fn normalize_workspace_relative_path(raw: &str) -> Option<String> {
+    let path = Path::new(raw);
+    if raw.trim().is_empty() || raw.len() > 1_024 || path.is_absolute() {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => {
+                let value = value.to_string_lossy();
+                if value.chars().any(char::is_control) {
+                    return None;
+                }
+                components.push(value.into_owned());
+            }
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    let normalized = components.join("/");
+    (!normalized.is_empty() && normalized.len() <= 300).then_some(normalized)
+}
+
+struct RepeatedFailureSignal {
+    kind: &'static str,
+    repetitions: usize,
+}
+
+fn repeated_failure_signal(session: &AgentSession) -> Option<RepeatedFailureSignal> {
+    let calls = session
+        .messages
+        .iter()
+        .flat_map(|message| message.tool_calls.iter())
+        .map(|call| (call.id.as_str(), call))
+        .collect::<HashMap<_, _>>();
+    let mut signatures: HashMap<String, (&'static str, usize)> = HashMap::new();
+    for message in session
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == MessageRole::Tool)
+        .take(12)
+    {
+        let Some(result) = message.tool_result.as_ref() else {
+            continue;
+        };
+        let Some(call) = calls.get(result.tool_call_id.as_str()).copied() else {
+            continue;
+        };
+        let kind = if call.name == "run_command" {
+            let exit_code = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("exitCode"))
+                .and_then(serde_json::Value::as_i64);
+            let timed_out = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("timedOut"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if !result.is_error && !timed_out && exit_code.is_none_or(|code| code == 0) {
+                continue;
+            }
+            "command"
+        } else if matches!(
+            call.name.as_str(),
+            "search_files" | "search_text" | "find_symbol" | "find_references"
+        ) {
+            let no_matches = result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("total").or_else(|| value.get("totalAtMost")))
+                .and_then(serde_json::Value::as_u64)
+                == Some(0);
+            if !result.is_error && !no_matches {
+                continue;
+            }
+            "search"
+        } else {
+            continue;
+        };
+        let normalized_arguments = call
+            .arguments
+            .to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut hash = Sha256::new();
+        hash.update(call.name.as_bytes());
+        hash.update([0]);
+        hash.update(normalized_arguments.as_bytes());
+        let fingerprint = format!("{:x}", hash.finalize());
+        let entry = signatures.entry(fingerprint).or_insert((kind, 0));
+        entry.1 += 1;
+    }
+    signatures
+        .values()
+        .filter(|(_, count)| *count >= 2)
+        .max_by_key(|(_, count)| *count)
+        .map(|(kind, repetitions)| RepeatedFailureSignal {
+            kind,
+            repetitions: *repetitions,
+        })
+}
+
+fn record_stage1_usage(
+    state: &SharedState,
+    session: &AgentSession,
+    model_id: &str,
+    outcome: &ShadowDecisionOutcome,
+    valid_decision: bool,
+    selected_option: Option<String>,
+    selected_probability: Option<f64>,
+) {
+    let response = outcome.response.as_ref();
+    let success = valid_decision && response.is_some();
+    let record = DecisionUsageRecord {
+        id: id(),
+        session_id: session.id.clone(),
+        session_title: session.title.clone(),
+        project_id: session.project_id.clone(),
+        model_id: model_id.to_owned(),
+        resolved_model_id: response
+            .map(|response| response.model_id.clone())
+            .filter(|model| !model.trim().is_empty()),
+        shadow_mode: true,
+        input_tokens: response.map_or(0, |response| response.input_tokens),
+        output_tokens: response.map_or(0, |response| response.output_tokens),
+        duration_ms: outcome.duration_ms,
+        success,
+        failure_code: outcome
+            .failure_code
+            .clone()
+            .or_else(|| (!success).then(|| "invalid_decision_response".to_owned())),
+        selected_option: if success { selected_option } else { None },
+        selected_probability: if success { selected_probability } else { None },
+        created_at: now(),
+    };
+    if let Err(error) = state.database.save_decision_usage(&record) {
+        tracing::warn!(session_id = %session.id, code = %error.code, "Could not save Jev Stage 1 usage");
     }
 }
 
@@ -1097,23 +1828,59 @@ fn completed_tool_activity(call: &ToolCall) -> Option<AgentActivityKind> {
         "search_files" | "search_text" | "find_symbol" | "find_references" => {
             Some(AgentActivityKind::SearchPerformed)
         }
-        "run_command" => Some(
-            if call.arguments["args"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|argument| argument.as_str() == Some("test"))
-            {
-                AgentActivityKind::TestRun
-            } else {
-                AgentActivityKind::CommandExecuted
-            },
-        ),
+        "run_command" => Some(if is_test_invocation(call) {
+            AgentActivityKind::TestRun
+        } else {
+            AgentActivityKind::CommandExecuted
+        }),
         "apply_patch" | "create_file" | "delete_file" | "move_file" => {
             Some(AgentActivityKind::FileEdited)
         }
         _ => None,
     }
+}
+
+fn is_test_invocation(call: &ToolCall) -> bool {
+    let program = call.arguments["program"]
+        .as_str()
+        .unwrap_or_default()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let args = call.arguments["args"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(|arg| arg.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let known_test_commands = [
+        "pytest",
+        "jest",
+        "vitest",
+        "mocha",
+        "unittest",
+        "tox",
+        "nosetests",
+        "nextest",
+    ];
+    known_test_commands.contains(&program.as_str())
+        || args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "test"
+                    | "tests"
+                    | "pytest"
+                    | "jest"
+                    | "vitest"
+                    | "mocha"
+                    | "unittest"
+                    | "tox"
+                    | "check-tests"
+            ) || arg.starts_with("test:")
+                || arg.starts_with("test-")
+        })
 }
 
 fn record_activity(

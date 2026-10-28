@@ -64,7 +64,7 @@ export function Conversation({
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
       {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span><span className="working-dots"><i /><i /><i /></span></div>}
       {session?.activityEvents
-        .filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory'].includes(event.kind))
+        .filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning'].includes(event.kind))
         .map(event => (
           <div className="agent-activity-summary" key={event.id}>
             <CircleDot size={12} />
@@ -74,16 +74,66 @@ export function Conversation({
         ))}
       {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><MarkdownMessage className="agent-prose" content={streamingText} /></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
+      {session?.status === 'completed' && !demo && session.workingContext.completionReview && <CompletionReviewCard review={session.workingContext.completionReview} onReviewFile={onReviewFile} onViewTest={focusToolResult} />}
       {session?.status === 'completed' && !demo && review?.files.length ? <section className="task-change-summary" aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
       <div ref={end} />
     </div>}
   </div>;
 }
 
+function CompletionReviewCard({ review, onReviewFile, onViewTest }: { review: NonNullable<AgentSession['workingContext']['completionReview']>; onReviewFile: (path: string) => void; onViewTest: (toolCallId: string) => void }) {
+  return <section className="completion-review-card" aria-label="Task completion checklist">
+    <header><div><strong>Completion checklist</strong><span>{review.requirements.length} {review.requirements.length === 1 ? 'item' : 'items'} from the original request</span></div><Check size={15} /></header>
+    <ol>{review.requirements.map((requirement, index) => <li key={`${index}-${requirement.text}`}>
+      <details className="completion-requirement">
+        <summary><span className={`completion-assessment is-${requirement.assessment ?? 'unassessed'}`}>{assessmentLabel(requirement.assessment)}</span><span className="completion-requirement-text">{requirement.text}</span><ChevronDown size={12} /></summary>
+        <div className="completion-requirement-evidence">
+          <p>{review.jevShadowAssessed && requirement.assessment ? 'Jev’s label is a tentative match. Review the task evidence below; file and test results are not automatically treated as proof for this item.' : 'No Jev classification was recorded for this item. Review the task evidence below; it is not automatically treated as proof.'}</p>
+          {!!review.changedFiles.length && <div>{review.changedFiles.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={11} /></button>)}</div>}
+          {!!review.testRuns.length && <div>{review.testRuns.map(run => <button className={`test-evidence is-${run.status}`} key={run.toolCallId} onClick={() => onViewTest(run.toolCallId)}>{run.label}: {testStatusLabel(run.status)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}<ArrowUpRight size={11} /></button>)}</div>}
+          {!review.changedFiles.length && !review.testRuns.length && <small>No file changes or test runs were recorded as evidence.</small>}
+        </div>
+      </details>
+    </li>)}</ol>
+    {review.omittedRequirementCount > 0 && <p className="completion-review-note">{review.omittedRequirementCount} additional request items were not individually listed.</p>}
+    <div className="completion-evidence">
+      <strong>Task evidence</strong>
+      <div className="completion-evidence-row"><span>Files changed</span>{review.changedFiles.length ? <div>{review.changedFiles.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={11} /></button>)}</div> : <small>No task-scoped file changes recorded.</small>}</div>
+      <div className="completion-evidence-row"><span>Test runs</span>{review.testRuns.length ? <div>{review.testRuns.map(run => <button className={`test-evidence is-${run.status}`} key={run.toolCallId} onClick={() => onViewTest(run.toolCallId)}>{run.label}: {testStatusLabel(run.status)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}<ArrowUpRight size={11} /></button>)}</div> : <small>No test run was recorded.</small>}</div>
+    </div>
+    <p className="completion-review-disclaimer">{review.jevShadowAssessed ? 'Jev’s shadow labels are suggestions, not verification. Review the recorded evidence before relying on them.' : 'No Jev assessment was recorded. The checklist does not infer that a requirement or test passed.'}</p>
+  </section>;
+}
+
+function focusToolResult(toolCallId: string) {
+  const result = document.getElementById(`tool-result-${toolCallId}`);
+  if (!(result instanceof HTMLDetailsElement)) return;
+  result.open = true;
+  result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function assessmentLabel(assessment: NonNullable<AgentSession['workingContext']['completionReview']>['requirements'][number]['assessment']) {
+  switch (assessment) {
+    case 'supported': return 'Jev: possible match';
+    case 'partial': return 'Jev: partial';
+    case 'no_evidence': return 'Jev: no match';
+    case 'unclear': return 'Jev: unclear';
+    default: return 'Not assessed';
+  }
+}
+
+function testStatusLabel(status: NonNullable<AgentSession['workingContext']['completionReview']>['testRuns'][number]['status']) {
+  switch (status) {
+    case 'passed': return 'passed';
+    case 'failed': return 'failed';
+    default: return 'result unavailable';
+  }
+}
+
 function TimelineMessage({ message, completedCalls, toolOutput, onReviewFile }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }>; onReviewFile: (path: string) => void }) {
   if (message.role === 'tool') {
     const changedPaths = resultChangedPaths(message);
-    return <details className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
+    return <details id={message.toolResult ? `tool-result-${message.toolResult.toolCallId}` : undefined} className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
     <summary><span className="activity-result-icon">{message.toolResult?.isError ? <AlertCircle size={14} /> : <Check size={14} />}</span><span className="activity-result-name">{message.toolResult?.name ?? 'Tool activity'}</span><span className="activity-result-state">{message.toolResult?.isError ? 'Needs attention' : 'Completed'}</span><span className="activity-result-duration">{formatDuration(message.toolResult?.durationMs ?? 0)}</span><ChevronDown size={13} className="activity-chevron" /></summary>
     <pre>{message.content}</pre>
     {changedPaths.length > 0 && !message.toolResult?.isError && <div className="timeline-file-changes"><span><FileCode2 size={12} />File change</span>{changedPaths.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={12} /></button>)}</div>}

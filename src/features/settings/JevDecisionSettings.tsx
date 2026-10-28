@@ -165,7 +165,7 @@ export function JevDecisionSettings() {
 
     <section className="jev-preferences-section" aria-labelledby="jev-preferences-heading">
       <div className="permission-section-heading">
-        <div><h2 id="jev-preferences-heading">How Jev should help</h2><p>When enabled, the current user request is sent to TypeSafe using the selected Jev model. Repository file contents are not sent to Jev.</p></div>
+        <div><h2 id="jev-preferences-heading">How Jev should help</h2><p>When enabled, Jev receives the current request. Shadow mode also sends a bounded task-evidence summary as described below. File contents, diffs, terminal output, and raw command/search arguments are not sent.</p></div>
         <ShieldCheck size={17} aria-hidden="true" />
       </div>
       <label className="permission-mode-control" htmlFor="jev-mode-select">
@@ -178,7 +178,7 @@ export function JevDecisionSettings() {
         </select>
       </label>
       <p className="permission-mode-description">
-        {preferences.mode === 'off' ? 'Jev is not used in coding tasks.' : preferences.mode === 'shadow' ? 'Jev evaluates the request and records its full suggestions for comparison, but those suggestions do not change the task.' : preferences.mode === 'advisory' ? 'Jev may suggest a task category. The agent and permission system remain in control.' : 'Jev can rank context focus and the order of eligible tool definitions, and suggest a workflow. It never removes policy checks or grants permissions.'}
+        {preferences.mode === 'off' ? 'Jev is not used in coding tasks.' : preferences.mode === 'shadow' ? 'Jev evaluates the request and records suggestions without steering the agent. At most one completion review (up to 8 request items, 24 changed workspace-relative paths, and aggregate test outcomes), 3 scope checks (objective plus candidate relative path), and 1 recovery check (objective plus repeated tool category/count) can be sent per task. These suggestions never change actions, approvals, permissions, or file state.' : preferences.mode === 'advisory' ? 'Jev may suggest a task category. The agent and permission system remain in control. Stage 1 recovery and scope checks are only sent in Shadow mode.' : 'Jev can rank context focus and the order of eligible tool definitions, and suggest a workflow. It never removes policy checks or grants permissions. Stage 1 recovery and scope checks are only sent in Shadow mode.'}
       </p>
       <label className="permission-mode-control" htmlFor="jev-model-select">
         <span>Jev model</span>

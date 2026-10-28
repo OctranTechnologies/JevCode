@@ -27,7 +27,7 @@ sensitive actions, and review its changes before keeping them.
 - **Projects:** open local folders and Git repositories, browse files lazily, and view branch and working-tree status.
 - **Tasks:** resume conversations, inspect activity, and keep project instructions such as `AGENTS.md` in context.
 - **Multiple providers:** select models from connected providers without changing the agent runtime.
-- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers; its API key uses the OS credential store. Advisory mode sees only the current request and cannot approve actions.
+- **Jev decision assistance:** configure TypeSafe Jev separately from chat providers. Stage 1 adds a task completion checklist with evidence, bounded recovery hints, and scope warnings; Jev stays advisory and cannot approve or run actions.
 - **Controlled tools:** repository reads, edits, Git actions, and commands pass through validation and permission checks.
 - **Change review:** inspect diffs, accept or revert files, and preserve modifications that existed before a task.
 - **Isolated worktrees:** optionally run concurrent tasks in separate Git worktrees.
@@ -140,18 +140,25 @@ in the conversation UI.
 
 Jev is a separate optional decision service, not a coding-model provider. Its
 Off, Shadow, Advisory, and Assisted modes are independent from the selected
-coding model. Enabled task modes send the current request and context-availability
-counts to TypeSafe; repository file contents are not sent to Jev. Shadow mode
-records full structured suggestions but never applies them to the task. Advisory
-records a task-category suggestion. Assisted mode can add fixed-choice
-workflow/context guidance to the coding-model request and reorder eligible tool
-definitions, but never removes tools, runs actions, or changes permission checks.
-The current request and project instructions remain in context. Jev usage is
-stored separately from coding-provider usage and shown in its own Usage page
-section without merging provider totals or inventing a cost estimate. A
-user-triggered synthetic evaluation baseline records the Jev model version and
-answer matches without reading or sending project data; see
-[docs/jev-evaluation.md](docs/jev-evaluation.md).
+coding model. Enabled modes send the current request to TypeSafe; repository
+file contents, diffs, terminal output, and raw command/search arguments are not
+sent. In Shadow mode, Jev can additionally receive a bounded completion summary
+(request items, workspace-relative changed-file paths, and aggregate test
+outcomes), up to three candidate paths for scope checks, and one repeated failed
+tool category/count for a recovery hint. Those suggestions appear as advisory
+task activity only. Jev never runs tools, changes permissions, blocks or reverts
+edits, or claims a test passed. The local task receipt keeps actual changed-file
+and test evidence separate from Jev's tentative labels. Advisory records a
+task-category suggestion. Assisted mode can add fixed-choice workflow/context
+guidance to the coding-model request and reorder eligible tool definitions, but
+never removes tools, runs actions, or changes permission checks. The current
+request and project instructions remain in context. Jev usage is stored
+separately from coding-provider usage and shown in its own Usage page section
+without merging provider totals or inventing a cost estimate. A user-triggered
+synthetic evaluation baseline records the Jev model version and answer matches
+without reading or sending project data; see
+[docs/jev-evaluation.md](docs/jev-evaluation.md) for the exact Stage 1 payload
+limits and privacy boundaries.
 If Jev is offline, times out, or returns an invalid decision, Jev guidance is
 omitted and the task continues through the normal agent path. Mock-driven tests
 cover this fallback, mode-off behavior, cancellation, and unchanged permissions.
