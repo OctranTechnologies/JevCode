@@ -152,3 +152,51 @@ fn compare_expected(
 fn non_empty(value: String) -> Option<String> {
     (!value.trim().is_empty()).then_some(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stage0_replays_the_bounded_synthetic_suite_and_records_model_resolution() {
+        let suite: EvaluationSuite = serde_json::from_str(CASES).unwrap();
+        let responses = suite
+            .cases
+            .iter()
+            .map(|case| crate::decisions::DecisionResponse {
+                model_id: "jev-resolved-test-model".into(),
+                answers: case
+                    .expected
+                    .iter()
+                    .map(|(name, values)| {
+                        (
+                            name.clone(),
+                            DecisionAnswer::Choice {
+                                choice: values[0].clone(),
+                                probabilities: BTreeMap::new(),
+                                confidence: Some(1.0),
+                            },
+                        )
+                    })
+                    .collect(),
+                input_tokens: 10,
+                output_tokens: 3,
+                request_id: None,
+            })
+            .collect::<Vec<_>>();
+        let engine = crate::decisions::MockDecisionEngine::with_responses(responses);
+
+        let records = replay_evaluation_suite(&engine, "jev-requested-test-model")
+            .await
+            .unwrap();
+
+        assert_eq!(records.len(), 4);
+        assert!(records.iter().all(|record| {
+            record.suite_version == EVALUATION_SUITE_VERSION
+                && record.requested_model_id == "jev-requested-test-model"
+                && record.resolved_model_id.as_deref() == Some("jev-resolved-test-model")
+                && record.mismatched_fields.is_empty()
+                && record.matched_fields.len() == record.expected_answers.len()
+        }));
+    }
+}

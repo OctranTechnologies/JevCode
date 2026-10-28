@@ -3819,4 +3819,115 @@ mod tests {
             .iter()
             .any(|message| message.content.starts_with("old request")));
     }
+
+    #[test]
+    fn stage1_completion_receipt_bounds_requirements_and_records_test_outcomes() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, _, mut session) = setup_session(root.path());
+        session.working_context.objective = (1..=10)
+            .map(|index| format!("{index}. requirement {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let (requirements, omitted) = completion_requirements(&session);
+        assert_eq!(requirements.len(), 8);
+        assert_eq!(omitted, 2);
+        assert_eq!(requirements[0].text, "requirement 1");
+
+        let call = tool_call(
+            "test-call",
+            "run_command",
+            json!({"program":"npm", "args":["test"]}),
+        );
+        let mut assistant = AgentMessage::text(MessageRole::Assistant, "Running tests");
+        assistant.tool_calls.push(call.clone());
+        let mut tool = AgentMessage::text(MessageRole::Tool, "passed");
+        tool.tool_result = Some(ToolResult {
+            tool_call_id: call.id,
+            name: call.name,
+            content: "passed".into(),
+            is_error: false,
+            duration_ms: 10,
+            structured_content: Some(json!({"exitCode":0, "timedOut":false})),
+        });
+        session.messages = vec![assistant, tool];
+        let runs = completion_test_runs(&session);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, CompletionTestStatus::Passed);
+        assert_eq!(runs[0].exit_code, Some(0));
+    }
+
+    #[test]
+    fn stage2_focus_baseline_uses_successful_workspace_tool_evidence_only() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, _, mut session) = setup_session(root.path());
+        session.working_context.objective = "fix the oauth callback".into();
+
+        let relevant = tool_call(
+            "read-auth",
+            "read_file",
+            json!({"path":"src/auth/oauth.rs"}),
+        );
+        let irrelevant = tool_call("read-ui", "read_file", json!({"path":"src/ui/home.tsx"}));
+        let rejected = tool_call(
+            "read-private",
+            "read_file",
+            json!({"path":"secrets/oauth.txt"}),
+        );
+        let mut assistant = AgentMessage::text(MessageRole::Assistant, "Inspecting files");
+        assistant.tool_calls = vec![relevant.clone(), irrelevant.clone(), rejected.clone()];
+        session.messages.push(assistant);
+        for (call, is_error) in [(&relevant, false), (&irrelevant, false), (&rejected, true)] {
+            let mut result = AgentMessage::text(MessageRole::Tool, "inspected");
+            result.tool_result = Some(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                content: "inspected".into(),
+                is_error,
+                duration_ms: 1,
+                structured_content: None,
+            });
+            session.messages.push(result);
+        }
+
+        let candidates = focus_file_candidates(&session);
+        assert_eq!(candidates, vec!["src/auth/oauth.rs", "src/ui/home.tsx"]);
+        assert_eq!(
+            rank_focus_path(&candidates, &session.working_context.objective, &[]).as_deref(),
+            Some("src/auth/oauth.rs")
+        );
+    }
+
+    #[test]
+    fn stage4_warns_on_direct_task_path_overlap_but_not_prefix_collisions() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, mut current) = setup_session(root.path());
+        let mut other = current.clone();
+        other.id = id();
+        other.title = "Other active task".into();
+        other.status = SessionStatus::Working;
+        let existing_call = tool_call(
+            "other-write",
+            "create_file",
+            json!({"path":"src/auth/provider.rs"}),
+        );
+        let mut assistant = AgentMessage::text(MessageRole::Assistant, "Writing");
+        assistant.tool_calls.push(existing_call);
+        other.messages.push(assistant);
+        state.database.save_session(&other).unwrap();
+
+        let candidate = tool_call(
+            "current-write",
+            "create_file",
+            json!({"path":"src/auth/provider.rs/metadata.json"}),
+        );
+        AgentRuntime::default()
+            .maybe_record_task_overlap_warning(&state, &Sink::default(), &mut current, &candidate)
+            .unwrap();
+        assert!(current
+            .activity_events
+            .iter()
+            .any(|event| event.kind == AgentActivityKind::TaskOverlapWarning));
+        assert!(!file_path_scopes_overlap("src/auth", "src/authentication"));
+    }
 }

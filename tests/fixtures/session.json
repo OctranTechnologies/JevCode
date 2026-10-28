@@ -30,7 +30,11 @@
     "outstandingTasks": [],
     "protectedInstructions": [],
     "compactedThrough": null,
-    "compactedTurns": 0
+    "compactedTurns": 0,
+    "completionReview": null,
+    "stage1StallSignalEmitted": false,
+    "stage1ScopeCheckedPaths": [],
+    "stage2FocusBaselineEmitted": false
   },
   "projectInstructionFiles": []
 }

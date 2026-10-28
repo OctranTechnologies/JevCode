@@ -184,3 +184,41 @@ pub fn to_view(memory: ProjectMemory) -> crate::domain::ProjectMemoryView {
         updated_at: memory.updated_at,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_paths_are_workspace_relative_and_normalized() {
+        assert_eq!(
+            normalize_source_path(" src\\auth\\provider.rs ").unwrap(),
+            "src/auth/provider.rs"
+        );
+        for path in [
+            "../outside.txt",
+            "/outside.txt",
+            "C:\\outside.txt",
+            "\\\\server\\share\\file",
+        ] {
+            assert!(normalize_source_path(path).is_err(), "accepted {path}");
+        }
+    }
+
+    #[test]
+    fn source_fingerprint_tracks_file_changes_and_respects_gitignore() {
+        let root = tempfile::tempdir().unwrap();
+        let tracked = root.path().join("README.md");
+        std::fs::write(&tracked, "first version").unwrap();
+        let first = source_fingerprint(root.path(), "README.md").unwrap();
+        assert_eq!(first, source_fingerprint(root.path(), "README.md").unwrap());
+
+        std::fs::write(&tracked, "second version").unwrap();
+        assert_ne!(first, source_fingerprint(root.path(), "README.md").unwrap());
+
+        std::fs::write(root.path().join(".gitignore"), "private.txt\n").unwrap();
+        std::fs::write(root.path().join("private.txt"), "private").unwrap();
+        let error = source_fingerprint(root.path(), "private.txt").unwrap_err();
+        assert_eq!(error.code, "permission_denied");
+    }
+}
