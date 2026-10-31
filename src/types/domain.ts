@@ -105,6 +105,7 @@ export type ModelCapability = 'tools' | 'vision' | 'reasoning' | 'streaming';
 export type ModelStatus = 'available' | 'deprecated' | 'unavailable';
 export interface ModelReference { providerId: string; modelId: string }
 export interface ModelPreferences { defaultModel: ModelReference | null; favorites: ModelReference[]; recent: ModelReference[] }
+export type InterfaceMode = 'simple' | 'maximum';
 export type DecisionMode = 'off' | 'shadow' | 'advisory' | 'assisted';
 export interface DecisionPreferences { mode: DecisionMode; modelId: string }
 export interface DecisionModel { id: string; description: string; releaseDate: string }

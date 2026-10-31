@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import {
   Activity, AlertCircle, ArrowUpRight, BriefcaseBusiness, CircleDot, Command, ShieldCheck,
   FileCode2, FolderOpen, FolderPlus, ListChecks, Moon, PanelLeftClose, PanelLeftOpen, Plus,
-  Settings2, Sun, Terminal, WifiOff,
+  Settings2, SlidersHorizontal, Sun, Terminal, WifiOff, Eye,
 } from 'lucide-react';
 import { useDesktop } from './useDesktop';
 import { demoProject, demoSession } from './demo';
@@ -23,12 +23,13 @@ import { McpSettings } from '../features/settings/McpSettings';
 import { DiagnosticsSettings } from '../features/settings/DiagnosticsSettings';
 import { AboutSettings } from '../features/settings/AboutSettings';
 import { UpdatesSettings } from '../features/settings/UpdatesSettings';
+import { AppearanceSettings } from '../features/settings/AppearanceSettings';
 import { UpdateNotice } from '../features/settings/UpdateNotice';
 import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
 import { Brand } from '../components/Brand';
-import type { AgentSession, Model, ModelReference, PermissionResolution, Project, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
+import type { AgentSession, InterfaceMode, Model, ModelReference, PermissionResolution, Project, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
 import type { View } from '../features/workspaces/Sidebar';
 import { latestRestorableSession } from './restore';
 import { primaryShortcutModifier as shortcutMod } from '../lib/shortcuts';
@@ -44,6 +45,7 @@ export default function App() {
   const [view, setView] = useState<View>(() => desktopAvailable ? 'overview' : 'agent');
   const [projectChoice, setProjectChoice] = useState(() => desktopAvailable ? '' : demoProject.id);
   const [sessionId, setSessionId] = useState<string | null>(() => desktopAvailable ? null : demoSession.id);
+  const [interfaceMode, setInterfaceMode] = useState<InterfaceMode>(() => localStorage.getItem('jevcode-interface-mode') === 'simple' ? 'simple' : 'maximum');
   const [providerChoice, setProviderChoice] = useState('preview');
   const [modelChoice, setModelChoice] = useState('');
   const [draft, setDraft] = useState('');
@@ -57,10 +59,14 @@ export default function App() {
   const [includeProject, setIncludeProject] = useState(true);
   const [contextOpen, setContextOpen] = useState(false);
   const [mode, setMode] = useState<'agent' | 'plan'>('agent');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('jevcode-sidebar-collapsed') === 'true');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(`jevcode-sidebar-collapsed:${localStorage.getItem('jevcode-interface-mode') === 'simple' ? 'simple' : 'maximum'}`) === 'true' || (localStorage.getItem('jevcode-interface-mode') !== 'simple' && localStorage.getItem('jevcode-sidebar-collapsed') === 'true'));
   const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth >= 1180);
+  const [inspectorOpen, setInspectorOpen] = useState(() => {
+    const savedMode = localStorage.getItem('jevcode-interface-mode') === 'simple' ? 'simple' : 'maximum';
+    const saved = localStorage.getItem(`jevcode-inspector-open:${savedMode}`);
+    return saved === null ? savedMode === 'maximum' && window.innerWidth >= 1180 : saved === 'true';
+  });
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('changes');
   const [reviewChanges, setReviewChanges] = useState<SessionChanges | null>(null);
   const [selectedReviewPath, setSelectedReviewPath] = useState<string | null>(null);
@@ -180,9 +186,21 @@ export default function App() {
     localStorage.setItem('jevcode-theme', darkMode ? 'dark' : 'light');
   }, [darkMode]);
 
+  useEffect(() => { localStorage.setItem('jevcode-interface-mode', interfaceMode); }, [interfaceMode]);
+
   useEffect(() => {
-    localStorage.setItem('jevcode-sidebar-collapsed', String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
+    localStorage.setItem(`jevcode-sidebar-collapsed:${interfaceMode}`, String(sidebarCollapsed));
+    localStorage.setItem(`jevcode-inspector-open:${interfaceMode}`, String(inspectorOpen));
+  }, [interfaceMode, inspectorOpen, sidebarCollapsed]);
+
+  const changeInterfaceMode = useCallback((next: InterfaceMode) => {
+    setInterfaceMode(next);
+    setContextOpen(false);
+    const collapsed = localStorage.getItem(`jevcode-sidebar-collapsed:${next}`);
+    setSidebarCollapsed(collapsed === null ? next === 'maximum' && localStorage.getItem('jevcode-sidebar-collapsed') === 'true' : collapsed === 'true');
+    const inspector = localStorage.getItem(`jevcode-inspector-open:${next}`);
+    setInspectorOpen(inspector === null ? next === 'maximum' && window.innerWidth >= 1180 : inspector === 'true');
+  }, []);
 
   useEffect(() => {
     let previousWidth = window.innerWidth;
@@ -569,6 +587,8 @@ export default function App() {
       { id: 'diagnostics', label: 'Open diagnostics', detail: 'Application health, logs, and updates', group: 'Navigation', icon: <Activity size={15} />, run: () => setView('diagnostics') },
       { id: 'about', label: 'About JevCode', detail: 'Version and update status', group: 'Navigation', icon: <CircleDot size={15} />, run: () => setView('about') },
       { id: 'usage', label: 'View usage', group: 'Navigation', icon: <CircleDot size={15} />, run: () => setView('usage') },
+      { id: 'appearance-settings', label: 'Open appearance settings', group: 'Navigation', icon: <Eye size={15} />, run: () => setView('appearance') },
+      { id: 'interface-mode', label: interfaceMode === 'simple' ? 'Switch to Maximum interface' : 'Switch to Simple interface', group: 'Appearance', icon: <SlidersHorizontal size={15} />, run: () => changeInterfaceMode(interfaceMode === 'simple' ? 'maximum' : 'simple') },
       { id: 'overview', label: 'Show project overview', group: 'Navigation', icon: <FolderOpen size={15} />, run: () => setView('overview') },
       { id: 'files', label: 'Show changed files', group: 'Panels', icon: <FileCode2 size={15} />, run: () => { setView('agent'); setInspectorTab('changes'); setInspectorOpen(true); } },
       { id: 'diff', label: 'Show diff', group: 'Panels', icon: <ListChecks size={15} />, run: () => { setView('agent'); setInspectorTab('diff'); setInspectorOpen(true); } },
@@ -580,7 +600,7 @@ export default function App() {
     for (const item of projects) actions.push({ id: `project-${item.id}`, label: item.name, detail: item.path, group: 'Projects', icon: <FolderOpen size={15} />, run: () => chooseProject(item.id) });
     for (const item of allSessions) actions.push({ id: `task-${item.id}`, label: item.title || 'New task', detail: item.archivedAt ? 'Archived task · resume' : ['queued', 'planning', 'working'].includes(item.status) ? 'Working' : 'Recent task', group: 'Tasks', icon: <CircleDot size={15} />, run: () => selectSession(item) });
     return actions;
-  }, [allSessions, busy, chooseProject, darkMode, newTask, openFolder, projects, selectSession, sending, sidebarCollapsed, stopTask, toggleTerminal]);
+  }, [allSessions, busy, changeInterfaceMode, chooseProject, darkMode, interfaceMode, newTask, openFolder, projects, selectSession, sending, sidebarCollapsed, stopTask, toggleTerminal]);
 
   useEffect(() => {
     function handleShortcuts(event: KeyboardEvent) {
@@ -618,29 +638,30 @@ export default function App() {
   const selectedProvider = data.providers.find(item => item.id === providerId);
   const compactClasses = [
     'workbench',
+    interfaceMode === 'simple' ? 'interface-simple' : '',
     sidebarCollapsed ? 'sidebar-is-collapsed' : '',
     inspectorOpen && isAgentView ? 'inspector-is-visible' : '',
     mobileSidebarOpen ? 'mobile-sidebar-is-open' : '',
     inspectorOpen && windowWidth < 1180 ? 'mobile-inspector-is-open' : '',
   ].filter(Boolean).join(' ');
 
-  return <div className={compactClasses} style={{ '--sidebar-size': `${sidebarCollapsed ? 68 : sidebarWidth}px`, '--inspector-size': `${inspectorWidth}px` } as CSSProperties}>
+  return <div className={compactClasses} data-interface-mode={interfaceMode} style={{ '--sidebar-size': `${sidebarCollapsed ? 68 : sidebarWidth}px`, '--inspector-size': `${inspectorWidth}px` } as CSSProperties}>
     {(mobileSidebarOpen || (inspectorOpen && windowWidth < 1180)) && <button className="panel-backdrop" aria-label="Close open panel" onClick={() => { setMobileSidebarOpen(false); setInspectorOpen(false); }} />}
-    <WorkspaceSidebar projects={projects} sessions={allSessions} projectId={projectId} sessionId={session?.id ?? null} view={view} provider={provider} collapsed={windowWidth < 840 ? false : sidebarCollapsed} opening={opening} showArchived={showArchivedTasks} onShowArchived={() => setShowArchivedTasks(value => !value)} onCollapse={() => { if (windowWidth < 840) setMobileSidebarOpen(false); else setSidebarCollapsed(value => !value); }} onProject={chooseProject} onSession={selectSession} onRenameSession={item => void renameSession(item)} onArchiveSession={item => void toggleSessionArchive(item)} onDeleteSession={item => void deleteSession(item)} onDuplicateSession={item => void duplicateSession(item)} onForkSession={item => void forkSession(item)} onView={chooseView} onNew={newTask} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} onRemoveRecent={item => void removeFromRecents(item)} onReveal={item => void revealProject(item)} onSearch={() => setPaletteOpen(true)} />
+    <WorkspaceSidebar projects={projects} sessions={allSessions} projectId={projectId} sessionId={session?.id ?? null} view={view} provider={provider} interfaceMode={interfaceMode} collapsed={windowWidth < 840 ? false : sidebarCollapsed} opening={opening} showArchived={showArchivedTasks} onShowArchived={() => setShowArchivedTasks(value => !value)} onCollapse={() => { if (windowWidth < 840) setMobileSidebarOpen(false); else setSidebarCollapsed(value => !value); }} onProject={chooseProject} onSession={selectSession} onRenameSession={item => void renameSession(item)} onArchiveSession={item => void toggleSessionArchive(item)} onDeleteSession={item => void deleteSession(item)} onDuplicateSession={item => void duplicateSession(item)} onForkSession={item => void forkSession(item)} onView={chooseView} onNew={newTask} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} onRemoveRecent={item => void removeFromRecents(item)} onReveal={item => void revealProject(item)} onSearch={() => setPaletteOpen(true)} />
     {!sidebarCollapsed && <ResizeDivider label="Resize sidebar" width={sidebarWidth} min={210} max={340} onResize={setSidebarWidth} />}
 
     <main className="workbench-main">
-      {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} onProject={chooseProject} session={session} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} workspaceModeLocked={!!session || busy || sending} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>JevCode</span><strong>{isProjectView ? project?.name ?? 'Projects' : view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about' ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : view === 'diagnostics' ? 'Diagnostics' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
+      {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} onProject={chooseProject} session={session} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} workspaceModeLocked={!!session || busy || sending} interfaceMode={interfaceMode} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>JevCode</span><strong>{isProjectView ? project?.name ?? 'Projects' : ['providers', 'decisions', 'updates', 'about', 'appearance'].includes(view) ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : view === 'diagnostics' ? 'Diagnostics' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
       {desktop.error && <div className="workspace-error-banner" role="alert"><AlertCircle size={15} /><span>{desktop.error}</span><button onClick={() => desktop.setError(null)} aria-label="Dismiss error">Dismiss</button></div>}
       {!networkOnline && <div className="workspace-offline-banner" role="status"><WifiOff size={14} /><span>Offline. Local projects and saved tasks are still available; provider requests will retry when you reconnect.</span></div>}
 
       {view === 'agent' ? <>
         <div className="workspace-content">
-          <Conversation session={session} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} onSuggestion={setDraft} onPermission={resolution => void resolvePermission(resolution)} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} permissionBusy={permissionBusy} />
-          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} />
+          <Conversation session={session} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onPermission={resolution => void resolvePermission(resolution)} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} permissionBusy={permissionBusy} />
+          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} interfaceMode={interfaceMode} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
-      </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{(view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about') && <nav className="settings-section-nav" aria-label="Settings sections"><button className={view === 'providers' ? 'is-active' : ''} onClick={() => setView('providers')} aria-current={view === 'providers' ? 'page' : undefined}>Providers</button><button className={view === 'decisions' ? 'is-active' : ''} onClick={() => setView('decisions')} aria-current={view === 'decisions' ? 'page' : undefined}>Decision assistance</button><button className={view === 'updates' ? 'is-active' : ''} onClick={() => setView('updates')} aria-current={view === 'updates' ? 'page' : undefined}>Updates</button><button className={view === 'about' ? 'is-active' : ''} onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined}>About</button></nav>}{view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} initialOpenAIStatus={data.openaiAuthStatus} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'decisions' ? <JevDecisionSettings /> : view === 'updates' ? <UpdatesSettings preferences={updatePreferences ?? data.updatePreferences} online={networkOnline} agentActive={agentTaskActive} onSaved={setUpdatePreferences} /> : view === 'about' ? <AboutSettings online={networkOnline} agentActive={agentTaskActive} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
+      </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{(view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about' || view === 'appearance') && <nav className="settings-section-nav" aria-label="Settings sections"><button className={view === 'providers' ? 'is-active' : ''} onClick={() => setView('providers')} aria-current={view === 'providers' ? 'page' : undefined}>Providers</button><button className={view === 'decisions' ? 'is-active' : ''} onClick={() => setView('decisions')} aria-current={view === 'decisions' ? 'page' : undefined}>Decision assistance</button><button className={view === 'updates' ? 'is-active' : ''} onClick={() => setView('updates')} aria-current={view === 'updates' ? 'page' : undefined}>Updates</button><button className={view === 'about' ? 'is-active' : ''} onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined}>About</button><button className={view === 'appearance' ? 'is-active' : ''} onClick={() => setView('appearance')} aria-current={view === 'appearance' ? 'page' : undefined}>Appearance</button></nav>}{view === 'appearance' ? <AppearanceSettings mode={interfaceMode} onMode={changeInterfaceMode} /> : view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} initialOpenAIStatus={data.openaiAuthStatus} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'decisions' ? <JevDecisionSettings /> : view === 'updates' ? <UpdatesSettings preferences={updatePreferences ?? data.updatePreferences} online={networkOnline} agentActive={agentTaskActive} onSaved={setUpdatePreferences} /> : view === 'about' ? <AboutSettings online={networkOnline} agentActive={agentTaskActive} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
     </main>
 
     {isAgentView && <>

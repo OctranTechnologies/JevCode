@@ -1619,3 +1619,65 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .google-account-row .openai-method-actions { justify-content: flex-start; padding-left: 34px; }
   .google-project-setup { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
 }
+
+/* Simple / Maximum interface preference */
+.sidebar-more-menu { position: relative; }
+.sidebar-more-menu > summary { display: flex; align-items: center; gap: 8px; min-height: 31px; padding: 0 7px; color: var(--wb-muted-strong); font-size: 11px; list-style: none; border: 1px solid transparent; border-radius: 5px; cursor: pointer; }
+.sidebar-more-menu > summary::-webkit-details-marker { display: none; }
+.sidebar-more-menu > summary > span { flex: 1; }
+.sidebar-more-menu > summary:hover, .sidebar-more-menu[open] > summary { color: var(--wb-ink); background: var(--wb-surface); border-color: var(--wb-border); }
+.sidebar-more-actions { position: absolute; z-index: 32; right: 0; bottom: calc(100% + 5px); left: 0; display: grid; gap: 2px; padding: 5px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 7px; }
+.sidebar-more-actions .utility-row { min-height: 32px; }
+.is-collapsed .sidebar-more-menu > summary { justify-content: center; padding-inline: 0; }
+.is-collapsed .sidebar-more-menu > summary span, .is-collapsed .sidebar-more-menu > summary > svg:last-child { display: none; }
+.is-collapsed .sidebar-more-actions { right: auto; left: calc(100% + 7px); bottom: 0; width: 150px; }
+
+.task-options-menu, .composer-options-menu { position: relative; flex: 0 0 auto; }
+.task-options-menu > summary, .composer-options-menu > summary { display: flex; align-items: center; gap: 6px; min-height: 29px; padding: 0 8px; color: var(--wb-muted-strong); font-size: 10px; list-style: none; border: 1px solid var(--wb-border); border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.task-options-menu > summary::-webkit-details-marker, .composer-options-menu > summary::-webkit-details-marker { display: none; }
+.task-options-menu > summary:hover, .task-options-menu[open] > summary, .composer-options-menu > summary:hover, .composer-options-menu[open] > summary { color: var(--wb-ink); background: var(--wb-surface); }
+.task-option-badge { padding: 2px 5px; color: var(--wb-accent); font-size: 9px; background: var(--wb-accent-soft); border-radius: 4px; }
+.task-options-popover, .composer-options-popover { position: absolute; z-index: 35; top: calc(100% + 7px); right: 0; display: grid; gap: 10px; min-width: 250px; padding: 12px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 8px; }
+.task-options-popover > .permission-menu { padding: 0; }
+.task-options-popover > .toolbar-workspace-wrap { width: 100%; justify-content: flex-start; border-left: 0; }
+.task-options-popover > .toolbar-workspace-wrap select { flex: 1; width: auto; max-width: none; }
+.task-options-popover > .toolbar-workspace-base-caption { display: none; }
+.task-options-popover > .toolbar-workspace-base-wrap { min-height: 28px; padding-left: 23px; }
+.task-options-popover > .toolbar-workspace-base-wrap select { max-width: 100%; }
+.task-details-option { display: flex; align-items: center; gap: 7px; min-height: 29px; padding: 0 6px; color: var(--wb-muted-strong); text-align: left; background: transparent; border: 0; border-top: 1px solid var(--wb-border); cursor: pointer; }
+.task-details-option:hover { color: var(--wb-ink); }
+.composer-options-popover { left: 0; right: auto; min-width: 290px; }
+.composer-option-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; color: var(--wb-ink); }
+.composer-option-row > span { display: grid; gap: 3px; }
+.composer-option-row strong { font-size: 10px; font-weight: 570; }
+.composer-option-row small, .composer-options-note { margin: 0; color: var(--wb-muted); font-size: 9px; line-height: 1.45; }
+.composer-option-row select { max-width: 115px; min-height: 27px; padding: 0 5px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 5px; }
+.composer-context-toggle { padding-top: 8px; border-top: 1px solid var(--wb-border); }
+.composer-context-toggle input { width: 15px; height: 15px; accent-color: var(--wb-accent); }
+.simple-activity-summary { margin: 8px 0 12px; color: var(--wb-muted-strong); font-size: 10px; }
+.simple-activity-summary > summary { display: flex; align-items: center; gap: 6px; min-height: 25px; width: fit-content; padding: 0 7px; list-style: none; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 5px; cursor: pointer; }
+.simple-activity-summary > summary::-webkit-details-marker { display: none; }
+.simple-activity-summary > summary svg:last-child { margin-left: 3px; color: var(--wb-muted); }
+.simple-activity-summary[open] > summary { margin-bottom: 5px; }
+.simple-activity-summary .activity-list { margin-left: 0; }
+.interface-simple .workspace-statusbar .status-token-count { display: none; }
+
+.settings-content-scroll .appearance-settings { width: min(760px, 100%); padding-top: 34px; }
+.appearance-settings .settings-heading-row { margin-bottom: 20px; }
+.appearance-settings h1 { margin: 0 0 5px; font-size: 21px; font-weight: 620; letter-spacing: -.025em; }
+.appearance-settings .page-description { margin: 0; color: var(--wb-muted); font-size: 11px; line-height: 1.6; }
+.appearance-mode-list { display: grid; gap: 8px; }
+.appearance-mode-option { display: grid; grid-template-columns: 34px minmax(0, 1fr) 16px; align-items: center; gap: 11px; min-height: 73px; padding: 12px; color: var(--wb-ink); text-align: left; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 7px; cursor: pointer; }
+.appearance-mode-option:hover { border-color: var(--wb-accent-line); }
+.appearance-mode-option.is-selected { background: var(--wb-accent-soft); border-color: var(--wb-accent-line); }
+.appearance-mode-icon { display: grid; place-items: center; width: 32px; height: 32px; color: var(--wb-accent); background: var(--wb-canvas); border: 1px solid var(--wb-border); border-radius: 6px; }
+.appearance-mode-copy { display: grid; gap: 4px; }
+.appearance-mode-copy strong { font-size: 11px; font-weight: 620; }
+.appearance-mode-copy small { color: var(--wb-muted); font-size: 9px; line-height: 1.5; }
+.appearance-mode-check { color: var(--wb-accent); }
+.appearance-theme-note { margin: 12px 0 0; color: var(--wb-muted); font-size: 9px; }
+
+@media (max-width: 840px) {
+  .task-options-popover { right: -25px; }
+  .composer-options-popover { right: 0; left: auto; }
+}
