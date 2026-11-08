@@ -1731,3 +1731,28 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .mobile-inspector-is-open .workbench-inspector { box-shadow: none; border-left: 1px solid var(--wb-border-strong); }
   .mobile-sidebar-is-open .workbench-sidebar { box-shadow: none; border-right: 1px solid var(--wb-border-strong); }
 }
+
+/* Settings and data views: shared editorial scale and ruled section rhythm. */
+.settings-content-scroll .settings-content { padding-top: 40px; }
+.settings-content-scroll .settings-content h1 { margin: 0 0 9px; font-size: 26px; font-weight: 520; letter-spacing: -.025em; line-height: 1.2; }
+.settings-content-scroll .settings-content .page-description { max-width: 68ch; margin: 0 0 26px; color: var(--wb-muted); font-size: 13px; line-height: 1.65; }
+.settings-section-nav { gap: 22px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
+.settings-section-nav button { flex: 0 0 auto; min-height: 44px; color: var(--wb-muted-strong); font-size: 12px; }
+.settings-section-nav button.is-active { color: var(--wb-ink); }
+.settings-content-scroll input:not([type='checkbox']):not([type='radio']),
+.settings-content-scroll select { min-height: 44px; padding-inline: 11px; color: var(--wb-ink); background-color: var(--wb-surface); border: 1px solid var(--wb-border-strong); }
+.settings-content-scroll textarea { min-height: 88px; padding: 11px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border-strong); }
+.settings-content-scroll input:focus-visible, .settings-content-scroll select:focus-visible, .settings-content-scroll textarea:focus-visible { outline: 2px solid var(--wb-accent); outline-offset: 4px; }
+.settings-content-scroll :is(.account-button, .mcp-quiet-action, .mcp-add-button, .mcp-small-action, .mcp-icon-action, .mcp-cancel-button, .mcp-save-button, .update-preference-row button, .about-update-actions button) { min-height: 40px; padding-inline: 11px; font-size: 11px; }
+.settings-content-scroll :is(.provider-row, .update-preference-row, .update-channel-row) { min-height: 60px; }
+.settings-content-scroll :is(.provider-row, .account-row, .permission-rule-row, .mcp-server-row) { border-radius: 0; }
+.settings-content-scroll :is(.about-version-details, .about-update-status, .about-release-notes, .usage-stat-card, .usage-chart-card, .usage-breakdown-card, .usage-history-scroll, .usage-account-card, .permission-card, .mcp-server-list) { box-shadow: none; }
+.settings-content-scroll :is(.about-section-heading p, .update-preference-row small, .update-channel-row > div > span, .mcp-page-heading .page-description, .usage-account-card > p, .accounts-policy-note p) { font-size: 11px; line-height: 1.6; }
+.usage-history-table td > small { font-size: 10px; }
+
+@media (max-width: 620px) {
+  .settings-content-scroll { padding-inline: 16px; }
+  .settings-content-scroll .settings-content { padding-top: 28px; }
+  .settings-content-scroll .settings-content h1 { font-size: 23px; }
+  .settings-section-nav { gap: 15px; }
+}
