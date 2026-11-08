@@ -17,7 +17,7 @@ button, input, textarea, select { font: inherit; }
 button, summary, select { cursor: pointer; }
 button { transition: background-color 140ms ease, color 140ms ease; }
 button:disabled, select:disabled { cursor: default; opacity: .5; }
-button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 4px; }
 ::selection { background: var(--wb-accent-soft); color: var(--wb-ink); }
 textarea, input { caret-color: var(--color-accent); }
 * { scrollbar-width: thin; scrollbar-color: var(--wb-scrollbar-thumb) transparent; }
