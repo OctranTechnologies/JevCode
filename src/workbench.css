@@ -1700,3 +1700,34 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
   .workspace-toolbar { min-height: 52px; flex-basis: 52px; }
   .workspace-toolbar .toolbar-project-group { gap: 4px; }
 }
+
+/* Workspace surfaces: open conversation, ruled navigation, and border-only overlays. */
+.sidebar-section-heading h2, .inspector-heading { font-size: 11px; letter-spacing: .06em; }
+.sidebar-section-heading { min-height: 30px; }
+.sidebar-row { min-height: 36px; }
+.sidebar-row > span:not(.task-state):not(.row-presence):not(.sidebar-update-dot) { font-size: 12px; }
+.task-row { min-height: 36px; }
+.account-provider { min-height: 52px; }
+.account-copy strong { font-size: 11px; }
+.workspace-toolbar { padding-inline: 20px; }
+.current-project-title { font-size: 13px; }
+.branch-indicator span { font: 11px var(--font-mono); }
+.permission-popover, .context-popover, .command-palette, .mcp-form, .model-picker-popover, .project-create-dialog { box-shadow: none; }
+.task-state.is-running, .mcp-status-connected i { box-shadow: none; }
+.timeline-user-mark { border: 0; }
+.timeline-user-content { padding: 11px 0 16px; background: transparent; border: 0; border-bottom: 1px solid var(--wb-border); }
+.timeline-user-content .message-markdown { margin-top: 7px; }
+.timeline-user, .timeline-agent { margin-bottom: 22px; }
+.agent-prose { max-width: 72ch; line-height: 1.75; }
+.workspace-composer { background: var(--wb-surface); border-color: var(--wb-border-strong); }
+.workspace-composer:focus-within { border-color: var(--wb-accent); outline: 2px solid var(--wb-accent); outline-offset: 3px; box-shadow: none; }
+.workspace-composer textarea { min-height: 62px; }
+.composer-toolbar { padding-top: 10px; }
+.workspace-statusbar { min-height: 32px; font-size: 11px; }
+.task-change-summary { box-shadow: none; }
+
+@media (max-width: 840px) {
+  .workspace-toolbar { padding-inline: 12px; }
+  .mobile-inspector-is-open .workbench-inspector { box-shadow: none; border-left: 1px solid var(--wb-border-strong); }
+  .mobile-sidebar-is-open .workbench-sidebar { box-shadow: none; border-right: 1px solid var(--wb-border-strong); }
+}
