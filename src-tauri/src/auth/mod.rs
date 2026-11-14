@@ -396,10 +396,10 @@ fn is_generating_model(provider: &Provider, id: &str, item: &Value) -> bool {
             });
         }
     }
-    if matches!(
+    !matches!(
         provider.protocol,
         ProviderProtocol::OpenAiResponses | ProviderProtocol::OpenAiChat
-    ) && [
+    ) || ![
         "embedding",
         "moderation",
         "whisper",
@@ -411,10 +411,6 @@ fn is_generating_model(provider: &Provider, id: &str, item: &Value) -> bool {
     ]
     .iter()
     .any(|unsupported| id.to_ascii_lowercase().contains(unsupported))
-    {
-        return false;
-    }
-    true
 }
 
 /// OpenCode's official `/models` catalog is OpenAI-shaped and omits each model's

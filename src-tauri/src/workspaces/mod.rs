@@ -126,7 +126,7 @@ pub fn create_project(database: &Database, name: &str, parent: &str) -> AppResul
 }
 
 fn valid_project_name(name: &str) -> bool {
-    if name.is_empty()
+    let portable_name_is_valid = !(name.is_empty()
         || name.len() > 100
         || name == "."
         || name == ".."
@@ -135,23 +135,20 @@ fn valid_project_name(name: &str) -> bool {
         || name.chars().any(|character| {
             character.is_control()
                 || ['/', '\\', ':', '*', '?', '"', '<', '>', '|'].contains(&character)
-        })
-    {
-        return false;
-    }
+        }));
     #[cfg(windows)]
-    {
+    let platform_name_is_valid = {
         let device = name.split('.').next().unwrap_or("").to_ascii_uppercase();
-        if matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-            || (device.len() == 4
+        !matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            && !(device.len() == 4
                 && (device.starts_with("COM") || device.starts_with("LPT"))
                 && device.as_bytes()[3].is_ascii_digit()
                 && device.as_bytes()[3] != b'0')
-        {
-            return false;
-        }
-    }
-    true
+    };
+    #[cfg(not(windows))]
+    let platform_name_is_valid = true;
+
+    portable_name_is_valid && platform_name_is_valid
 }
 
 pub fn find_repository_root(path: &Path) -> Option<PathBuf> {
