@@ -1,4 +1,5 @@
 import { ArrowUp, AtSign, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { InterfaceMode, ModelPreferences, ModelReference, Provider, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 
@@ -6,7 +7,7 @@ export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, baseBranch, branches, canIsolate, modelPickerOpenRequest,
   onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject, interfaceMode,
-  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, contextOpen, setContextOpen, includeProject, setIncludeProject,
+  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, contextOpen, setContextOpen, includeProject, setIncludeProject, approval, lastPrompt,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -42,16 +43,19 @@ export function WorkspaceComposer({
   setContextOpen: (open: boolean) => void;
   includeProject: boolean;
   setIncludeProject: (include: boolean) => void;
+  approval?: ReactNode;
+  lastPrompt: string;
 }) {
   const provider = providers.find(item => item.id === providerId);
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
   const unavailable = !desktopAllowed || !hasProject || !providerConnected || workspaceUnavailable;
-  return <section className="composer-dock" aria-label="Task composer">
+  return <section className={`composer-dock${approval ? ' has-approval' : ''}`} aria-label="Task composer">
+    {approval}
     {contextOpen && interfaceMode === 'maximum' && <button className="popover-dismiss-area" aria-label="Close context controls" onClick={() => setContextOpen(false)} />}
     <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); }}>
       {attachments.length > 0 && <div className="attached-files" aria-label="Files selected as task context">{attachments.map(path => <span className="attached-file" key={path}><FilePlus2 size={12} /><span>{path}</span><button type="button" onClick={() => onRemoveAttachment(path)} aria-label={`Remove ${path}`}><X size={12} /></button></span>)}</div>}
       <label className="sr-only" htmlFor="workspace-prompt">Describe a task for JevCode</label>
-      <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={hasProject ? 'Ask JevCode to explore, explain, or change something…' : 'Open a project to start a task…'} rows={3} disabled={busy || sending} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); } }} />
+      <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={hasProject ? 'Ask JevCode to explore, explain, or change something…' : 'Open a project to start a task…'} rows={3} disabled={busy || sending} onKeyDown={event => { if (event.key === 'ArrowUp' && !draft && lastPrompt) { event.preventDefault(); setDraft(lastPrompt); } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); } }} />
       <div className={`composer-toolbar${interfaceMode === 'simple' ? ' is-simple' : ''}`}>
         <div className="composer-tool-actions">
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>

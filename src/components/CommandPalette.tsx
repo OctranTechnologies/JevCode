@@ -19,7 +19,15 @@ export function CommandPalette({ open, onClose, actions }: { open: boolean; onCl
   const [activeIndex, setActiveIndex] = useState(0);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return actions.filter(action => !normalized || `${action.label} ${action.detail ?? ''} ${action.group}`.toLocaleLowerCase().includes(normalized));
+    if (!normalized) return actions;
+    return actions
+      .map(action => {
+        const text = `${action.label} ${action.detail ?? ''} ${action.group}`.toLocaleLowerCase();
+        return { action, rank: text.includes(normalized) ? 0 : isSubsequence(normalized, text) ? 1 : 2 };
+      })
+      .filter(item => item.rank < 2)
+      .sort((left, right) => left.rank - right.rank)
+      .map(item => item.action);
   }, [actions, query]);
 
   useEffect(() => {
@@ -32,6 +40,10 @@ export function CommandPalette({ open, onClose, actions }: { open: boolean; onCl
       requestAnimationFrame(() => input.current?.focus());
     } else if (!open && element.open) element.close();
   }, [open]);
+
+  useEffect(() => {
+    dialog.current?.querySelector('.palette-action.is-active')?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
 
   function select(action: PaletteAction | undefined) {
     if (!action) return;
@@ -53,4 +65,14 @@ export function CommandPalette({ open, onClose, actions }: { open: boolean; onCl
     </div>
     <div className="palette-footer"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>Enter</kbd> to open</span></div>
   </dialog>;
+}
+
+/** Matches typos and abbreviations such as "nt" for "New task"; exact substring matches are ranked first. */
+function isSubsequence(needle: string, haystack: string) {
+  let index = 0;
+  for (const character of haystack) {
+    if (character === needle[index]) index += 1;
+    if (index === needle.length) return true;
+  }
+  return false;
 }

@@ -12,7 +12,7 @@ import { command, desktopAvailable } from '../lib/ipc';
 import { normalizeError } from '../lib/errors';
 import { WorkspaceSidebar } from '../features/workspaces/WorkspaceSidebar';
 import { WorkspaceHeader } from '../features/workspaces/WorkspaceHeader';
-import { Conversation } from '../features/agent/Conversation';
+import { Conversation, PermissionRequest } from '../features/agent/Conversation';
 import { WorkspaceComposer } from '../features/agent/WorkspaceComposer';
 import { InspectorPanel, type InspectorTab } from '../features/agent/InspectorPanel';
 import { ProviderSettings } from '../features/providers/ProviderSettings';
@@ -75,6 +75,7 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const [inspectorWidth, setInspectorWidth] = useState(370);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ session: AgentSession; wasOpen: boolean } | null>(null);
   const [modelPickerOpenRequest, setModelPickerOpenRequest] = useState(0);
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
   const restorationAttempted = useRef(false);
@@ -101,8 +102,9 @@ export default function App() {
   const project: Project | undefined = actualProjects.find(item => item.id === projectId)
     ?? (!desktopAvailable && projectId === demoProject.id ? demoProject : undefined);
   const projects = useMemo(() => !desktopAvailable ? [demoProject] : actualProjects, [actualProjects]);
-  const allSessions = useMemo(() => !desktopAvailable ? [demoSession] : desktop.sessions, [desktop.sessions]);
+  const allSessions = useMemo(() => !desktopAvailable ? [demoSession] : desktop.sessions.filter(item => item.id !== pendingDelete?.session.id), [desktop.sessions, pendingDelete]);
   const recentSessions = useMemo(() => allSessions.filter(item => !item.archivedAt), [allSessions]);
+  const lastPrompt = useMemo(() => session?.messages.filter(item => item.role === 'user').at(-1)?.content ?? '', [session?.messages]);
   const providerId = session?.providerId ?? providerChoice;
   const provider = data?.providers.find(item => item.id === providerId);
   const selectedProviderAccount = data?.accounts.find(item => item.providerId === providerId);
@@ -363,14 +365,31 @@ export default function App() {
     } catch (error) { setError(normalizeError(error).message); }
   }, [dispatch, selectSession, setError]);
 
-  const deleteSession = useCallback(async (item: AgentSession) => {
-    if (!window.confirm(`Delete “${item.title}” and its saved task history? This cannot be undone.`)) return;
+  const commitDelete = useCallback(async (item: AgentSession) => {
     try {
       await command('delete_session', { sessionId: item.id });
       dispatch({ type: 'delete-session', sessionId: item.id });
-      if (sessionId === item.id) { setSessionId(null); setView('overview'); }
     } catch (error) { setError(normalizeError(error).message); }
-  }, [dispatch, sessionId, setError]);
+  }, [dispatch, setError]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    const timer = window.setTimeout(() => { setPendingDelete(null); void commitDelete(pendingDelete.session); }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [commitDelete, pendingDelete]);
+
+  // Deletes are reversible for five seconds: the task is hidden now and removed only when the undo window closes.
+  const deleteSession = useCallback((item: AgentSession) => {
+    if (pendingDelete) void commitDelete(pendingDelete.session);
+    const wasOpen = sessionId === item.id;
+    if (wasOpen) { setSessionId(null); setView('overview'); }
+    setPendingDelete({ session: item, wasOpen });
+  }, [commitDelete, pendingDelete, sessionId]);
+
+  const undoDelete = useCallback(() => {
+    if (pendingDelete?.wasOpen && sessionId === null) { setSessionId(pendingDelete.session.id); setView('agent'); }
+    setPendingDelete(null);
+  }, [pendingDelete, sessionId]);
 
   const chooseView = useCallback((next: View) => {
     setView(next);
@@ -654,11 +673,12 @@ export default function App() {
       {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} onProject={chooseProject} session={session} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} workspaceModeLocked={!!session || busy || sending} interfaceMode={interfaceMode} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>JevCode</span><strong>{isProjectView ? project?.name ?? 'Projects' : ['providers', 'decisions', 'updates', 'about', 'appearance'].includes(view) ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : view === 'diagnostics' ? 'Diagnostics' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
       {desktop.error && <div className="workspace-error-banner" role="alert"><AlertCircle size={15} /><span>{desktop.error}</span><button onClick={() => desktop.setError(null)} aria-label="Dismiss error">Dismiss</button></div>}
       {!networkOnline && <div className="workspace-offline-banner" role="status"><WifiOff size={14} /><span>Offline. Local projects and saved tasks are still available; provider requests will retry when you reconnect.</span></div>}
+      {pendingDelete && <div className="undo-delete-banner" role="status" key={pendingDelete.session.id}><span>Deleted “{pendingDelete.session.title}”</span><button type="button" onClick={undoDelete}>Undo</button><i aria-hidden="true" /></div>}
 
       {view === 'agent' ? <>
         <div className="workspace-content">
-          <Conversation session={session} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onPermission={resolution => void resolvePermission(resolution)} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} permissionBusy={permissionBusy} />
-          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} interfaceMode={interfaceMode} />
+          <Conversation session={session} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} />
+          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} interfaceMode={interfaceMode} lastPrompt={lastPrompt} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
       </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{(view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about' || view === 'appearance') && <nav className="settings-section-nav" aria-label="Settings sections"><button className={view === 'providers' ? 'is-active' : ''} onClick={() => setView('providers')} aria-current={view === 'providers' ? 'page' : undefined}>Providers</button><button className={view === 'decisions' ? 'is-active' : ''} onClick={() => setView('decisions')} aria-current={view === 'decisions' ? 'page' : undefined}>Decision assistance</button><button className={view === 'updates' ? 'is-active' : ''} onClick={() => setView('updates')} aria-current={view === 'updates' ? 'page' : undefined}>Updates</button><button className={view === 'about' ? 'is-active' : ''} onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined}>About</button><button className={view === 'appearance' ? 'is-active' : ''} onClick={() => setView('appearance')} aria-current={view === 'appearance' ? 'page' : undefined}>Appearance</button></nav>}{view === 'appearance' ? <AppearanceSettings mode={interfaceMode} onMode={changeInterfaceMode} /> : view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} initialOpenAIStatus={data.openaiAuthStatus} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'decisions' ? <JevDecisionSettings /> : view === 'updates' ? <UpdatesSettings preferences={updatePreferences ?? data.updatePreferences} online={networkOnline} agentActive={agentTaskActive} onSaved={setUpdatePreferences} /> : view === 'about' ? <AboutSettings online={networkOnline} agentActive={agentTaskActive} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
