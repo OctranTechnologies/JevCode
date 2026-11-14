@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
 import { MarkdownMessage } from './MarkdownMessage';
-import type { AgentSession, AgentMessage, PermissionResolution, SessionChanges } from '../../types/domain';
+import type { AgentSession, AgentMessage, InterfaceMode, PermissionResolution, SessionChanges } from '../../types/domain';
 
 const suggestions = [
   { icon: FileCode2, label: 'Explain this project', prompt: 'Explore this project and explain its main architecture.' },
@@ -14,7 +14,7 @@ const suggestions = [
 ];
 
 export function Conversation({
-  session, projectName, demo = false, review, streamingText = '', toolOutput, onSuggestion, onPermission, onRetry, onReviewFile, onReviewChanges, permissionBusy,
+  session, projectName, demo = false, review, streamingText = '', toolOutput, interfaceMode, onSuggestion, onPermission, onRetry, onReviewFile, onReviewChanges, permissionBusy,
 }: {
   session?: AgentSession;
   projectName?: string;
@@ -22,6 +22,7 @@ export function Conversation({
   review?: SessionChanges | null;
   streamingText?: string;
   toolOutput?: Record<string, { stdout: string; stderr: string }>;
+  interfaceMode: InterfaceMode;
   onSuggestion: (prompt: string) => void;
   onPermission: (resolution: PermissionResolution) => void;
   onRetry: () => void;
@@ -43,7 +44,7 @@ export function Conversation({
       <p>{projectName ? 'Describe the outcome you want. JevCode will inspect the project and keep you in control.' : 'Open a local folder to give your agent a place to work.'}</p>
       {projectName ? <div className="starter-prompts" aria-label="Suggested tasks">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={15} /><span>{label}</span><ArrowUpRight size={13} className="starter-prompt-arrow" /></button>)}</div> : <div className="empty-state-note"><Shield size={15} /><span>Project files stay on this device. You approve actions that need it.</span></div>}
     </div> : <div className="task-timeline" aria-live="polite" aria-relevant="additions text">
-      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} onReviewFile={onReviewFile} />)}
+      {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} interfaceMode={interfaceMode} onReviewFile={onReviewFile} />)}
       {session?.pendingToolCall && <div className="approval-card" role="group" aria-labelledby="approval-heading">
         <div className="approval-icon"><Shield size={17} /></div>
         <div className="approval-content"><div className="approval-title-row"><h2 id="approval-heading">Permission needed</h2><span className="approval-required">Review before continuing</span></div>
@@ -63,7 +64,12 @@ export function Conversation({
       </div>}
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
       {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span><span className="working-dots"><i /><i /><i /></span></div>}
-      {session?.activityEvents
+      {interfaceMode === 'simple' ? <>
+        {session?.activityEvents.filter(event => event.kind === 'task_overlap_warning').map(event => <div className="agent-activity-summary is-task-overlap-warning" key={event.id}><AlertTriangle size={12} /><span>{event.summary}</span><time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time></div>)}
+        {!!session?.activityEvents.filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning', 'focus_baseline'].includes(event.kind)).length && <details className="simple-activity-summary"><summary><CircleDot size={12} />Activity details<ChevronDown size={12} /></summary>
+          {session.activityEvents.filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning', 'focus_baseline'].includes(event.kind)).map(event => <div className="agent-activity-summary" key={event.id}><CircleDot size={12} /><span>{event.summary}</span><time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time></div>)}
+        </details>}
+      </> : session?.activityEvents
         .filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning', 'focus_baseline', 'task_overlap_warning'].includes(event.kind))
         .map(event => (
           <div className={`agent-activity-summary${event.kind === 'task_overlap_warning' ? ' is-task-overlap-warning' : ''}`} key={event.id}>
@@ -130,7 +136,7 @@ function testStatusLabel(status: NonNullable<AgentSession['workingContext']['com
   }
 }
 
-function TimelineMessage({ message, completedCalls, toolOutput, onReviewFile }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }>; onReviewFile: (path: string) => void }) {
+function TimelineMessage({ message, completedCalls, toolOutput, interfaceMode, onReviewFile }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }>; interfaceMode: InterfaceMode; onReviewFile: (path: string) => void }) {
   if (message.role === 'tool') {
     const changedPaths = resultChangedPaths(message);
     return <details id={message.toolResult ? `tool-result-${message.toolResult.toolCallId}` : undefined} className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
@@ -149,15 +155,23 @@ function TimelineMessage({ message, completedCalls, toolOutput, onReviewFile }: 
     <div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content">
       <div className="timeline-meta"><strong>JevCode</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>{hasCalls && <span className="activity-label"><CircleDot size={11} />Activity</span>}</div>
       {message.content && <MarkdownMessage className="agent-prose" content={message.content} />}
-      {hasCalls && <div className="activity-list">{message.toolCalls.map(call => {
+      {hasCalls && interfaceMode === 'simple' && <details className="simple-activity-summary">
+        <summary><CircleDot size={12} />{message.toolCalls.length} {message.toolCalls.length === 1 ? 'action' : 'actions'}{message.toolCalls.every(call => completedCalls.has(call.id)) ? ' completed' : ' in progress'}<ChevronDown size={12} /></summary>
+        <ActivityCalls message={message} completedCalls={completedCalls} toolOutput={toolOutput} />
+      </details>}
+      {hasCalls && interfaceMode === 'maximum' && <ActivityCalls message={message} completedCalls={completedCalls} toolOutput={toolOutput} />}
+    </div>
+  </article>;
+}
+
+function ActivityCalls({ message, completedCalls, toolOutput }: { message: AgentMessage; completedCalls: Set<string>; toolOutput?: Record<string, { stdout: string; stderr: string }> }) {
+      return <div className="activity-list">{message.toolCalls.map(call => {
         const done = completedCalls.has(call.id);
         const output = call.name === 'run_command' ? toolOutput?.[call.id] : undefined;
         return <div className="activity-call-wrap" key={call.id}><div className="activity-call"><span className={`activity-call-icon${done ? ' is-done' : ''}`}>{done ? <Check size={12} /> : <Clock3 size={12} />}</span><code>{call.name}</code><span className="activity-call-summary">{formatArguments(call.arguments)}</span><span className="activity-call-state">{done ? 'Done' : output ? 'Running' : 'Queued'}</span></div>
           {!done && output && <div className="terminal-stream" aria-label="Streaming command output">{output.stdout && <pre><small>stdout</small>{output.stdout}</pre>}{output.stderr && <pre className="is-stderr"><small>stderr</small>{output.stderr}</pre>}</div>}
         </div>;
-      })}</div>}
-    </div>
-  </article>;
+      })}</div>;
 }
 
 function resultChangedPaths(message: AgentMessage): string[] {

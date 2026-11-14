@@ -6,12 +6,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Brand } from '../../components/Brand';
 import { displayPath } from '../../lib/paths';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
-import type { AgentSession, Project, Provider } from '../../types/domain';
+import type { AgentSession, InterfaceMode, Project, Provider } from '../../types/domain';
 import { primaryShortcutModifier } from '../../lib/shortcuts';
 import type { View } from './Sidebar';
 
 export function WorkspaceSidebar({
-  projects, sessions, projectId, sessionId, view, provider, collapsed, opening, showArchived, onShowArchived, onCollapse,
+  projects, sessions, projectId, sessionId, view, provider, collapsed, opening, showArchived, interfaceMode, onShowArchived, onCollapse,
   onProject, onSession, onRenameSession, onArchiveSession, onDeleteSession, onDuplicateSession, onForkSession,
   onView, onNew, onOpen, onCreate, onRemoveRecent, onReveal, onSearch,
 }: {
@@ -24,6 +24,7 @@ export function WorkspaceSidebar({
   collapsed: boolean;
   opening: boolean;
   showArchived: boolean;
+  interfaceMode: InterfaceMode;
   onShowArchived: () => void;
   onCollapse: () => void;
   onProject: (id: string) => void;
@@ -83,7 +84,7 @@ export function WorkspaceSidebar({
     </button>
 
     <div className="sidebar-scroll">
-      {recentProjects.length > 0 && <SidebarSection title="Recent projects" icon={<ChevronDown size={12} />}>
+      {interfaceMode === 'maximum' && recentProjects.length > 0 && <SidebarSection title="Recent projects" icon={<ChevronDown size={12} />}>
         {recentProjects.map(project => projectRow(project, 'recent'))}
       </SidebarSection>}
 
@@ -120,10 +121,19 @@ export function WorkspaceSidebar({
 
     <div className="sidebar-bottom">
       <nav className="sidebar-utilities" aria-label="Settings and reports">
-        <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={view === 'providers' || view === 'updates' || view === 'about'} hasUpdate={updatePending} onClick={() => onView('providers')} />
-        <SidebarAction icon={<ShieldCheck size={16} />} label="Permissions" active={view === 'permissions'} onClick={() => onView('permissions')} />
-        <SidebarAction icon={<Puzzle size={16} />} label="MCP" active={view === 'mcp'} onClick={() => onView('mcp')} />
-        <SidebarAction icon={<BarChart3 size={16} />} label="Usage" active={view === 'usage'} onClick={() => onView('usage')} />
+        <SidebarAction icon={<Settings2 size={16} />} label="Settings" active={['providers', 'decisions', 'updates', 'about', 'appearance'].includes(view)} hasUpdate={updatePending} onClick={() => onView(interfaceMode === 'simple' ? 'appearance' : 'providers')} />
+        {interfaceMode === 'maximum' ? <>
+          <SidebarAction icon={<ShieldCheck size={16} />} label="Permissions" active={view === 'permissions'} onClick={() => onView('permissions')} />
+          <SidebarAction icon={<Puzzle size={16} />} label="MCP" active={view === 'mcp'} onClick={() => onView('mcp')} />
+          <SidebarAction icon={<BarChart3 size={16} />} label="Usage" active={view === 'usage'} onClick={() => onView('usage')} />
+        </> : <details className="sidebar-more-menu">
+          <summary><MoreHorizontal size={16} /><span>More</span><ChevronDown size={12} /></summary>
+          <div className="sidebar-more-actions">
+            <SidebarAction icon={<ShieldCheck size={16} />} label="Permissions" active={view === 'permissions'} onClick={() => onView('permissions')} />
+            <SidebarAction icon={<Puzzle size={16} />} label="MCP" active={view === 'mcp'} onClick={() => onView('mcp')} />
+            <SidebarAction icon={<BarChart3 size={16} />} label="Usage" active={view === 'usage'} onClick={() => onView('usage')} />
+          </div>
+        </details>}
       </nav>
       <button className="account-provider" onClick={() => onView('providers')} title={provider?.connected ? `${provider.name} · Connected` : 'Set up a provider'}>
         <span className={`provider-avatar${provider?.protocol === 'preview' ? ' is-local' : ''}`}>{provider?.protocol === 'preview' ? <GitBranch size={14} /> : <Layers3 size={14} />}</span>
