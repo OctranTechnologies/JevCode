@@ -7,7 +7,7 @@ export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, baseBranch, branches, canIsolate, modelPickerOpenRequest,
   onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject, interfaceMode,
-  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, contextOpen, setContextOpen, includeProject, setIncludeProject, approval, lastPrompt,
+  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, contextOpen, setContextOpen, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -45,11 +45,12 @@ export function WorkspaceComposer({
   setIncludeProject: (include: boolean) => void;
   approval?: ReactNode;
   lastPrompt: string;
+  dropActive?: boolean;
 }) {
   const provider = providers.find(item => item.id === providerId);
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
   const unavailable = !desktopAllowed || !hasProject || !providerConnected || workspaceUnavailable;
-  return <section className={`composer-dock${approval ? ' has-approval' : ''}`} aria-label="Task composer">
+  return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {approval}
     {contextOpen && interfaceMode === 'maximum' && <button className="popover-dismiss-area" aria-label="Close context controls" onClick={() => setContextOpen(false)} />}
     <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); }}>
@@ -87,7 +88,7 @@ export function WorkspaceComposer({
         </div>
       </div>
     </form>
-    <div className="composer-footnote"><span className="privacy-dot" />{workspaceMode === 'isolated' && workspaceUnavailable ? 'Choose a Git repository and a local starting branch for this isolated task' : !desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}{authRouteLabel && <span className="auth-route-indicator"><ShieldCheck size={10} />{authRouteLabel}</span>}</div>
+    <div className="composer-footnote"><span className="privacy-dot" />{dropActive ? 'Drop files to attach them to this task' : workspaceMode === 'isolated' && workspaceUnavailable ? 'Choose a Git repository and a local starting branch for this isolated task' : !desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}{authRouteLabel && <span className="auth-route-indicator"><ShieldCheck size={10} />{authRouteLabel}</span>}</div>
   </section>;
 }
 

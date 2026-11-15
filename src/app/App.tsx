@@ -7,6 +7,7 @@ import {
   Settings2, SlidersHorizontal, Sun, Terminal, WifiOff, Eye,
 } from 'lucide-react';
 import { useDesktop } from './useDesktop';
+import { useComposerFileDrop } from './useComposerFileDrop';
 import { demoProject, demoSession } from './demo';
 import { command, desktopAvailable } from '../lib/ipc';
 import { normalizeError } from '../lib/errors';
@@ -470,27 +471,33 @@ export default function App() {
     if (preferred) { setProviderChoice(preferred.providerId); setModelChoice(preferred.modelId); }
   }, [dispatch, preferredFor]);
 
+  function attachPaths(paths: string[]) {
+    if (!project) return;
+    const root = project.path.replace(/[\\/]+$/, '');
+    const lowerRoot = root.toLocaleLowerCase();
+    const relativePaths: string[] = [];
+    for (const path of paths) {
+      const normalized = path.replaceAll('\\', '/');
+      if (!normalized.toLocaleLowerCase().startsWith(`${lowerRoot.replaceAll('\\', '/')}/`)) {
+        desktop.setError('Choose files inside the selected project so JevCode can read them safely.');
+        return;
+      }
+      relativePaths.push(normalized.slice(root.length + 1).replaceAll('\\', '/'));
+    }
+    setAttachments(current => [...new Set([...current, ...relativePaths])].slice(0, 8));
+    desktop.setError(null);
+  }
+
   async function attachFiles() {
     if (!desktopAvailable || !project) return;
     try {
       const value = await open({ directory: false, multiple: true, title: 'Attach project files', defaultPath: project.path });
       if (!value) return;
-      const paths = Array.isArray(value) ? value : [value];
-      const root = project.path.replace(/[\\/]+$/, '');
-      const lowerRoot = root.toLocaleLowerCase();
-      const relativePaths: string[] = [];
-      for (const path of paths) {
-        const normalized = path.replaceAll('\\', '/');
-        if (!normalized.toLocaleLowerCase().startsWith(`${lowerRoot.replaceAll('\\', '/')}/`)) {
-          desktop.setError('Choose files inside the selected project so JevCode can read them safely.');
-          return;
-        }
-        relativePaths.push(normalized.slice(root.length + 1).replaceAll('\\', '/'));
-      }
-      setAttachments(current => [...new Set([...current, ...relativePaths])].slice(0, 8));
-      desktop.setError(null);
+      attachPaths(Array.isArray(value) ? value : [value]);
     } catch (error) { desktop.setError(normalizeError(error).message); }
   }
+
+  const fileDragging = useComposerFileDrop(!!project && !busy, attachPaths);
 
   async function send(content = draft) {
     if (!data || !projectId || !content.trim() || busy || sending) return;
@@ -690,7 +697,7 @@ export default function App() {
       {view === 'agent' ? <>
         <div className="workspace-content">
           <Conversation session={session} pendingPrompt={pendingPrompt?.sessionId === (session?.id ?? null) ? pendingPrompt.text : undefined} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} />
-          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} interfaceMode={interfaceMode} lastPrompt={lastPrompt} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
+          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} interfaceMode={interfaceMode} lastPrompt={lastPrompt} dropActive={fileDragging} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
       </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : <div className="settings-content-scroll">{(view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about' || view === 'appearance') && <nav className="settings-section-nav" aria-label="Settings sections"><button className={view === 'providers' ? 'is-active' : ''} onClick={() => setView('providers')} aria-current={view === 'providers' ? 'page' : undefined}>Providers</button><button className={view === 'decisions' ? 'is-active' : ''} onClick={() => setView('decisions')} aria-current={view === 'decisions' ? 'page' : undefined}>Decision assistance</button><button className={view === 'updates' ? 'is-active' : ''} onClick={() => setView('updates')} aria-current={view === 'updates' ? 'page' : undefined}>Updates</button><button className={view === 'about' ? 'is-active' : ''} onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined}>About</button><button className={view === 'appearance' ? 'is-active' : ''} onClick={() => setView('appearance')} aria-current={view === 'appearance' ? 'page' : undefined}>Appearance</button></nav>}{view === 'appearance' ? <AppearanceSettings mode={interfaceMode} onMode={changeInterfaceMode} /> : view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} initialOpenAIStatus={data.openaiAuthStatus} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'decisions' ? <JevDecisionSettings /> : view === 'updates' ? <UpdatesSettings preferences={updatePreferences ?? data.updatePreferences} online={networkOnline} agentActive={agentTaskActive} onSaved={setUpdatePreferences} /> : view === 'about' ? <AboutSettings online={networkOnline} agentActive={agentTaskActive} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}

@@ -1774,6 +1774,7 @@ body.is-resizing-pane .workbench { transition: none; }
 /* Pinned approval above the composer */
 .composer-dock > .approval-card { margin: 0 0 8px; }
 .composer-dock.has-approval .workspace-composer { opacity: .5; transition: opacity 250ms var(--motion-out); }
+.composer-dock.is-drop-target .workspace-composer { border-style: dashed; border-color: var(--wb-accent); }
 .approval-more { position: relative; }
 .approval-more > summary { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; color: var(--wb-ink); font-size: 12px; font-weight: 590; background: var(--wb-surface); border: 1px solid var(--wb-border); list-style: none; cursor: pointer; }
 .approval-more > summary::-webkit-details-marker { display: none; }
