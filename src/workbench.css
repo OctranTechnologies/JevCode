@@ -1747,6 +1747,10 @@ body.is-resizing-pane .workbench { transition: none; }
 @keyframes popover-in { from { opacity: 0; transform: scale(.97); } }
 @keyframes undo-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .approval-card { animation: reveal-in 250ms var(--motion-out) both; }
+.completion-review-card.is-completing { animation: reveal-in 250ms var(--motion-out) both; }
+.completion-review-card.is-completing > header > svg path { stroke-dasharray: 24; animation: check-draw 300ms var(--motion-out) 100ms both; }
+.task-change-summary.is-completing { animation: fade-in 250ms var(--motion-out) 150ms both; }
+@keyframes check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
 .permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover { animation: popover-in 120ms var(--motion-out) both; }
 .command-palette[open] { animation: fade-in 100ms var(--motion-out) both; }
 

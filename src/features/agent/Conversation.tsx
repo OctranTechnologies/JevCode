@@ -36,6 +36,18 @@ export function Conversation({
   const [unseen, setUnseen] = useState(false);
   const messages = useMemo(() => session?.messages.filter(message => message.role !== 'system') ?? [], [session?.messages]);
   const completedCalls = useMemo(() => new Set(messages.flatMap(message => message.toolResult ? [message.toolResult.toolCallId] : [])), [messages]);
+  const previousStatus = useRef<{ sessionId?: string; status?: AgentSession['status'] }>({});
+  const [finishedId, setFinishedId] = useState<string | null>(null);
+  // Only a task that finishes while this view is open gets the completion motion; reopening one does not replay it.
+  const sessionId = session?.id;
+  const status = session?.status;
+  useEffect(() => {
+    const previous = previousStatus.current;
+    previousStatus.current = { sessionId, status };
+    const finishedHere = sessionId !== undefined && previous.sessionId === sessionId && previous.status !== 'completed' && status === 'completed';
+    setFinishedId(finishedHere ? sessionId : null);
+  }, [sessionId, status]);
+  const justFinished = finishedId !== null && finishedId === sessionId;
   useEffect(() => { following.current = true; setUnseen(false); }, [session?.id]);
   useEffect(() => {
     if (pendingPrompt) following.current = true;
@@ -85,8 +97,8 @@ export function Conversation({
         ))}
       {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><MarkdownMessage className="agent-prose" content={streamingText} /></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
-      {session?.status === 'completed' && !demo && session.workingContext.completionReview && <CompletionReviewCard review={session.workingContext.completionReview} onReviewFile={onReviewFile} onViewTest={focusToolResult} />}
-      {session?.status === 'completed' && !demo && review?.files.length ? <section className="task-change-summary" aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
+      {session?.status === 'completed' && !demo && session.workingContext.completionReview && <CompletionReviewCard review={session.workingContext.completionReview} animate={justFinished} onReviewFile={onReviewFile} onViewTest={focusToolResult} />}
+      {session?.status === 'completed' && !demo && review?.files.length ? <section className={`task-change-summary${justFinished ? ' is-completing' : ''}`} aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
       <div ref={end} />
     </div>}
     {unseen && <button type="button" className="jump-to-latest" onClick={jumpToLatest}><ArrowDown size={13} /><span>New activity</span></button>}
@@ -120,8 +132,8 @@ export function PermissionRequest({ session, projectName, busy, onPermission }: 
   </div>;
 }
 
-function CompletionReviewCard({ review, onReviewFile, onViewTest }: { review: NonNullable<AgentSession['workingContext']['completionReview']>; onReviewFile: (path: string) => void; onViewTest: (toolCallId: string) => void }) {
-  return <section className="completion-review-card" aria-label="Task completion checklist">
+function CompletionReviewCard({ review, animate, onReviewFile, onViewTest }: { review: NonNullable<AgentSession['workingContext']['completionReview']>; animate: boolean; onReviewFile: (path: string) => void; onViewTest: (toolCallId: string) => void }) {
+  return <section className={`completion-review-card${animate ? ' is-completing' : ''}`} aria-label="Task completion checklist">
     <header><div><strong>Completion checklist</strong><span>{review.requirements.length} {review.requirements.length === 1 ? 'item' : 'items'} from the original request</span></div><Check size={15} /></header>
     <ol>{review.requirements.map((requirement, index) => <li key={`${index}-${requirement.text}`}>
       <details className="completion-requirement">
