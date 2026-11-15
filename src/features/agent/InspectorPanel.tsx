@@ -5,6 +5,7 @@ import {
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentSession, Project, Provider, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UsageRecord } from '../../types/domain';
 import { demoChanges, demoDiff, demoTerminal } from '../../app/demo';
+import { EffectiveContextView } from './EffectiveContextView';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
@@ -123,7 +124,7 @@ function ContextPanel({ project, branch, session, provider }: { project?: Projec
     {session?.gitBranch && <ContextRow label="Task branch" value={session.gitBranch} icon={<GitBranch size={13} />} />}
     <ContextRow label="Location" value={project?.path ?? 'Open a project to get started'} />
     <p className="inspector-section-label context-section-spaced">PROJECT GUIDANCE</p>
-    <ContextRow label="Loaded" value={session?.projectInstructionFiles.length ? session.projectInstructionFiles.join(' · ') : 'No instruction files loaded'} />
+    <EffectiveContextView projectId={project?.id} sessionId={session?.id ?? null} />
     <p className="inspector-section-label context-section-spaced">WORKING CONTEXT</p>
     <ContextRow label="Compacted turns" value={String(session?.workingContext.compactedTurns ?? 0)} />
     {session?.workingContext.objective && <ContextBlock label="Objective" value={session.workingContext.objective} />}

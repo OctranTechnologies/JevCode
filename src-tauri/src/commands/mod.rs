@@ -408,6 +408,44 @@ pub fn scan_project_context(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EffectiveContextInput {
+    project_id: String,
+    session_id: Option<String>,
+}
+
+/// With a session, compares what that task recorded with the files now. Without
+/// one, previews what a new task in the project would send.
+#[tauri::command]
+pub fn effective_context(
+    input: EffectiveContextInput,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::domain::EffectiveContext> {
+    let project = state.database.project(&input.project_id)?;
+    let current = crate::guidance::resolve(
+        Path::new(&project.path),
+        project.repository_root.as_deref().map(Path::new),
+        &project.project_instructions,
+    )?;
+    match input.session_id {
+        None => Ok(crate::guidance::preview_for_new_task(&current)),
+        Some(session_id) => {
+            let session = state.database.session(&session_id)?;
+            if session.project_id != project.id {
+                return Err(AppError::new(
+                    "invalid_input",
+                    "That task belongs to another project.",
+                ));
+            }
+            Ok(crate::guidance::against_task(
+                &session.context_sources,
+                &current,
+            ))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImportProjectContextInput {
     project_id: String,
     item_ids: Vec<String>,

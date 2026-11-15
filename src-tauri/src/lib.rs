@@ -85,6 +85,7 @@ pub fn run() {
             commands::update_project_settings,
             commands::scan_project_context,
             commands::import_project_context,
+            commands::effective_context,
             commands::list_project_memories,
             commands::save_project_memory,
             commands::refresh_project_memory_source,

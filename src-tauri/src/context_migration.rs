@@ -1070,7 +1070,8 @@ fn line_has_secret(line: &str) -> bool {
     false
 }
 
-fn preview(body: &str, secret_lines: &[u32]) -> String {
+/// Shows the body with secret lines replaced, bounded for display.
+pub(crate) fn preview(body: &str, secret_lines: &[u32]) -> String {
     let mut output = String::new();
     for (index, line) in body.lines().enumerate() {
         if secret_lines.contains(&(index as u32 + 1)) {

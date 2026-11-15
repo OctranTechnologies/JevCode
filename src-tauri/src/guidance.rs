@@ -6,8 +6,11 @@
 //! followed, and unreadable or oversized files stay visible as skipped. The
 //! result is captured with the task, so later edits affect new tasks only.
 use crate::{
-    context_migration::secret_line_numbers,
-    domain::{TaskContextScope, TaskContextSource, TaskContextStatus},
+    context_migration::{preview, secret_line_numbers},
+    domain::{
+        EffectiveContext, EffectiveContextBasis, EffectiveContextSource, SourceChange,
+        TaskContextScope, TaskContextSource, TaskContextStatus,
+    },
     error::{AppError, AppResult},
     workspaces::{LOADED_INSTRUCTION_FILES, MAX_INSTRUCTION_BYTES},
 };
@@ -24,6 +27,8 @@ pub struct ResolvedGuidance {
 }
 
 pub struct GuidanceSection {
+    /// The source path this section came from, matching `TaskContextSource::path`.
+    pub path: String,
     pub header: String,
     pub text: String,
 }
@@ -56,6 +61,7 @@ pub fn resolve(
             Some(fingerprint(settings.as_bytes())),
         ));
         resolved.sections.push(GuidanceSection {
+            path: "Project settings".into(),
             header: "Project instructions from settings:".into(),
             text: settings.to_owned(),
         });
@@ -120,6 +126,7 @@ pub fn resolve(
                         Some(fingerprint(text.as_bytes())),
                     ));
                     resolved.sections.push(GuidanceSection {
+                        path: label.clone(),
                         header: format!("Project guidance from {label}:"),
                         text,
                     });
@@ -144,6 +151,94 @@ pub fn resolve(
         }
     }
     Ok(resolved)
+}
+
+/// What a new task would send right now, with secret lines masked in the previews.
+pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
+    let sources = resolved
+        .sources
+        .iter()
+        .map(|source| {
+            let section = (source.status == TaskContextStatus::Included)
+                .then(|| {
+                    resolved
+                        .sections
+                        .iter()
+                        .find(|section| section.path == source.path)
+                })
+                .flatten();
+            EffectiveContextSource {
+                source: source.clone(),
+                change: None,
+                preview: section
+                    .map(|section| preview(&section.text, &secret_line_numbers(&section.text))),
+            }
+        })
+        .collect();
+    EffectiveContext {
+        basis: EffectiveContextBasis::Preview,
+        budget_bytes: MAX_TASK_GUIDANCE_BYTES,
+        used_bytes: included_bytes(&resolved.sources),
+        sources,
+    }
+}
+
+/// Compares what a task recorded when it started with the files as they are now.
+/// Included sources that changed, disappeared, or stopped being readable are
+/// reported; guidance that appeared since the task started is listed as added.
+pub fn against_task(
+    recorded: &[TaskContextSource],
+    current: &ResolvedGuidance,
+) -> EffectiveContext {
+    let mut sources: Vec<EffectiveContextSource> = recorded
+        .iter()
+        .map(|source| {
+            let change = (source.status == TaskContextStatus::Included).then(|| {
+                match current.sources.iter().find(|now| {
+                    now.path == source.path && now.status == TaskContextStatus::Included
+                }) {
+                    Some(now) if now.fingerprint == source.fingerprint => SourceChange::Unchanged,
+                    Some(_) => SourceChange::Changed,
+                    None => SourceChange::Removed,
+                }
+            });
+            EffectiveContextSource {
+                source: source.clone(),
+                change,
+                preview: None,
+            }
+        })
+        .collect();
+    for now in current
+        .sources
+        .iter()
+        .filter(|now| now.status == TaskContextStatus::Included)
+    {
+        let recorded_included = recorded
+            .iter()
+            .any(|source| source.path == now.path && source.status == TaskContextStatus::Included);
+        if !recorded_included {
+            sources.push(EffectiveContextSource {
+                source: now.clone(),
+                change: Some(SourceChange::Added),
+                preview: None,
+            });
+        }
+    }
+    EffectiveContext {
+        basis: EffectiveContextBasis::Task,
+        budget_bytes: MAX_TASK_GUIDANCE_BYTES,
+        used_bytes: included_bytes(recorded),
+        sources,
+    }
+}
+
+fn included_bytes(sources: &[TaskContextSource]) -> u64 {
+    sources
+        .iter()
+        .filter(|source| source.status == TaskContextStatus::Included)
+        .map(|source| source.bytes)
+        .sum()
 }
 
 fn read_guidance(path: &Path, metadata: &std::fs::Metadata) -> Result<String, String> {
@@ -400,5 +495,80 @@ mod tests {
         assert_eq!(root.status, TaskContextStatus::Included);
         assert_eq!(root.secret_lines, vec![1]);
         assert!(root.summary.contains("Possible secret on line 1"));
+    }
+
+    #[test]
+    fn a_new_task_preview_masks_secret_lines() {
+        let repo = monorepo();
+        write(
+            repo.path(),
+            "AGENTS.md",
+            b"Use OPENAI_API_KEY = \"sk-abcdefghijklmnopqrstuvwx\".\nRun tests.\n",
+        );
+        let app = repo.path().join("packages/app");
+        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+
+        let view = preview_for_new_task(&resolved);
+        let root = view
+            .sources
+            .iter()
+            .find(|item| item.source.path == "AGENTS.md")
+            .unwrap();
+        let text = root.preview.as_deref().unwrap();
+
+        assert_eq!(view.basis, EffectiveContextBasis::Preview);
+        assert!(text.contains("[possible secret hidden]"));
+        assert!(text.contains("Run tests."));
+        assert!(!text.contains("sk-abcdef"));
+    }
+
+    #[test]
+    fn a_task_reports_what_changed_since_it_started() {
+        let repo = monorepo();
+        let app = repo.path().join("packages/app");
+        let at_start = resolve(&app, Some(repo.path()), "").unwrap();
+        let recorded = at_start.sources.clone();
+
+        write(repo.path(), "AGENTS.md", b"repository, revised");
+        fs::remove_file(app.join("CLAUDE.md")).unwrap();
+        write(repo.path(), "packages/other/AGENTS.md", b"new sibling");
+        write(repo.path(), "packages/CLAUDE.md", b"new ancestor");
+        let now = resolve(&app, Some(repo.path()), "").unwrap();
+
+        let view = against_task(&recorded, &now);
+        let change = |path: &str| {
+            view.sources
+                .iter()
+                .find(|item| item.source.path == path)
+                .and_then(|item| item.change)
+        };
+
+        assert_eq!(change("AGENTS.md"), Some(SourceChange::Changed));
+        assert_eq!(
+            change("packages/app/CLAUDE.md"),
+            Some(SourceChange::Removed)
+        );
+        assert_eq!(
+            change("packages/app/AGENTS.md"),
+            Some(SourceChange::Unchanged)
+        );
+        assert_eq!(change("packages/CLAUDE.md"), Some(SourceChange::Added));
+        assert!(change("packages/other/AGENTS.md").is_none());
+        assert_eq!(view.basis, EffectiveContextBasis::Task);
+    }
+
+    #[test]
+    fn an_unchanged_task_reports_no_changes() {
+        let repo = monorepo();
+        let app = repo.path().join("packages/app");
+        let at_start = resolve(&app, Some(repo.path()), "").unwrap();
+        let now = resolve(&app, Some(repo.path()), "").unwrap();
+
+        let view = against_task(&at_start.sources, &now);
+        assert!(view
+            .sources
+            .iter()
+            .filter(|item| item.source.status == TaskContextStatus::Included)
+            .all(|item| item.change == Some(SourceChange::Unchanged)));
     }
 }

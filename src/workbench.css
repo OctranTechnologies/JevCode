@@ -1864,3 +1864,24 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .section-add::before, .completion-evidence-row button::before, .test-evidence::before, .completion-evidence-link::before, .attached-file > button::before, .timeline-file-changes button::before, .task-change-summary button::before, .undo-delete-banner > button::before, .code-copy-button::before {
   content: ''; position: absolute; inset: -6px;
 }
+
+/* Effective context: what a task carries, its budget, and what changed since it started. */
+.effective-context { display: grid; gap: 8px; margin: 0 0 12px; }
+.effective-context-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--wb-muted); font-size: 11px; }
+.effective-context-heading button { display: inline-flex; padding: 3px; color: var(--wb-muted); background: transparent; border: 0; border-radius: 0; }
+.effective-context-heading button:hover:not(:disabled) { color: var(--wb-ink); }
+.effective-context-budget { display: flex; justify-content: space-between; gap: 8px; margin: 0; color: var(--wb-muted-strong); font-size: 11px; font-variant-numeric: tabular-nums; }
+.effective-context-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.effective-context-source { display: grid; gap: 4px; padding: 8px; background: var(--wb-surface); border: 1px solid var(--wb-border); }
+.effective-context-source.is-skipped { color: var(--wb-muted); }
+.effective-context-source-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.effective-context-source-head code { overflow: hidden; color: var(--wb-ink); font: 11px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.effective-context-status { flex: 0 0 auto; padding: 1px 5px; color: var(--wb-muted-strong); font-size: 10px; border: 1px solid var(--wb-border-strong); }
+.effective-context-source.is-included .effective-context-status { color: var(--wb-success); border-color: var(--wb-success); }
+.effective-context-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; color: var(--wb-muted); font-size: 11px; }
+.effective-context-change.is-changed, .effective-context-change.is-removed { color: var(--wb-accent-ink); }
+.effective-context-summary { margin: 0; color: var(--wb-ink); font-size: 11px; line-height: 1.5; }
+.effective-context-source details summary { color: var(--wb-muted-strong); font-size: 11px; cursor: pointer; }
+.effective-context-source pre { max-height: 180px; margin: 4px 0 0; padding: 6px; overflow: auto; color: var(--wb-ink); font: 11px var(--font-mono); white-space: pre-wrap; background: var(--wb-code); border: 1px solid var(--wb-border); }
+.effective-context-empty, .effective-context-error { margin: 0; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
+.effective-context-error { color: var(--wb-danger); }

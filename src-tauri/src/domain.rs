@@ -324,6 +324,44 @@ pub struct TaskContextSource {
     pub fingerprint: Option<String>,
 }
 
+/// The effective-context view. A task compares its recorded sources with the
+/// files now on disk; a new task previews what it would send, with secret lines
+/// masked in the preview text.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveContext {
+    pub basis: EffectiveContextBasis,
+    pub budget_bytes: u64,
+    pub used_bytes: u64,
+    pub sources: Vec<EffectiveContextSource>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectiveContextBasis {
+    Task,
+    Preview,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveContextSource {
+    #[serde(flatten)]
+    pub source: TaskContextSource,
+    pub change: Option<SourceChange>,
+    pub preview: Option<String>,
+}
+
+/// How a source differs from what the task recorded when it started.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceChange {
+    Unchanged,
+    Changed,
+    Removed,
+    Added,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {

@@ -189,6 +189,17 @@ export interface TaskContextSource {
   secretLines: number[];
   fingerprint: string | null;
 }
+export interface EffectiveContextSource extends TaskContextSource {
+  change: 'unchanged' | 'changed' | 'removed' | 'added' | null;
+  preview: string | null;
+}
+/** What a task recorded at its start (`task`), or what a new task would send now (`preview`). */
+export interface EffectiveContext {
+  basis: 'task' | 'preview';
+  budgetBytes: number;
+  usedBytes: number;
+  sources: EffectiveContextSource[];
+}
 /** Durable summaries of visible task context; private model reasoning is never stored. */
 export interface WorkingContext {
   objective: string;
