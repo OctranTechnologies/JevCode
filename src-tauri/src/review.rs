@@ -1135,6 +1135,7 @@ mod tests {
         };
         database.save_project(&project).unwrap();
         let session = AgentSession {
+            task_mode: crate::domain::TaskMode::Agent,
             id: "review-session".into(),
             project_id: project.id,
             provider_id: "preview".into(),

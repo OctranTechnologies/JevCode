@@ -148,6 +148,7 @@ export interface DecisionEvaluationRecord {
 export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable'; deferredVersion: string | null; skippedVersion: string | null; remindAfter: string | null; downloadRequestedVersion: string | null }
 export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface AgentSession {
+  taskMode: 'agent' | 'plan';
   id: string;
   projectId: string;
   providerId: string;

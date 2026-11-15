@@ -5,6 +5,32 @@ use crate::{
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
+/// Old renderer Plan tasks carried only this exact marker in user messages.
+/// Infer conservatively only when the persisted capability field is absent.
+fn decode_session(data: &str) -> AppResult<AgentSession> {
+    let value: serde_json::Value = serde_json::from_str(data)?;
+    let legacy = value.get("taskMode").is_none();
+    let mut session: AgentSession = serde_json::from_value(value)?;
+    if legacy && session.messages.iter().any(|message| {
+        message.role == MessageRole::User && message.content.contains(
+            "\n\nPlanning mode: inspect relevant project files and return a clear step-by-step plan. Do not edit files or run commands.")
+    }) {
+        session.task_mode = crate::domain::TaskMode::Plan;
+    }
+    // A pre-upgrade approval must not survive as authority to implement a plan.
+    if session.task_mode == crate::domain::TaskMode::Plan
+        && session
+            .pending_tool_call
+            .as_ref()
+            .is_some_and(|call| !session.task_mode.allows_tool(&call.name))
+    {
+        session.close_pending_tools(crate::domain::TaskMode::PLAN_NOTICE);
+        session.status = SessionStatus::Failed;
+        session.error = Some(crate::domain::TaskMode::PLAN_NOTICE.into());
+    }
+    Ok(session)
+}
+
 fn mcp_scope_name(scope: &McpScope) -> &'static str {
     match scope {
         McpScope::User => "user",
@@ -999,6 +1025,9 @@ impl Database {
                 session.updated_at = now();
                 self.save_session(&session)?;
             }
+            if session.task_mode == crate::domain::TaskMode::Plan {
+                self.save_session(&session)?;
+            }
         }
         Ok(())
     }
@@ -1111,7 +1140,7 @@ impl Database {
         let mut statement =
             connection.prepare("SELECT data FROM sessions ORDER BY updated_at DESC")?;
         let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
-        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+        rows.map(|row| decode_session(&row?)).collect()
     }
 
     pub fn sessions_for_project(&self, project_id: &str) -> AppResult<Vec<AgentSession>> {
@@ -1119,7 +1148,7 @@ impl Database {
         let mut statement = connection
             .prepare("SELECT data FROM sessions WHERE project_id = ?1 ORDER BY updated_at DESC")?;
         let rows = statement.query_map([project_id], |row| row.get::<_, String>(0))?;
-        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+        rows.map(|row| decode_session(&row?)).collect()
     }
 
     pub fn session(&self, id: &str) -> AppResult<AgentSession> {
@@ -1129,13 +1158,12 @@ impl Database {
                 row.get(0)
             })
             .optional()?;
-        json.map(|data| serde_json::from_str(&data).map_err(Into::into))
-            .unwrap_or_else(|| {
-                Err(AppError::new(
-                    "not_found",
-                    "Session not found. Start a new session.",
-                ))
-            })
+        json.map(|data| decode_session(&data)).unwrap_or_else(|| {
+            Err(AppError::new(
+                "not_found",
+                "Session not found. Start a new session.",
+            ))
+        })
     }
 
     pub fn save_session(&self, session: &AgentSession) -> AppResult<()> {

@@ -130,6 +130,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
                 "core.untrackedCache=false".into(),
                 "diff".into(),
                 "--no-ext-diff".into(),
+                "--no-textconv".into(),
                 "--no-color".into(),
             ];
             if args["staged"].as_bool().unwrap_or(false) {
@@ -192,6 +193,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
                 "--no-optional-locks".into(),
                 "show".into(),
                 "--no-ext-diff".into(),
+                "--no-textconv".into(),
                 "--no-color".into(),
                 "--format=fuller".into(),
                 "--stat".into(),

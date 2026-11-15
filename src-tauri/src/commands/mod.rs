@@ -1091,6 +1091,8 @@ pub async fn remove_task_worktree(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateSession {
+    #[serde(default)]
+    task_mode: TaskMode,
     project_id: String,
     provider_id: String,
     model_id: String,
@@ -1197,6 +1199,7 @@ pub async fn create_session(
         }
     };
     let session = AgentSession {
+        task_mode: input.task_mode,
         id: session_id,
         project_id: input.project_id,
         provider_id: input.provider_id,
@@ -1636,6 +1639,7 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
         format!("Copy of {}", source.title)
     };
     let session = AgentSession {
+        task_mode: source.task_mode,
         id: new_id.clone(),
         project_id: source.project_id,
         provider_id: source.provider_id,
@@ -1739,6 +1743,11 @@ pub async fn resolve_permission(
                     "This permission request is no longer current.",
                 )
             })?;
+        if !session.task_mode.allows_tool(&call.name)
+            || (session.task_mode == TaskMode::Plan && state.extensions.owns(&call.name))
+        {
+            return Err(AppError::new("plan_mode_read_only", TaskMode::PLAN_NOTICE));
+        }
         tools::validate_call(&call)?;
         let project = state.database.project(&session.project_id)?;
         let tool = tools::validate_call(&call)?;

@@ -18,6 +18,7 @@ export const demoProject: Project = {
 const earlier = '2026-10-09T09:12:00.000Z';
 
 export const demoSession: AgentSession = {
+  taskMode: 'agent',
   id: 'sample-task',
   projectId: demoProject.id,
   providerId: 'preview',

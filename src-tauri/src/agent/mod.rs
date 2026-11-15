@@ -85,6 +85,7 @@ struct ShadowDecisionOutcome {
 
 #[derive(Clone)]
 struct ToolExecutionContext {
+    task_mode: TaskMode,
     policy: PermissionPolicy,
     timeout: Duration,
     session_id: String,
@@ -149,13 +150,16 @@ impl AgentRuntime {
 
         let definitions = if model.supports_tools {
             let mut available = tools::definitions();
-            available.extend(state.extensions.definitions(&project.id).await?);
+            if session.task_mode == TaskMode::Agent {
+                available.extend(state.extensions.definitions(&project.id).await?);
+            }
             let mut filtered = available
                 .into_iter()
                 .filter(|tool| {
-                    tool.permission == ToolCategory::UserInteraction
-                        || session.permission_policy.decision(&tool.permission)
-                            != PermissionDecision::Deny
+                    session.task_mode.allows_tool(&tool.name)
+                        && (tool.permission == ToolCategory::UserInteraction
+                            || session.permission_policy.decision(&tool.permission)
+                                != PermissionDecision::Deny)
                 })
                 .collect::<Vec<_>>();
             if let Some(guidance) = guidance.as_ref() {
@@ -643,6 +647,20 @@ impl AgentRuntime {
                 "The task reached its tool-call limit.",
             ));
         }
+        // Gate before discovery, approval assessment, grants, or review snapshots.
+        if !session.task_mode.allows_tool(&call.name)
+            || (session.task_mode == TaskMode::Plan && state.extensions.owns(&call.name))
+        {
+            append_result(session, tool_error(&call, TaskMode::PLAN_NOTICE));
+            record_activity(
+                session,
+                AgentActivityKind::ToolCompleted,
+                TaskMode::PLAN_NOTICE,
+                Some(call.id),
+            );
+            checkpoint(state, sink, session)?;
+            return Ok(false);
+        }
         let tool = match runtime_tool(state, &project.id, &call).await {
             Ok(tool) => tool,
             Err(error) => {
@@ -744,6 +762,11 @@ impl AgentRuntime {
                 == PermissionDecision::Allow
         {
             while let Some(next) = session.queued_tool_calls.first() {
+                if !session.task_mode.allows_tool(&next.name)
+                    || (session.task_mode == TaskMode::Plan && state.extensions.owns(&next.name))
+                {
+                    break;
+                }
                 let Ok(next_tool) = runtime_tool(state, &project.id, next).await else {
                     break;
                 };
@@ -756,6 +779,17 @@ impl AgentRuntime {
                     || (external
                         && session.permission_policy.external_files != PermissionDecision::Allow)
                 {
+                    break;
+                }
+                // Every batched read must also pass the risk/path assessment.
+                // Otherwise leave it queued for the full approval path.
+                let assessment = permissions::assess(
+                    Path::new(&project.path),
+                    next,
+                    &next_tool.permission,
+                    &session.permission_policy,
+                )?;
+                if assessment.denied.is_some() || !assessment.automatic {
                     break;
                 }
                 let next = session.queued_tool_calls.remove(0);
@@ -816,6 +850,7 @@ impl AgentRuntime {
                 PathBuf::from(&project.path),
                 batch.clone(),
                 ToolExecutionContext {
+                    task_mode: session.task_mode,
                     policy: session.permission_policy.clone(),
                     timeout: self.config.tool_timeout,
                     session_id: session.id.clone(),
@@ -2150,6 +2185,11 @@ async fn execute_batch(
 }
 
 async fn execute(root: &Path, call: &ToolCall, context: &ToolExecutionContext) -> ToolResult {
+    if !context.task_mode.allows_tool(&call.name)
+        || (context.task_mode == TaskMode::Plan && context.extensions.owns(&call.name))
+    {
+        return tool_error(call, TaskMode::PLAN_NOTICE);
+    }
     let operation = async {
         if let Some(result) = context.extensions.execute(&context.project_id, call).await {
             result
@@ -2169,6 +2209,11 @@ async fn execute_one(
     context: &ToolExecutionContext,
     sink: &dyn EventSink,
 ) -> ToolResult {
+    if !context.task_mode.allows_tool(&call.name)
+        || (context.task_mode == TaskMode::Plan && context.extensions.owns(&call.name))
+    {
+        return tool_error(call, TaskMode::PLAN_NOTICE);
+    }
     if context.extensions.owns(&call.name) {
         return match tokio::time::timeout(
             context.timeout,
@@ -2478,6 +2523,10 @@ fn prepare_context(session: &mut AgentSession) -> (Vec<AgentMessage>, bool) {
         .cloned()
         .collect();
     let mut prepared = systems;
+    if session.task_mode == TaskMode::Plan {
+        prepared.push(AgentMessage::text(MessageRole::System,
+            format!("{} Inspect with the available read-only tools and return a clear implementation plan.", TaskMode::PLAN_NOTICE)));
+    }
     if session.working_context.compacted_turns > 0 {
         let context = &session.working_context;
         let mut summary = format!("Durable task context ({} earlier turns compacted). This is a summary of visible activity, not private reasoning.\n\nOBJECTIVE\n{}", context.compacted_turns, context.objective);
@@ -2693,7 +2742,9 @@ async fn drive(
         .to_string_lossy()
         .into_owned();
     }
-    review::ensure_baseline(&state.database, session, Path::new(&project.path)).await?;
+    if session.task_mode == TaskMode::Agent {
+        review::ensure_baseline(&state.database, session, Path::new(&project.path)).await?;
+    }
     let provider_config = state.config.provider(&session.provider_id)?;
     let models = state
         .database
@@ -2907,6 +2958,7 @@ mod tests {
         let state = Arc::new(AppState::new(database, config, CredentialStore));
         let project = workspaces::open_project(&state.database, root.to_str().unwrap()).unwrap();
         let session = AgentSession {
+            task_mode: crate::domain::TaskMode::Agent,
             id: id(),
             project_id: project.id.clone(),
             provider_id: "preview".into(),
@@ -3730,6 +3782,7 @@ mod tests {
     fn compaction_preserves_all_user_instructions_and_full_local_history() {
         let system = AgentMessage::text(MessageRole::System, "Project policy");
         let mut session = AgentSession {
+            task_mode: crate::domain::TaskMode::Agent,
             id: "compact-test".into(),
             project_id: "project".into(),
             provider_id: "preview".into(),

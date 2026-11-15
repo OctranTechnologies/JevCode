@@ -249,9 +249,46 @@ pub enum WorkspaceMode {
     Isolated,
 }
 
+/// Immutable task capability boundary, independent of approval grants.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskMode {
+    #[default]
+    Agent,
+    Plan,
+}
+
+impl TaskMode {
+    pub const PLAN_NOTICE: &str = "Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.";
+
+    pub fn allows_tool(self, name: &str) -> bool {
+        self == Self::Agent
+            || matches!(
+                name,
+                "read_file"
+                    | "read_files"
+                    | "list_directory"
+                    | "search_files"
+                    | "search_text"
+                    | "file_metadata"
+                    | "find_symbol"
+                    | "find_references"
+                    | "inspect_project"
+                    | "git_status"
+                    | "git_diff"
+                    | "git_log"
+                    | "git_show"
+                    | "git_branch"
+                    | "ask_user"
+            )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
+    #[serde(default)]
+    pub task_mode: TaskMode,
     pub id: String,
     pub project_id: String,
     pub provider_id: String,
