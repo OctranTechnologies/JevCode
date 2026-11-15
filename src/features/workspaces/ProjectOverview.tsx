@@ -54,6 +54,7 @@ export function ProjectOverview({
   const loadedProjectId = useRef<string | null>(null);
   const [branchBusy, setBranchBusy] = useState(false);
   const [instructions, setInstructions] = useState(project.projectInstructions);
+  const [precedence, setPrecedence] = useState(project.guidancePrecedence);
   const [preferredModel, setPreferredModel] = useState(project.preferredModel ?? '');
   const [permissions, setPermissions] = useState<PermissionPolicy>(project.permissions);
   const [saving, setSaving] = useState(false);
@@ -79,6 +80,7 @@ export function ProjectOverview({
       setBranches([]);
     }
     setInstructions(project.projectInstructions);
+    setPrecedence(project.guidancePrecedence);
     setPreferredModel(project.preferredModel ?? '');
     setPermissions(project.permissions);
     if (!desktopAllowed) {
@@ -121,6 +123,7 @@ export function ProjectOverview({
           projectInstructions: instructions,
           preferredModel: preferredModel || null,
           permissions,
+          guidancePrecedence: precedence,
         },
       });
       onProjectUpdated(updated);
@@ -204,10 +207,11 @@ export function ProjectOverview({
       <ProjectContextPanel project={project} desktopAllowed={desktopAllowed} settingsDirty={instructions !== project.projectInstructions || preferredModel !== (project.preferredModel ?? '') || !samePolicy(permissions, project.permissions)} onProjectUpdated={onProjectUpdated} />
 
       <section className="project-instructions-section">
-        <div className="project-instructions-heading"><div><h2>Project instructions</h2><p>These are included when a new agent task starts in this project.</p></div><button className="project-save-button" onClick={() => void saveSettings()} disabled={!desktopAllowed || saving || (instructions === project.projectInstructions && preferredModel === (project.preferredModel ?? '') && samePolicy(permissions, project.permissions))}>{saving ? <LoaderCircle size={13} className="spin" /> : <Save size={13} />}{saving ? 'Saving' : 'Save changes'}</button></div>
+        <div className="project-instructions-heading"><div><h2>Project instructions</h2><p>These are included when a new agent task starts in this project.</p></div><button className="project-save-button" onClick={() => void saveSettings()} disabled={!desktopAllowed || saving || (instructions === project.projectInstructions && precedence === project.guidancePrecedence && preferredModel === (project.preferredModel ?? '') && samePolicy(permissions, project.permissions))}>{saving ? <LoaderCircle size={13} className="spin" /> : <Save size={13} />}{saving ? 'Saving' : 'Save changes'}</button></div>
         <textarea value={instructions} onChange={event => setInstructions(event.target.value)} maxLength={50_000} disabled={!desktopAllowed} placeholder="Add instructions that should guide every new task in this project…" aria-label="Project instructions" />
         <p className="project-permissions-note">These project rules can require approval or deny an action beyond the default mode in Settings → Permissions.</p>
         <div className="project-preferences-row">
+          <label>Root guidance<select value={precedence} onChange={event => setPrecedence(event.target.value as typeof precedence)} disabled={!desktopAllowed} title="Which root guidance file each folder contributes. Applies to new tasks."><option value="default">AGENTS.md and CLAUDE.md</option><option value="agents_override">Prefer AGENTS.override.md</option></select></label>
           <label>Preferred model<select value={preferredModel} onChange={event => setPreferredModel(event.target.value)} disabled={!desktopAllowed}><option value="">Use workspace default</option>{modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <PermissionSelect label="File access" value={permissions.readFiles} onChange={value => setPermissions(current => ({ ...current, readFiles: value }))} disabled={!desktopAllowed} />
           <PermissionSelect label="Git tools" value={permissions.git} onChange={value => setPermissions(current => ({ ...current, git: value }))} disabled={!desktopAllowed} />

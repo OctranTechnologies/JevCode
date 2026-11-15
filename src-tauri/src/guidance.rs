@@ -8,11 +8,11 @@
 use crate::{
     context_migration::{preview, secret_line_numbers},
     domain::{
-        EffectiveContext, EffectiveContextBasis, EffectiveContextSource, SourceChange,
-        TaskContextScope, TaskContextSource, TaskContextStatus,
+        EffectiveContext, EffectiveContextBasis, EffectiveContextSource, GuidancePrecedence,
+        SourceChange, TaskContextScope, TaskContextSource, TaskContextStatus,
     },
     error::{AppError, AppResult},
-    workspaces::{LOADED_INSTRUCTION_FILES, MAX_INSTRUCTION_BYTES},
+    workspaces::MAX_INSTRUCTION_BYTES,
 };
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -42,6 +42,7 @@ pub fn resolve(
     project_root: &Path,
     repository_root: Option<&Path>,
     settings: &str,
+    precedence: GuidancePrecedence,
 ) -> AppResult<ResolvedGuidance> {
     let mut resolved = ResolvedGuidance {
         sources: Vec::new(),
@@ -95,7 +96,7 @@ pub fn resolve(
 
     let repository = boundary.unwrap_or_else(|| project.clone());
     for (folder, scope) in folders {
-        for name in LOADED_INSTRUCTION_FILES {
+        for name in folder_files(&folder, precedence) {
             let path = folder.join(name);
             let Ok(metadata) = std::fs::symlink_metadata(&path) else {
                 continue;
@@ -152,10 +153,27 @@ pub fn resolve(
             }
         }
     }
-    resolved
-        .sources
-        .extend(crate::guidance_scope::discover(&project, &repository));
+    resolved.sources.extend(crate::guidance_scope::discover(
+        &project,
+        &repository,
+        precedence,
+    ));
     Ok(resolved)
+}
+
+/// The guidance files one folder contributes. Under `AgentsOverride` a folder's
+/// AGENTS.override.md takes the place of its AGENTS.md; CLAUDE.md is always read.
+fn folder_files(folder: &Path, precedence: GuidancePrecedence) -> [&'static str; 2] {
+    let overridden = precedence == GuidancePrecedence::AgentsOverride
+        && std::fs::symlink_metadata(folder.join("AGENTS.override.md")).is_ok();
+    [
+        if overridden {
+            "AGENTS.override.md"
+        } else {
+            "AGENTS.md"
+        },
+        "CLAUDE.md",
+    ]
 }
 
 /// The folder resolved paths are shown relative to: the repository root when it
@@ -386,7 +404,7 @@ mod tests {
     fn opened_subfolder_resolves_ancestors_outermost_first() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
         assert_eq!(
             included_paths(&resolved),
@@ -407,7 +425,7 @@ mod tests {
     fn siblings_and_nested_folders_are_not_read_at_task_start() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let joined = texts(&resolved).join("\n");
 
         assert!(!joined.contains("sibling"));
@@ -418,7 +436,7 @@ mod tests {
     fn without_a_repository_only_the_opened_folder_is_read() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let resolved = resolve(&app, None, "").unwrap();
+        let resolved = resolve(&app, None, "", GuidancePrecedence::Default).unwrap();
 
         assert_eq!(included_paths(&resolved), ["AGENTS.md", "CLAUDE.md"]);
         assert_eq!(texts(&resolved), ["app", "app claude"]);
@@ -428,7 +446,13 @@ mod tests {
     fn settings_come_first_and_are_recorded_as_a_source() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let resolved = resolve(&app, Some(repo.path()), "Prefer small diffs.").unwrap();
+        let resolved = resolve(
+            &app,
+            Some(repo.path()),
+            "Prefer small diffs.",
+            GuidancePrecedence::Default,
+        )
+        .unwrap();
 
         assert_eq!(resolved.sources[0].scope, TaskContextScope::Settings);
         assert_eq!(resolved.sections[0].text, "Prefer small diffs.");
@@ -442,7 +466,7 @@ mod tests {
     fn included_sources_carry_a_fingerprint_of_their_exact_bytes() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let root = reported(&resolved, "AGENTS.md");
 
         assert_eq!(
@@ -462,7 +486,7 @@ mod tests {
         fs::remove_file(app.join("CLAUDE.md")).unwrap();
         std::os::unix::fs::symlink(outside.path().join("notes.md"), app.join("CLAUDE.md")).unwrap();
 
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let link = reported(&resolved, "packages/app/CLAUDE.md");
 
         assert_eq!(link.status, TaskContextStatus::Skipped);
@@ -476,7 +500,7 @@ mod tests {
         write(repo.path(), "packages/app/CLAUDE.md", &[0xff, 0xfe, 0x00]);
         let app = repo.path().join("packages/app");
 
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let entry = reported(&resolved, "packages/app/CLAUDE.md");
 
         assert_eq!(entry.status, TaskContextStatus::Skipped);
@@ -492,7 +516,13 @@ mod tests {
         let app = repo.path().join("packages/app");
         let settings = "s".repeat(MAX_TASK_GUIDANCE_BYTES as usize - 4 * 1024);
 
-        let resolved = resolve(&app, Some(repo.path()), &settings).unwrap();
+        let resolved = resolve(
+            &app,
+            Some(repo.path()),
+            &settings,
+            GuidancePrecedence::Default,
+        )
+        .unwrap();
         let skipped = reported(&resolved, "packages/app/AGENTS.md");
 
         assert_eq!(skipped.status, TaskContextStatus::Skipped);
@@ -509,7 +539,7 @@ mod tests {
         );
         let app = repo.path().join("packages/app");
 
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let root = reported(&resolved, "AGENTS.md");
 
         assert_eq!(root.status, TaskContextStatus::Included);
@@ -526,7 +556,7 @@ mod tests {
             b"Use OPENAI_API_KEY = \"sk-abcdefghijklmnopqrstuvwx\".\nRun tests.\n",
         );
         let app = repo.path().join("packages/app");
-        let resolved = resolve(&app, Some(repo.path()), "").unwrap();
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
         let view = preview_for_new_task(&resolved);
         let root = view
@@ -546,14 +576,14 @@ mod tests {
     fn a_task_reports_what_changed_since_it_started() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let at_start = resolve(&app, Some(repo.path()), "").unwrap();
+        let at_start = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let recorded = at_start.sources.clone();
 
         write(repo.path(), "AGENTS.md", b"repository, revised");
         fs::remove_file(app.join("CLAUDE.md")).unwrap();
         write(repo.path(), "packages/other/AGENTS.md", b"new sibling");
         write(repo.path(), "packages/CLAUDE.md", b"new ancestor");
-        let now = resolve(&app, Some(repo.path()), "").unwrap();
+        let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
         let view = against_task(&recorded, &now);
         let change = |path: &str| {
@@ -581,8 +611,8 @@ mod tests {
     fn an_unchanged_task_reports_no_changes() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
-        let at_start = resolve(&app, Some(repo.path()), "").unwrap();
-        let now = resolve(&app, Some(repo.path()), "").unwrap();
+        let at_start = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
+        let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
         let view = against_task(&at_start.sources, &now);
         assert!(view
@@ -590,5 +620,36 @@ mod tests {
             .iter()
             .filter(|item| item.source.status == TaskContextStatus::Included)
             .all(|item| item.change == Some(SourceChange::Unchanged)));
+    }
+
+    #[test]
+    fn agents_override_replaces_agents_md_only_under_that_precedence() {
+        let repo = monorepo();
+        write(
+            repo.path(),
+            "packages/app/AGENTS.override.md",
+            b"override app",
+        );
+        let app = repo.path().join("packages/app");
+
+        let default = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
+        assert!(included_paths(&default).contains(&"packages/app/AGENTS.md"));
+        assert!(!included_paths(&default).contains(&"packages/app/AGENTS.override.md"));
+
+        let overridden = resolve(
+            &app,
+            Some(repo.path()),
+            "",
+            GuidancePrecedence::AgentsOverride,
+        )
+        .unwrap();
+        assert!(included_paths(&overridden).contains(&"packages/app/AGENTS.override.md"));
+        assert!(!included_paths(&overridden).contains(&"packages/app/AGENTS.md"));
+        // CLAUDE.md is read under either precedence.
+        assert!(included_paths(&overridden).contains(&"packages/app/CLAUDE.md"));
+        assert_eq!(
+            texts(&overridden),
+            ["repository", "packages", "override app", "app claude"]
+        );
     }
 }

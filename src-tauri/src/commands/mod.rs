@@ -365,6 +365,8 @@ pub struct UpdateProjectSettings {
     project_instructions: String,
     preferred_model: Option<String>,
     permissions: PermissionPolicy,
+    #[serde(default)]
+    guidance_precedence: Option<crate::domain::GuidancePrecedence>,
 }
 
 #[tauri::command]
@@ -389,6 +391,9 @@ pub fn update_project_settings(
     project.project_instructions = input.project_instructions;
     project.preferred_model = input.preferred_model;
     project.permissions = input.permissions;
+    if let Some(precedence) = input.guidance_precedence {
+        project.guidance_precedence = precedence;
+    }
     state.database.save_project(&project)?;
     Ok(project)
 }
@@ -425,6 +430,7 @@ pub fn effective_context(
         Path::new(&project.path),
         project.repository_root.as_deref().map(Path::new),
         &project.project_instructions,
+        project.guidance_precedence,
     )?;
     match input.session_id {
         None => Ok(crate::guidance::preview_for_new_task(&current)),
@@ -1173,6 +1179,7 @@ pub async fn create_session(
         Path::new(&project.path),
         project.repository_root.as_deref().map(Path::new),
         &project.project_instructions,
+        project.guidance_precedence,
     )?;
     let instruction_files = guidance
         .sources
@@ -3894,6 +3901,7 @@ mod task_lifecycle_tests {
                 preferred_model: None,
                 permissions: PermissionPolicy::default(),
                 is_recent: true,
+                guidance_precedence: crate::domain::GuidancePrecedence::default(),
                 created_at: now(),
             })
             .unwrap();

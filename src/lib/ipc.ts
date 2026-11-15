@@ -17,7 +17,7 @@ interface Commands {
   open_project: { args: { path: string }; result: Project };
   create_project: { args: { name: string; parentPath: string }; result: Project };
   remove_project_from_recents: { args: { projectId: string }; result: Project };
-  update_project_settings: { args: { input: { projectId: string; projectInstructions: string; preferredModel: string | null; permissions: PermissionPolicy } }; result: Project };
+  update_project_settings: { args: { input: { projectId: string; projectInstructions: string; preferredModel: string | null; permissions: PermissionPolicy; guidancePrecedence?: 'default' | 'agents_override' } }; result: Project };
   scan_project_context: { args: { projectId: string }; result: ProjectContextScan };
   import_project_context: { args: { input: { projectId: string; itemIds: string[] } }; result: Project };
   effective_context: { args: { input: { projectId: string; sessionId: string | null } }; result: EffectiveContext };

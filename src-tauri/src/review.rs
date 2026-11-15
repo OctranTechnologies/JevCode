@@ -1131,6 +1131,7 @@ mod tests {
             preferred_model: None,
             permissions: Default::default(),
             is_recent: true,
+            guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         };
         database.save_project(&project).unwrap();

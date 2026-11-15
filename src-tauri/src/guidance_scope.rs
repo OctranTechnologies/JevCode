@@ -7,8 +7,8 @@
 use crate::{
     context_migration::{frontmatter_value, secret_line_numbers, split_frontmatter},
     domain::{
-        AgentMessage, AgentSession, MessageRole, TaskContextScope, TaskContextSource,
-        TaskContextStatus,
+        AgentMessage, AgentSession, GuidancePrecedence, MessageRole, TaskContextScope,
+        TaskContextSource, TaskContextStatus,
     },
     guidance::{
         display_path, fingerprint, included_bytes, included_summary, read_guidance,
@@ -17,7 +17,10 @@ use crate::{
 };
 use ignore::WalkBuilder;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 const SKIPPED_DIRECTORIES: &[&str] = &[".git", "node_modules", "target"];
 const MAX_SCANNED_ENTRIES: usize = 5_000;
@@ -33,7 +36,11 @@ enum Kind {
 
 /// Finds pending guidance under the opened folder. The root files are not
 /// included here; `guidance::resolve` loads them when the task starts.
-pub fn discover(project: &Path, repository: &Path) -> Vec<TaskContextSource> {
+pub fn discover(
+    project: &Path,
+    repository: &Path,
+    precedence: GuidancePrecedence,
+) -> Vec<TaskContextSource> {
     let walker = WalkBuilder::new(project)
         .hidden(false)
         .max_depth(Some(MAX_SCAN_DEPTH))
@@ -42,7 +49,7 @@ pub fn discover(project: &Path, repository: &Path) -> Vec<TaskContextSource> {
                 || !SKIPPED_DIRECTORIES.contains(&entry.file_name().to_string_lossy().as_ref())
         })
         .build();
-    let mut found = Vec::new();
+    let mut candidates = Vec::new();
     for entry in walker.flatten().take(MAX_SCANNED_ENTRIES) {
         let relative = display_path(project, entry.path());
         let Some(kind) = classify(&relative) else {
@@ -51,10 +58,30 @@ pub fn discover(project: &Path, repository: &Path) -> Vec<TaskContextSource> {
         let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
             continue;
         };
-        if metadata.is_dir() {
+        if !metadata.is_dir() {
+            candidates.push((relative, kind, entry.path().to_path_buf(), metadata));
+        }
+    }
+    // An override file has no effect under the default precedence. Under
+    // AgentsOverride it replaces AGENTS.md in its own folder.
+    let overridden: HashSet<String> = candidates
+        .iter()
+        .filter(|(relative, ..)| relative.ends_with("/AGENTS.override.md"))
+        .map(|(relative, ..)| folder_of(relative).to_owned())
+        .collect();
+    let mut found = Vec::new();
+    for (relative, kind, path, metadata) in candidates {
+        let name = relative.rsplit('/').next().unwrap_or(&relative);
+        if name == "AGENTS.override.md" && precedence == GuidancePrecedence::Default {
             continue;
         }
-        if let Some(source) = record(entry.path(), &relative, kind, repository, &metadata) {
+        if name == "AGENTS.md"
+            && precedence == GuidancePrecedence::AgentsOverride
+            && overridden.contains(folder_of(&relative))
+        {
+            continue;
+        }
+        if let Some(source) = record(&path, &relative, kind, repository, &metadata) {
             found.push(source);
         }
     }
@@ -76,7 +103,8 @@ fn classify(relative: &str) -> Option<Kind> {
     // Guidance folders that are hidden (such as `.github/`) are not treated as nested scopes.
     let folder = relative.rsplit_once('/').map(|(folder, _)| folder)?;
     let hidden_folder = folder.split('/').any(|part| part.starts_with('.'));
-    if (name == "AGENTS.md" || name == "CLAUDE.md") && !hidden_folder {
+    let guidance_name = matches!(name, "AGENTS.md" | "AGENTS.override.md" | "CLAUDE.md");
+    if guidance_name && !hidden_folder {
         return Some(Kind::Nested);
     }
     None
@@ -160,6 +188,10 @@ fn record(
         fingerprint: Some(fingerprint(text.as_bytes())),
         globs,
     })
+}
+
+fn folder_of(relative: &str) -> &str {
+    relative.rsplit_once('/').map_or("", |(folder, _)| folder)
 }
 
 fn list(value: Option<String>) -> Vec<String> {
@@ -364,14 +396,14 @@ mod tests {
 
     fn pending_session(repo: &TempDir) -> AgentSession {
         let mut session = fixture_session();
-        session.context_sources = discover(repo.path(), repo.path());
+        session.context_sources = discover(repo.path(), repo.path(), GuidancePrecedence::Default);
         session
     }
 
     #[test]
     fn scoped_guidance_is_recorded_as_pending_without_its_text() {
         let repo = project_with_rules();
-        let found = discover(repo.path(), repo.path());
+        let found = discover(repo.path(), repo.path(), GuidancePrecedence::Default);
         let paths: Vec<&str> = found.iter().map(|source| source.path.as_str()).collect();
 
         assert_eq!(
@@ -518,7 +550,7 @@ mod tests {
         fs::remove_file(&link).unwrap();
         std::os::unix::fs::symlink(outside.path().join("rule.md"), &link).unwrap();
 
-        let found = discover(repo.path(), repo.path());
+        let found = discover(repo.path(), repo.path(), GuidancePrecedence::Default);
         let entry = found
             .iter()
             .find(|source| source.path == "src/api/AGENTS.md")
@@ -541,5 +573,31 @@ mod tests {
             touched_paths(&arguments),
             ["src/app/main.ts", "old/name.rs", "docs/readme.md"]
         );
+    }
+
+    #[test]
+    fn nested_override_replaces_nested_agents_md_under_its_precedence() {
+        let repo = project_with_rules();
+        write(
+            repo.path(),
+            "src/api/AGENTS.override.md",
+            b"Override API rules.",
+        );
+
+        let default = discover(repo.path(), repo.path(), GuidancePrecedence::Default);
+        assert!(default
+            .iter()
+            .any(|source| source.path == "src/api/AGENTS.md"));
+        assert!(default
+            .iter()
+            .all(|source| source.path != "src/api/AGENTS.override.md"));
+
+        let overridden = discover(repo.path(), repo.path(), GuidancePrecedence::AgentsOverride);
+        assert!(overridden
+            .iter()
+            .any(|source| source.path == "src/api/AGENTS.override.md"));
+        assert!(overridden
+            .iter()
+            .all(|source| source.path != "src/api/AGENTS.md"));
     }
 }

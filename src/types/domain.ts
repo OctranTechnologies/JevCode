@@ -292,6 +292,7 @@ export interface Project {
   projectInstructions: string;
   preferredModel: string | null;
   permissions: PermissionPolicy;
+  guidancePrecedence: 'default' | 'agents_override';
   isRecent: boolean;
   createdAt: string;
 }

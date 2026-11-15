@@ -1586,6 +1586,7 @@ mod tests {
                 preferred_model: None,
                 permissions: PermissionPolicy::default(),
                 is_recent: true,
+                guidance_precedence: crate::domain::GuidancePrecedence::default(),
                 created_at: now(),
             };
             database.save_project(&project).unwrap();
@@ -1663,6 +1664,7 @@ mod tests {
                 preferred_model: None,
                 permissions: PermissionPolicy::default(),
                 is_recent: true,
+                guidance_precedence: crate::domain::GuidancePrecedence::default(),
                 created_at: now(),
             })
             .unwrap();
@@ -1731,6 +1733,7 @@ mod tests {
                     preferred_model: None,
                     permissions: PermissionPolicy::default(),
                     is_recent: true,
+                    guidance_precedence: crate::domain::GuidancePrecedence::default(),
                     created_at: now(),
                 })
                 .unwrap();
@@ -1799,6 +1802,7 @@ mod tests {
             preferred_model: None,
             permissions: PermissionPolicy::default(),
             is_recent: true,
+            guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         };
         let record = UsageRecord {
@@ -1883,6 +1887,7 @@ mod tests {
             preferred_model: None,
             permissions: PermissionPolicy::default(),
             is_recent: true,
+            guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         })
         .unwrap();

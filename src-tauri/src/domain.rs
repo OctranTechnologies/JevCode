@@ -333,6 +333,16 @@ pub struct TaskContextSource {
     pub globs: Vec<String>,
 }
 
+/// `Default` reads AGENTS.md and CLAUDE.md in each folder. `AgentsOverride` reads
+/// AGENTS.override.md in place of AGENTS.md where a folder has one, as Codex does.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GuidancePrecedence {
+    #[default]
+    Default,
+    AgentsOverride,
+}
+
 /// The effective-context view. A task compares its recorded sources with the
 /// files now on disk; a new task previews what it would send, with secret lines
 /// masked in the preview text.
@@ -764,6 +774,10 @@ pub struct Project {
     pub preferred_model: Option<String>,
     #[serde(default)]
     pub permissions: PermissionPolicy,
+    /// Which root guidance files each folder contributes. Defaults to the
+    /// behavior from before the setting existed.
+    #[serde(default)]
+    pub guidance_precedence: GuidancePrecedence,
     #[serde(default = "default_true")]
     pub is_recent: bool,
     pub created_at: String,

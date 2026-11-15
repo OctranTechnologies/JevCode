@@ -54,6 +54,7 @@ pub fn open_project(database: &Database, path: &str) -> AppResult<Project> {
         preferred_model: None,
         permissions: PermissionPolicy::default(),
         is_recent: true,
+        guidance_precedence: crate::domain::GuidancePrecedence::default(),
         created_at: opened_at,
     };
     database.save_project(&project)?;
