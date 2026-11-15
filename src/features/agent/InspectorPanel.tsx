@@ -8,11 +8,12 @@ import { demoChanges, demoDiff, demoTerminal } from '../../app/demo';
 import { EffectiveContextView } from './EffectiveContextView';
 import { TaskPlanPanel } from './TaskPlanPanel';
 import { TranscriptExport } from './TranscriptExport';
+import { TranscriptImport } from './TranscriptImport';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
 export function InspectorPanel({
-  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan,
+  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated,
 }: {
   project?: Project;
   branch: string | null;
@@ -33,6 +34,7 @@ export function InspectorPanel({
   onFileAction: (path: string, action: ReviewFileAction) => void;
   onAllAction: (action: ReviewAllAction) => void;
   onStartPlan: (plan: TaskPlan) => void;
+  onSessionUpdated: (session: AgentSession) => void;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: ReactNode; count?: string }[] = [
     { id: 'changes', label: 'Files', icon: <FileCode2 size={13} />, count: demo ? '2' : review?.files.length ? String(review.files.length) : undefined },
@@ -65,6 +67,7 @@ export function InspectorPanel({
         <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />
         <TaskPlanPanel session={session} projectId={project?.id} onStart={onStartPlan} />
         <TranscriptExport session={demo ? undefined : session} projectId={project?.id} />
+        <TranscriptImport session={demo ? undefined : session} projectId={project?.id} onImported={onSessionUpdated} />
       </>}
     </div>
   </aside>;

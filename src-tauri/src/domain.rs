@@ -304,6 +304,8 @@ pub enum TaskContextScope {
     Scoped,
     /// A skill the user invoked for this task.
     Skill,
+    /// A transcript from another tool that the user imported as reference. It grants nothing.
+    Transcript,
 }
 
 /// The directory a task's guidance was read from: the opened folder, or the

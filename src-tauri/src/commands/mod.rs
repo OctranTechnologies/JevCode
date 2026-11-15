@@ -659,6 +659,74 @@ pub fn export_task_plan(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportTaskTranscriptInput {
+    project_id: String,
+    session_id: String,
+    path: String,
+}
+
+/// Adds a transcript the user picked in a file dialog to a task, as labeled reference
+/// context. A task that is running cannot change, so the import waits for it to finish.
+#[tauri::command]
+pub fn import_task_transcript(
+    input: ImportTaskTranscriptInput,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let project = state.database.project(&input.project_id)?;
+    let runs = state.runs.lock().map_err(AppError::internal)?;
+    if runs.contains_key(&input.session_id) {
+        return Err(AppError::new(
+            "session_busy",
+            "Wait for the running task to finish before importing a transcript.",
+        ));
+    }
+    let mut session = state.database.session(&input.session_id)?;
+    if session.project_id != project.id {
+        return Err(AppError::new(
+            "invalid_input",
+            "That task belongs to another project.",
+        ));
+    }
+    let path = Path::new(&input.path);
+    let text = read_transcript(path)?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "transcript".to_owned());
+    crate::transcript::attach_reference(&mut session, &name, &text, &now())?;
+    state.database.save_session(&session)?;
+    Ok(session)
+}
+
+/// Reads a transcript the user chose. Links, folders, and files that are not UTF-8
+/// text are refused, and the size is checked before anything is read.
+fn read_transcript(path: &Path) -> AppResult<String> {
+    let unavailable = || {
+        AppError::new(
+            "transcript_unavailable",
+            "The transcript could not be read.",
+        )
+    };
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| unavailable())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(AppError::new(
+            "transcript_unavailable",
+            "Choose a regular file, not a link or a folder.",
+        ));
+    }
+    if metadata.len() > crate::transcript::MAX_TRANSCRIPT_BYTES as u64 {
+        return Err(AppError::new(
+            "transcript_invalid",
+            "The transcript is larger than 48 KiB. Import a shorter excerpt.",
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|_| unavailable())?;
+    String::from_utf8(bytes)
+        .map_err(|_| AppError::new("transcript_invalid", "The transcript must be UTF-8 text."))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExportTaskTranscriptInput {
     project_id: String,
     session_id: String,

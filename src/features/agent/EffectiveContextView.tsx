@@ -11,6 +11,7 @@ const scopeLabel: Record<EffectiveContextSource['scope'], string> = {
   nested: 'Folder guidance',
   scoped: 'Path rule',
   skill: 'Skill',
+  transcript: 'External transcript',
 };
 
 const statusLabel: Record<EffectiveContextSource['status'], string> = {

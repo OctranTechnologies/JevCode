@@ -369,8 +369,11 @@ pub fn against_task(
     let mut sources: Vec<EffectiveContextSource> = recorded
         .iter()
         .map(|source| {
-            // An invoked skill's text is pinned when it is invoked, so it is not compared with the folder.
-            let pinned = source.scope == TaskContextScope::Skill;
+            // An invoked skill or an imported transcript is pinned to what was added, so the folder does not change it.
+            let pinned = matches!(
+                source.scope,
+                TaskContextScope::Skill | TaskContextScope::Transcript
+            );
             let change = match current {
                 Some(current) if source.status != TaskContextStatus::Skipped && !pinned => Some(
                     match current.sources.iter().find(|now| {

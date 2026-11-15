@@ -107,6 +107,7 @@ pub fn run() {
             commands::add_plan_comment,
             commands::set_plan_comment_resolved,
             commands::remove_plan_comment,
+            commands::import_task_transcript,
             commands::export_task_plan,
             commands::export_task_transcript,
             commands::task_plan_handoff,

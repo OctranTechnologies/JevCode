@@ -186,7 +186,7 @@ export interface AgentSession {
 /** Guidance resolved when the task started. Text is in the task's first system message, not here. */
 export interface TaskContextSource {
   path: string;
-  scope: 'settings' | 'ancestor' | 'folder' | 'nested' | 'scoped' | 'skill';
+  scope: 'settings' | 'ancestor' | 'folder' | 'nested' | 'scoped' | 'skill' | 'transcript';
   status: 'included' | 'skipped' | 'pending';
   summary: string;
   bytes: number;
