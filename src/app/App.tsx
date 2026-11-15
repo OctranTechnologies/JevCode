@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useDesktop } from './useDesktop';
 import { useComposerFileDrop } from './useComposerFileDrop';
+import { useApprovalAttention } from './useApprovalAttention';
 import { demoProject, demoSession } from './demo';
 import { command, desktopAvailable } from '../lib/ipc';
 import { normalizeError } from '../lib/errors';
@@ -112,6 +113,7 @@ export default function App() {
   const authRouteLabel = providerId === 'gemini' ? googleBillingRouteLabel(selectedProviderAccount?.authMethod) : null;
   const modelId = (session?.modelId ?? modelChoice) || provider?.models[0]?.id || '';
   const busy = !!session && ['queued', 'planning', 'working', 'waiting_for_permission'].includes(session.status);
+  useApprovalAttention(!!session?.pendingToolCall || !!session?.pendingUserInput);
   const tokens = desktop.usage.reduce((sum, record) => sum + record.inputTokens + record.outputTokens, 0);
   const agentTaskActive = sending
     || desktop.sessions.some(item => ['queued', 'planning', 'working', 'waiting_for_permission', 'waiting_for_user'].includes(item.status))
