@@ -95,6 +95,8 @@ html, body, #root { width: 100%; min-width: 0; height: 100%; min-height: 0; over
 body { color: var(--wb-ink); background: var(--wb-canvas); }
 button, input, textarea, select { color: inherit; }
 button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role='separator']:focus-visible { outline-color: var(--wb-accent); }
+/* Search fields and the terminal input hide their own outline, so their container shows the focus ring. */
+:is(.composer-skill-search, .model-picker-search, .palette-search-row, .project-terminal-input):focus-within { outline: 2px solid var(--wb-accent); outline-offset: 4px; }
 /* Press feedback is limited to actions and standalone icon buttons; rows, tabs, and options stay still. */
 :is(.button-primary, .button-quiet, .new-task-button, .composer-send-button, .composer-stop-button, .quiet-icon-button):active:not(:disabled) { transform: scale(.97); }
 ::selection { background: var(--wb-accent-soft); color: var(--wb-ink); }
@@ -1717,7 +1719,7 @@ body.is-resizing-pane .workbench { transition: none; }
 .sidebar-search, .sidebar-row, .utility-row { min-height: 40px; }
 .permission-menu > summary { min-height: 40px; }
 .toolbar-workspace-wrap select, .toolbar-workspace-base-wrap select { min-height: 40px; }
-.task-options-menu > summary, .composer-options-menu > summary, .composer-skill-menu > summary { min-height: 40px; font-size: 11px; }
+.task-options-menu > summary, .composer-options-menu > summary, .composer-skill-menu > summary { min-height: 44px; font-size: 11px; }
 .composer-tool-button, .composer-send-button, .composer-stop-button { min-height: 44px; }
 .inspector-tab { min-height: 40px; font-size: 11px; }
 .settings-section-nav button, .appearance-mode-option { min-height: 44px; }
@@ -1887,7 +1889,7 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .effective-context-error { color: var(--wb-danger); }
 .effective-context-source.is-pending .effective-context-status { color: var(--wb-muted-strong); }
 .composer-skill-popover { position: absolute; z-index: 35; top: calc(100% + 7px); left: 0; display: grid; gap: 2px; width: max-content; min-width: 240px; max-width: min(340px, calc(100vw - 32px)); max-height: min(360px, calc(100dvh - 140px)); overflow-y: auto; padding: 6px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border-strong); border-radius: 0; }
-.composer-skill-choice { display: grid; gap: 3px; width: 100%; min-height: 40px; padding: 6px 8px; color: var(--wb-ink); text-align: left; background: transparent; border: 0; border-radius: 0; font-size: 11px; cursor: pointer; }
+.composer-skill-choice { display: grid; gap: 3px; width: 100%; min-height: 44px; padding: 6px 8px; color: var(--wb-ink); text-align: left; background: transparent; border: 0; border-radius: 0; font-size: 11px; cursor: pointer; }
 .composer-skill-choice:hover:not(:disabled), .composer-skill-choice:focus-visible { background: var(--wb-surface-quiet); }
 .composer-skill-choice:disabled { opacity: .48; cursor: not-allowed; }
 .composer-skill-choice > span { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -1895,9 +1897,9 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .composer-skill-choice em { flex: 0 0 auto; padding: 0 4px; color: var(--wb-muted); border: 1px solid var(--wb-border); font-size: 11px; font-style: normal; }
 .composer-skill-choice small { overflow: hidden; color: var(--wb-muted); text-overflow: ellipsis; white-space: nowrap; }
 .composer-skill-empty { margin: 4px 8px; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
-.composer-skill-search { display: flex; align-items: center; gap: 6px; min-height: 31px; margin: 0 0 4px; padding: 0 8px; color: var(--wb-muted); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); }
+.composer-skill-search { display: flex; align-items: center; gap: 6px; min-height: 44px; margin: 0 0 4px; padding: 0 8px; color: var(--wb-muted); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); }
 .composer-skill-search:focus-within { border-color: var(--wb-accent-line); }
-.composer-skill-search input { flex: 1; min-width: 0; height: 29px; padding: 0; color: var(--wb-ink); background: transparent; border: 0; outline: 0; font: inherit; font-size: 11px; }
+.composer-skill-search input { flex: 1; min-width: 0; height: 42px; padding: 0; color: var(--wb-ink); background: transparent; border: 0; outline: 0; font: inherit; font-size: 11px; }
 .composer-skill-search input::placeholder { color: var(--wb-muted); }
 
 .project-profile-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
