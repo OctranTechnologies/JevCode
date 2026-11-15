@@ -190,6 +190,16 @@ export interface TaskContextSource {
   fingerprint: string | null;
   globs: string[];
 }
+/** What importing a project profile would change. Nothing is written until it is applied. */
+export interface ProjectProfilePreview {
+  name: string;
+  instructionCharacters: number;
+  instructionsChanged: boolean;
+  preferredModel: string | null;
+  modelChanged: boolean;
+  guidancePrecedence: 'default' | 'agents_override';
+  precedenceChanged: boolean;
+}
 /** A skill a user can invoke. Only valid skills can be invoked; the body is read when a task uses it. */
 export interface SkillSummary {
   id: string;

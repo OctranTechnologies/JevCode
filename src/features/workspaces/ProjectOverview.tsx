@@ -6,6 +6,7 @@ import {
   RefreshCw, Save, TerminalSquare,
 } from 'lucide-react';
 import { command } from '../../lib/ipc';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { normalizeError } from '../../lib/errors';
 import { displayPath } from '../../lib/paths';
 import { TaskWorktreesPanel } from './TaskWorktreesPanel';
@@ -13,7 +14,7 @@ import { ProjectMemoryPanel } from './ProjectMemoryPanel';
 import { ProjectContextPanel } from './ProjectContextPanel';
 import type {
   AgentSession, ChangedFile, PermissionDecision, PermissionPolicy, Project,
-  ProjectFileEntry, ProjectOverview as ProjectOverviewData, Provider, TerminalResult,
+  ProjectFileEntry, ProjectOverview as ProjectOverviewData, ProjectProfilePreview, Provider, TerminalResult,
 } from '../../types/domain';
 
 type Props = {
@@ -54,6 +55,8 @@ export function ProjectOverview({
   const loadedProjectId = useRef<string | null>(null);
   const [branchBusy, setBranchBusy] = useState(false);
   const [instructions, setInstructions] = useState(project.projectInstructions);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profilePreview, setProfilePreview] = useState<{ path: string; preview: ProjectProfilePreview } | null>(null);
   const [precedence, setPrecedence] = useState(project.guidancePrecedence);
   const [preferredModel, setPreferredModel] = useState(project.preferredModel ?? '');
   const [permissions, setPermissions] = useState<PermissionPolicy>(project.permissions);
@@ -110,6 +113,39 @@ export function ProjectOverview({
       await refreshOverview();
     } catch (error) { onError(normalizeError(error).message); }
     finally { setBranchBusy(false); }
+  }
+
+  async function exportProfile() {
+    if (!desktopAllowed) return;
+    try {
+      const path = await save({ defaultPath: `${project.name}.jevcode.json`, filters: [{ name: 'JevCode profile', extensions: ['json'] }] });
+      if (!path) return;
+      await command('export_project_profile', { input: { projectId: project.id, path } });
+      onError(null);
+    } catch (error) { onError(normalizeError(error).message); }
+  }
+
+  async function previewProfile() {
+    if (!desktopAllowed) return;
+    try {
+      const selected = await open({ multiple: false, directory: false, filters: [{ name: 'JevCode profile', extensions: ['json'] }] });
+      if (typeof selected !== 'string') return;
+      const preview = await command('preview_project_profile', { input: { projectId: project.id, path: selected } });
+      setProfilePreview({ path: selected, preview });
+      onError(null);
+    } catch (error) { onError(normalizeError(error).message); }
+  }
+
+  async function applyProfile() {
+    if (!profilePreview || profileBusy) return;
+    setProfileBusy(true);
+    try {
+      const updated = await command('apply_project_profile', { input: { projectId: project.id, path: profilePreview.path } });
+      onProjectUpdated(updated);
+      setProfilePreview(null);
+      onError(null);
+    } catch (error) { onError(normalizeError(error).message); }
+    finally { setProfileBusy(false); }
   }
 
   async function saveSettings() {
@@ -209,6 +245,15 @@ export function ProjectOverview({
       <section className="project-instructions-section">
         <div className="project-instructions-heading"><div><h2>Project instructions</h2><p>These are included when a new agent task starts in this project.</p></div><button className="project-save-button" onClick={() => void saveSettings()} disabled={!desktopAllowed || saving || (instructions === project.projectInstructions && precedence === project.guidancePrecedence && preferredModel === (project.preferredModel ?? '') && samePolicy(permissions, project.permissions))}>{saving ? <LoaderCircle size={13} className="spin" /> : <Save size={13} />}{saving ? 'Saving' : 'Save changes'}</button></div>
         <textarea value={instructions} onChange={event => setInstructions(event.target.value)} maxLength={50_000} disabled={!desktopAllowed} placeholder="Add instructions that should guide every new task in this project…" aria-label="Project instructions" />
+        <div className="project-profile-row">
+          <button type="button" onClick={() => void exportProfile()} disabled={!desktopAllowed}>Export profile</button>
+          <button type="button" onClick={() => void previewProfile()} disabled={!desktopAllowed || profileBusy}>Import profile…</button>
+          {profilePreview && <div className="project-profile-preview" role="status">
+            <p>Import “{profilePreview.preview.name}”: {profilePreview.preview.instructionsChanged ? `replaces the project instructions (${profilePreview.preview.instructionCharacters.toLocaleString()} characters)` : 'keeps the project instructions'}; {profilePreview.preview.modelChanged ? `sets the preferred model to ${profilePreview.preview.preferredModel ?? 'the workspace default'}` : 'keeps the preferred model'}; {profilePreview.preview.precedenceChanged ? 'changes root guidance precedence' : 'keeps root guidance precedence'}. Permissions are not imported.</p>
+            <button type="button" onClick={() => setProfilePreview(null)} disabled={profileBusy}>Cancel</button>
+            <button type="button" className="button-primary" onClick={() => void applyProfile()} disabled={profileBusy}>{profileBusy ? 'Applying…' : 'Apply profile'}</button>
+          </div>}
+        </div>
         <p className="project-permissions-note">These project rules can require approval or deny an action beyond the default mode in Settings → Permissions.</p>
         <div className="project-preferences-row">
           <label>Root guidance<select value={precedence} onChange={event => setPrecedence(event.target.value as typeof precedence)} disabled={!desktopAllowed} title="Which root guidance file each folder contributes. Applies to new tasks."><option value="default">AGENTS.md and CLAUDE.md</option><option value="agents_override">Prefer AGENTS.override.md</option></select></label>

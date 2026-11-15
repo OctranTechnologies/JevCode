@@ -411,6 +411,56 @@ pub fn scan_project_context(
     )
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProfileFileInput {
+    project_id: String,
+    path: String,
+}
+
+/// Writes the project's portable profile to a file the user chose in a save dialog.
+#[tauri::command]
+pub fn export_project_profile(
+    input: ProfileFileInput,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    let project = state.database.project(&input.project_id)?;
+    let profile = crate::profile::export(&project)?;
+    let text = serde_json::to_string_pretty(&profile)
+        .map_err(|_| AppError::new("profile_write_failed", "The profile could not be prepared."))?;
+    std::fs::write(&input.path, text).map_err(|_| {
+        AppError::new(
+            "profile_write_failed",
+            "The profile could not be saved to that location.",
+        )
+    })
+}
+
+/// Shows what importing a profile would change. Nothing is written.
+#[tauri::command]
+pub fn preview_project_profile(
+    input: ProfileFileInput,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::profile::ProjectProfilePreview> {
+    let project = state.database.project(&input.project_id)?;
+    let profile = crate::profile::parse(&crate::profile::read_file(Path::new(&input.path))?)?;
+    Ok(crate::profile::preview(&project, &profile))
+}
+
+/// Applies a profile. The file is read and checked again, so the change applied
+/// is the one validated now, not the one previewed earlier.
+#[tauri::command]
+pub fn apply_project_profile(
+    input: ProfileFileInput,
+    state: State<'_, SharedState>,
+) -> AppResult<Project> {
+    let mut project = state.database.project(&input.project_id)?;
+    let profile = crate::profile::parse(&crate::profile::read_file(Path::new(&input.path))?)?;
+    crate::profile::apply(&mut project, &profile);
+    state.database.save_project(&project)?;
+    Ok(project)
+}
+
 /// Skills a user can invoke in a project: project skills, then user skills.
 #[tauri::command]
 pub fn list_skills(
