@@ -1918,3 +1918,5 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .task-plan-editor textarea { min-height: 180px; padding: 8px; color: var(--wb-ink); font: 11px var(--font-sans); background: var(--wb-surface); border: 1px solid var(--wb-border-strong); border-radius: 0; resize: vertical; }
 .task-plan-history { color: var(--wb-muted); font-size: 11px; }
 .task-plan-error { margin: 0; color: var(--wb-danger); font-size: 11px; }
+.task-transcript { display: grid; gap: 8px; margin-top: 14px; }
+.task-transcript .task-plan-actions button { display: inline-flex; align-items: center; gap: 6px; }

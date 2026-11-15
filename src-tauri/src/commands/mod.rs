@@ -547,6 +547,44 @@ pub fn export_task_plan(
     })
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportTaskTranscriptInput {
+    project_id: String,
+    session_id: String,
+    path: String,
+}
+
+/// Writes one task's transcript to Markdown at a path the user chose in a save dialog.
+/// Tool arguments and outputs, system instructions, and credential-like lines are left out.
+#[tauri::command]
+pub async fn export_task_transcript(
+    input: ExportTaskTranscriptInput,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    let project = state.database.project(&input.project_id)?;
+    let session = state.database.session(&input.session_id)?;
+    if session.project_id != project.id {
+        return Err(AppError::new(
+            "not_found",
+            "This task is not in this project.",
+        ));
+    }
+    let changes = review::list_changes(&state.database, &session).await?;
+    let diffs: Vec<SessionFileDiff> = changes
+        .files
+        .iter()
+        .filter_map(|file| review::file_diff(&state.database, &session, &file.path).ok())
+        .collect();
+    let markdown = crate::transcript::export_markdown(&session, &project.name, &changes, &diffs);
+    std::fs::write(&input.path, markdown).map_err(|_| {
+        AppError::new(
+            "transcript_write_failed",
+            "The transcript could not be saved to that location.",
+        )
+    })
+}
+
 /// Skills a user can invoke in a project: project skills, then user skills.
 #[tauri::command]
 pub fn list_skills(

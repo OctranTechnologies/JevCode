@@ -999,7 +999,7 @@ pub fn secret_line_numbers(text: &str) -> Vec<u32> {
         .collect()
 }
 
-fn line_has_secret(line: &str) -> bool {
+pub(crate) fn line_has_secret(line: &str) -> bool {
     if line.contains("PRIVATE KEY-----") {
         return true;
     }

@@ -22,6 +22,7 @@ mod review;
 mod skills;
 mod state;
 mod tools;
+mod transcript;
 mod usage;
 mod workspaces;
 
@@ -95,6 +96,7 @@ pub fn run() {
             commands::list_task_plans,
             commands::update_task_plan,
             commands::export_task_plan,
+            commands::export_task_transcript,
             commands::task_plan_handoff,
             commands::export_project_profile,
             commands::preview_project_profile,

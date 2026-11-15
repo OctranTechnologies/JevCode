@@ -7,6 +7,7 @@ import type { AgentSession, Project, Provider, ReviewAllAction, TaskPlan, Review
 import { demoChanges, demoDiff, demoTerminal } from '../../app/demo';
 import { EffectiveContextView } from './EffectiveContextView';
 import { TaskPlanPanel } from './TaskPlanPanel';
+import { TranscriptExport } from './TranscriptExport';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
@@ -63,6 +64,7 @@ export function InspectorPanel({
       {tab === 'task' && <>
         <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />
         <TaskPlanPanel session={session} projectId={project?.id} onStart={onStartPlan} />
+        <TranscriptExport session={demo ? undefined : session} projectId={project?.id} />
       </>}
     </div>
   </aside>;

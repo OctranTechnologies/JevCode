@@ -47,6 +47,7 @@ interface Commands {
   list_task_plans: { args: { projectId: string }; result: TaskPlan[] };
   update_task_plan: { args: { input: { projectId: string; planId: string; markdown: string } }; result: TaskPlan };
   export_task_plan: { args: { input: { projectId: string; planId: string; path: string } }; result: null };
+  export_task_transcript: { args: { input: { projectId: string; sessionId: string; path: string } }; result: null };
   task_plan_handoff: { args: { input: { projectId: string; planId: string } }; result: string };
   export_project_profile: { args: { input: { projectId: string; path: string } }; result: null };
   preview_project_profile: { args: { input: { projectId: string; path: string } }; result: ProjectProfilePreview };
@@ -110,7 +111,7 @@ interface Commands {
 }
 const responses = {
   bootstrap: bootstrapSchema, get_app_diagnostics: appDiagnosticsSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
-  scan_project_context: projectContextScanSchema, import_project_context: projectSchema, effective_context: effectiveContextSchema, list_skills: z.array(skillSummarySchema), create_task_plan: taskPlanSchema, list_task_plans: z.array(taskPlanSchema), update_task_plan: taskPlanSchema, export_task_plan: z.null(), task_plan_handoff: z.string(),  export_project_profile: z.null(), preview_project_profile: projectProfilePreviewSchema, apply_project_profile: projectSchema,
+  scan_project_context: projectContextScanSchema, import_project_context: projectSchema, effective_context: effectiveContextSchema, list_skills: z.array(skillSummarySchema), create_task_plan: taskPlanSchema, list_task_plans: z.array(taskPlanSchema), update_task_plan: taskPlanSchema, export_task_plan: z.null(), export_task_transcript: z.null(), task_plan_handoff: z.string(),  export_project_profile: z.null(), preview_project_profile: projectProfilePreviewSchema, apply_project_profile: projectSchema,
   list_project_memories: z.array(projectMemorySchema), save_project_memory: projectMemorySchema, refresh_project_memory_source: projectMemorySchema, delete_project_memory: z.null(),
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
