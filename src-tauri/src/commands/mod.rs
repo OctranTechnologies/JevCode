@@ -542,6 +542,78 @@ pub fn update_task_plan(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AddPlanCommentInput {
+    project_id: String,
+    plan_id: String,
+    body: String,
+    anchor: Option<String>,
+}
+
+/// Adds a review note to a plan. Notes change no plan text, so the plan's version stays.
+#[tauri::command]
+pub fn add_plan_comment(
+    input: AddPlanCommentInput,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::plans::TaskPlan> {
+    let mut plan = state
+        .database
+        .task_plan(&input.project_id, &input.plan_id)?;
+    crate::plans::add_comment(
+        &mut plan,
+        id(),
+        &input.body,
+        input.anchor.as_deref(),
+        &now(),
+    )?;
+    state.database.save_task_plan(&plan)?;
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetPlanCommentResolvedInput {
+    project_id: String,
+    plan_id: String,
+    comment_id: String,
+    resolved: bool,
+}
+
+#[tauri::command]
+pub fn set_plan_comment_resolved(
+    input: SetPlanCommentResolvedInput,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::plans::TaskPlan> {
+    let mut plan = state
+        .database
+        .task_plan(&input.project_id, &input.plan_id)?;
+    crate::plans::set_comment_resolved(&mut plan, &input.comment_id, input.resolved)?;
+    state.database.save_task_plan(&plan)?;
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemovePlanCommentInput {
+    project_id: String,
+    plan_id: String,
+    comment_id: String,
+}
+
+#[tauri::command]
+pub fn remove_plan_comment(
+    input: RemovePlanCommentInput,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::plans::TaskPlan> {
+    let mut plan = state
+        .database
+        .task_plan(&input.project_id, &input.plan_id)?;
+    crate::plans::remove_comment(&mut plan, &input.comment_id)?;
+    state.database.save_task_plan(&plan)?;
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExportTaskPlanInput {
     project_id: String,
     plan_id: String,

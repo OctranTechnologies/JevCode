@@ -14,6 +14,8 @@ export function TaskPlanPanel({ session, projectId, onStart }: { session?: Agent
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [quoteDraft, setQuoteDraft] = useState('');
   const sessionId = session?.id;
 
   const load = useCallback(async () => {
@@ -66,6 +68,22 @@ export function TaskPlanPanel({ session, projectId, onStart }: { session?: Agent
     });
   }
 
+  async function changeComments(change: () => Promise<TaskPlan>) {
+    await run(async () => {
+      const updated = await change();
+      setPlans(current => current.map(item => (item.id === updated.id ? updated : item)));
+    });
+  }
+
+  async function addComment(current: TaskPlan) {
+    await changeComments(async () => {
+      const updated = await command('add_plan_comment', { input: { projectId: projectId!, planId: current.id, body: commentDraft, anchor: quoteDraft.trim() || null } });
+      setCommentDraft('');
+      setQuoteDraft('');
+      return updated;
+    });
+  }
+
   return <section className="task-plan" aria-label="Task plan">
     <p className="inspector-section-label">PLAN</p>
     {!plan && session.taskMode === 'plan' && <div className="task-plan-empty">
@@ -81,6 +99,24 @@ export function TaskPlanPanel({ session, projectId, onStart }: { session?: Agent
         <button type="button" onClick={() => setDraft(plan.markdown)} disabled={busy}>Edit</button>
         <button type="button" onClick={() => void exportPlan(plan)} disabled={busy}>Export Markdown</button>
         <button type="button" className="button-primary" onClick={() => void run(async () => onStart(plan))} disabled={busy} title="Creates a new Agent task. The plan grants no permissions; the new task asks for each one as usual.">Start Agent task from plan</button>
+      </div>
+      <div className="task-plan-comments" aria-label="Review comments">
+        <p className="task-plan-comments-title">Review comments<span>{plan.comments.filter(comment => !comment.resolved).length} open</span></p>
+        {plan.comments.length > 0 && <ul>{plan.comments.map(comment => <li key={comment.id} className={comment.resolved ? 'is-resolved' : undefined}>
+          <p>{comment.body}</p>
+          {comment.anchor && <small>On “{comment.anchor}”</small>}
+          <div className="task-plan-comment-actions">
+            <button type="button" onClick={() => void changeComments(() => command('set_plan_comment_resolved', { input: { projectId: projectId!, planId: plan.id, commentId: comment.id, resolved: !comment.resolved } }))} disabled={busy}>{comment.resolved ? 'Reopen' : 'Resolve'}</button>
+            <button type="button" onClick={() => void changeComments(() => command('remove_plan_comment', { input: { projectId: projectId!, planId: plan.id, commentId: comment.id } }))} disabled={busy}>Remove</button>
+          </div>
+        </li>)}</ul>}
+        <form className="task-plan-comment-form" onSubmit={event => { event.preventDefault(); void addComment(plan); }}>
+          <label htmlFor="task-plan-comment">Add a review comment</label>
+          <textarea id="task-plan-comment" value={commentDraft} onChange={event => setCommentDraft(event.target.value)} rows={3} maxLength={2000} />
+          <label htmlFor="task-plan-quote">Plan text it refers to (optional)</label>
+          <input id="task-plan-quote" value={quoteDraft} onChange={event => setQuoteDraft(event.target.value)} maxLength={200} />
+          <div className="task-plan-actions"><button type="submit" disabled={busy || !commentDraft.trim()}>Add comment</button></div>
+        </form>
       </div>
       {plan.history.length > 0 && <details className="task-plan-history">
         <summary>Earlier versions ({plan.history.length})</summary>

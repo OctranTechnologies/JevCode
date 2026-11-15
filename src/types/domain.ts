@@ -210,6 +210,14 @@ export interface TaskPlanVersion {
   markdown: string;
   savedAt: string;
 }
+/** A note on a plan for its author to address. It changes no plan text and grants nothing. */
+export interface PlanComment {
+  id: string;
+  body: string;
+  anchor: string | null;
+  resolved: boolean;
+  createdAt: string;
+}
 export interface TaskPlan {
   id: string;
   projectId: string;
@@ -218,6 +226,7 @@ export interface TaskPlan {
   markdown: string;
   version: number;
   history: TaskPlanVersion[];
+  comments: PlanComment[];
   createdAt: string;
   updatedAt: string;
 }

@@ -53,7 +53,8 @@ const taskContextSourceSchema = z.object({ path: z.string(), scope: z.enum(['set
 
 export const projectProfilePreviewSchema = z.object({ name: z.string(), instructionCharacters: z.number().int().nonnegative(), instructionsChanged: z.boolean(), preferredModel: z.string().nullable(), modelChanged: z.boolean(), guidancePrecedence: z.enum(['default', 'agents_override', 'gemini_first', 'copilot_first']), precedenceChanged: z.boolean() });
 
-export const taskPlanSchema = z.object({ id: z.string(), projectId: z.string(), sourceSessionId: z.string(), title: z.string(), markdown: z.string(), version: z.number().int().positive(), history: z.array(z.object({ version: z.number().int().positive(), markdown: z.string(), savedAt: z.string() })).default([]), createdAt: z.string(), updatedAt: z.string() });
+const planCommentSchema = z.object({ id: z.string(), body: z.string(), anchor: z.string().nullable(), resolved: z.boolean(), createdAt: z.string() });
+export const taskPlanSchema = z.object({ id: z.string(), projectId: z.string(), sourceSessionId: z.string(), title: z.string(), markdown: z.string(), version: z.number().int().positive(), history: z.array(z.object({ version: z.number().int().positive(), markdown: z.string(), savedAt: z.string() })).default([]), comments: z.array(planCommentSchema).default([]), createdAt: z.string(), updatedAt: z.string() });
 
 
 export const harnessStatusSchema = z.object({ id: z.string(), name: z.string(), executable: z.string(), installed: z.boolean() });

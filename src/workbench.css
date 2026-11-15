@@ -1945,6 +1945,19 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .task-plan-editor { display: grid; gap: 6px; }
 .task-plan-editor textarea { min-height: 180px; padding: 8px; color: var(--wb-ink); font: 11px var(--font-sans); background: var(--wb-surface); border: 1px solid var(--wb-border-strong); border-radius: 0; resize: vertical; }
 .task-plan-history { color: var(--wb-muted); font-size: 11px; }
+.task-plan-comments { display: grid; gap: 10px; margin-top: 12px; }
+.task-plan-comments-title { margin: 0; color: var(--wb-ink); font-size: 11px; font-weight: 620; }
+.task-plan-comments-title span { margin-left: 8px; color: var(--wb-muted); font-weight: 400; }
+.task-plan-comments ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.task-plan-comments li { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--wb-border); }
+.task-plan-comments li p { margin: 0; color: var(--wb-ink); font-size: 11px; line-height: 1.5; }
+.task-plan-comments li.is-resolved p { color: var(--wb-muted); text-decoration: line-through; }
+.task-plan-comments li small { color: var(--wb-muted); font-size: 11px; }
+.task-plan-comment-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-plan-comments button { min-height: 29px; padding: 0 9px; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 1px solid var(--wb-border); }
+.task-plan-comments button:disabled { opacity: .48; cursor: not-allowed; }
+.task-plan-comment-form { display: grid; gap: 6px; }
+.task-plan-comment-form textarea, .task-plan-comment-form input { padding: 8px; color: var(--wb-ink); font: 11px var(--font-sans); background: var(--wb-surface); border: 1px solid var(--wb-border); }
 .task-plan-error { margin: 0; color: var(--wb-danger); font-size: 11px; }
 .task-transcript { display: grid; gap: 8px; margin-top: 14px; }
 .task-transcript .task-plan-actions button { display: inline-flex; align-items: center; gap: 6px; }
