@@ -3684,6 +3684,197 @@ mod tests {
             .is_some_and(|result| result.tool_call_id == "read-once" && !result.is_error)));
     }
 
+    fn tool_results(session: &AgentSession) -> Vec<&ToolResult> {
+        session
+            .messages
+            .iter()
+            .filter_map(|message| message.tool_result.as_ref())
+            .collect()
+    }
+
+    /// Mirrors `resolve_permission` for an allow-once decision on the pending call.
+    fn approve_once(state: &SharedState, session: &mut AgentSession) {
+        let approved = session.pending_tool_call.take().unwrap();
+        session.pending_permission = None;
+        session
+            .one_time_permission_grants
+            .push(permissions::fingerprint(&approved).unwrap());
+        session.queued_tool_calls.insert(0, approved);
+        session.status = SessionStatus::Queued;
+        state.database.save_session(session).unwrap();
+    }
+
+    #[tokio::test]
+    async fn automatic_reads_in_a_batch_finish_before_a_gated_call_pauses() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "Batch readme").unwrap();
+        std::fs::write(root.path().join("NOTES.md"), "Batch notes").unwrap();
+        let (state, _, mut session) = setup_session(root.path());
+        session.permission_policy.read_files = PermissionDecision::Allow;
+        session.permission_policy.git = PermissionDecision::Ask;
+        state.database.save_session(&session).unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "I will read two files and check the repository state.",
+                vec![
+                    tool_call("readme", "read_file", json!({"path":"README.md"})),
+                    tool_call("notes", "read_file", json!({"path":"NOTES.md"})),
+                    tool_call("status", "git_status", json!({})),
+                ],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let mut waiting = state.database.session(&session.id).unwrap();
+        assert_eq!(waiting.status, SessionStatus::WaitingForPermission);
+        assert_eq!(waiting.pending_tool_call.as_ref().unwrap().id, "status");
+        let finished_ids: Vec<String> = tool_results(&waiting)
+            .iter()
+            .map(|result| result.tool_call_id.clone())
+            .collect();
+        assert_eq!(finished_ids, vec!["readme", "notes"]);
+
+        let denied = waiting.pending_tool_call.take().unwrap();
+        waiting.pending_permission = None;
+        append_result(
+            &mut waiting,
+            ToolResult {
+                tool_call_id: denied.id,
+                name: denied.name,
+                content: "User denied this tool call.".into(),
+                is_error: true,
+                duration_ms: 0,
+                structured_content: None,
+            },
+        );
+        waiting.status = SessionStatus::Queued;
+        state.database.save_session(&waiting).unwrap();
+
+        let provider = MockProvider::new(vec![response(
+            "Two files were read and the repository check was refused.",
+            vec![],
+        )]);
+        let requests = provider.captured_messages.clone();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            waiting,
+            receiver,
+            Some(Box::new(provider)),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let finished = state.database.session(&session.id).unwrap();
+        assert_eq!(finished.status, SessionStatus::Completed);
+        let status_results: Vec<&ToolResult> = tool_results(&finished)
+            .into_iter()
+            .filter(|result| result.tool_call_id == "status")
+            .collect();
+        assert_eq!(status_results.len(), 1);
+        assert!(status_results[0].is_error);
+        assert_eq!(status_results[0].content, "User denied this tool call.");
+        let sent = requests.lock().unwrap();
+        let last_request = sent.last().unwrap();
+        assert!(last_request
+            .iter()
+            .any(|message| message
+                .tool_result
+                .as_ref()
+                .is_some_and(
+                    |result| result.tool_call_id == "notes" && result.content == "Batch notes"
+                )));
+        assert!(last_request.iter().any(|message| message
+            .tool_result
+            .as_ref()
+            .is_some_and(|result| result.tool_call_id == "status" && result.is_error)));
+    }
+
+    #[tokio::test]
+    async fn each_gated_call_in_one_response_needs_its_own_approval() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("README.md"), "First gated file").unwrap();
+        std::fs::write(root.path().join("NOTES.md"), "Second gated file").unwrap();
+        let (state, _, mut session) = setup_session(root.path());
+        session.permission_policy.read_files = PermissionDecision::Ask;
+        state.database.save_session(&session).unwrap();
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "I will read both files.",
+                vec![
+                    tool_call("first", "read_file", json!({"path":"README.md"})),
+                    tool_call("second", "read_file", json!({"path":"NOTES.md"})),
+                ],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let mut waiting = state.database.session(&session.id).unwrap();
+        assert_eq!(waiting.status, SessionStatus::WaitingForPermission);
+        assert_eq!(waiting.pending_tool_call.as_ref().unwrap().id, "first");
+        assert!(tool_results(&waiting).is_empty());
+
+        approve_once(&state, &mut waiting);
+        let receiver = state.reserve_run(&session.id).unwrap();
+        // Approving the first call must not run the second one, so no provider request is expected.
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            waiting,
+            receiver,
+            Some(Box::new(MockProvider::new(vec![]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let mut second_gate = state.database.session(&session.id).unwrap();
+        assert_eq!(second_gate.status, SessionStatus::WaitingForPermission);
+        assert_eq!(second_gate.pending_tool_call.as_ref().unwrap().id, "second");
+        let first_results = tool_results(&second_gate);
+        assert_eq!(first_results.len(), 1);
+        assert_eq!(first_results[0].tool_call_id, "first");
+        assert!(!first_results[0].is_error);
+        assert_eq!(first_results[0].content, "First gated file");
+        assert!(second_gate.one_time_permission_grants.is_empty());
+
+        approve_once(&state, &mut second_gate);
+        let receiver = state.reserve_run(&session.id).unwrap();
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            second_gate,
+            receiver,
+            Some(Box::new(MockProvider::new(vec![response(
+                "Both files were read after separate approvals.",
+                vec![],
+            )]))),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let finished = state.database.session(&session.id).unwrap();
+        assert_eq!(finished.status, SessionStatus::Completed);
+        assert!(tool_results(&finished)
+            .iter()
+            .any(|result| result.tool_call_id == "second"
+                && !result.is_error
+                && result.content == "Second gated file"));
+        assert!(finished.one_time_permission_grants.is_empty());
+    }
+
     #[tokio::test]
     async fn runtime_enforces_tool_call_and_iteration_limits() {
         let root = tempfile::tempdir().unwrap();
