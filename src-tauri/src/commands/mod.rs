@@ -461,6 +461,92 @@ pub fn apply_project_profile(
     Ok(project)
 }
 
+/// Saves a read-only Plan task's answer as a plan artifact.
+#[tauri::command]
+pub fn create_task_plan(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::plans::TaskPlan> {
+    let session = state.database.session(&session_id)?;
+    let plan = crate::plans::from_task(&session, id(), &now())?;
+    state.database.save_task_plan(&plan)?;
+    Ok(plan)
+}
+
+#[tauri::command]
+pub fn list_task_plans(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<crate::plans::TaskPlan>> {
+    state.database.task_plans(&project_id)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateTaskPlanInput {
+    project_id: String,
+    plan_id: String,
+    markdown: String,
+}
+
+#[tauri::command]
+pub fn update_task_plan(
+    input: UpdateTaskPlanInput,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::plans::TaskPlan> {
+    let mut plan = state
+        .database
+        .task_plan(&input.project_id, &input.plan_id)?;
+    crate::plans::revise(&mut plan, &input.markdown, &now())?;
+    state.database.save_task_plan(&plan)?;
+    Ok(plan)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportTaskPlanInput {
+    project_id: String,
+    plan_id: String,
+    path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskPlanRefInput {
+    project_id: String,
+    plan_id: String,
+}
+
+/// The first message for a new Agent task that carries out a plan. The task
+/// is created by the ordinary send path, so it starts with fresh permissions.
+#[tauri::command]
+pub fn task_plan_handoff(
+    input: TaskPlanRefInput,
+    state: State<'_, SharedState>,
+) -> AppResult<String> {
+    let plan = state
+        .database
+        .task_plan(&input.project_id, &input.plan_id)?;
+    Ok(crate::plans::handoff_prompt(&plan))
+}
+
+/// Writes a plan to Markdown at a path the user chose in a save dialog.
+#[tauri::command]
+pub fn export_task_plan(
+    input: ExportTaskPlanInput,
+    state: State<'_, SharedState>,
+) -> AppResult<()> {
+    let plan = state
+        .database
+        .task_plan(&input.project_id, &input.plan_id)?;
+    std::fs::write(&input.path, crate::plans::export_markdown(&plan)).map_err(|_| {
+        AppError::new(
+            "plan_write_failed",
+            "The plan could not be saved to that location.",
+        )
+    })
+}
+
 /// Skills a user can invoke in a project: project skills, then user skills.
 #[tauri::command]
 pub fn list_skills(

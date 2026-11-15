@@ -3,14 +3,15 @@ import {
   ListChecks, RotateCcw, Shield, Terminal, X, GitCommitHorizontal,
 } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { AgentSession, Project, Provider, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UsageRecord } from '../../types/domain';
+import type { AgentSession, Project, Provider, ReviewAllAction, TaskPlan, ReviewFileAction, SessionChanges, SessionFileDiff, UsageRecord } from '../../types/domain';
 import { demoChanges, demoDiff, demoTerminal } from '../../app/demo';
 import { EffectiveContextView } from './EffectiveContextView';
+import { TaskPlanPanel } from './TaskPlanPanel';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
 export function InspectorPanel({
-  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction,
+  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan,
 }: {
   project?: Project;
   branch: string | null;
@@ -30,6 +31,7 @@ export function InspectorPanel({
   onSelectFile: (path: string) => void;
   onFileAction: (path: string, action: ReviewFileAction) => void;
   onAllAction: (action: ReviewAllAction) => void;
+  onStartPlan: (plan: TaskPlan) => void;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: ReactNode; count?: string }[] = [
     { id: 'changes', label: 'Files', icon: <FileCode2 size={13} />, count: demo ? '2' : review?.files.length ? String(review.files.length) : undefined },
@@ -58,7 +60,10 @@ export function InspectorPanel({
       {tab === 'diff' && <DiffPanel demo={demo} selectedFile={selectedPath} selectedChange={review?.files.find(file => file.path === selectedPath)} reviewDiff={reviewDiff} reviewBusy={reviewBusy} onBack={() => switchTab('changes')} onFileAction={onFileAction} />}
       {tab === 'terminal' && <TerminalPanel demo={demo} />}
       {tab === 'context' && <ContextPanel project={project} branch={branch} session={session} provider={provider} />}
-      {tab === 'task' && <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />}
+      {tab === 'task' && <>
+        <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />
+        <TaskPlanPanel session={session} projectId={project?.id} onStart={onStartPlan} />
+      </>}
     </div>
   </aside>;
 }

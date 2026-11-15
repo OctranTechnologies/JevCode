@@ -200,6 +200,23 @@ export interface ProjectProfilePreview {
   guidancePrecedence: 'default' | 'agents_override';
   precedenceChanged: boolean;
 }
+/** A plan from a read-only Plan task. Editing it keeps earlier versions; it grants no permissions. */
+export interface TaskPlanVersion {
+  version: number;
+  markdown: string;
+  savedAt: string;
+}
+export interface TaskPlan {
+  id: string;
+  projectId: string;
+  sourceSessionId: string;
+  title: string;
+  markdown: string;
+  version: number;
+  history: TaskPlanVersion[];
+  createdAt: string;
+  updatedAt: string;
+}
 /** A skill a user can invoke. Only valid skills can be invoked; the body is read when a task uses it. */
 export interface SkillSummary {
   id: string;

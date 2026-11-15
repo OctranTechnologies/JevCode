@@ -53,6 +53,9 @@ const taskContextSourceSchema = z.object({ path: z.string(), scope: z.enum(['set
 
 export const projectProfilePreviewSchema = z.object({ name: z.string(), instructionCharacters: z.number().int().nonnegative(), instructionsChanged: z.boolean(), preferredModel: z.string().nullable(), modelChanged: z.boolean(), guidancePrecedence: z.enum(['default', 'agents_override']), precedenceChanged: z.boolean() });
 
+export const taskPlanSchema = z.object({ id: z.string(), projectId: z.string(), sourceSessionId: z.string(), title: z.string(), markdown: z.string(), version: z.number().int().positive(), history: z.array(z.object({ version: z.number().int().positive(), markdown: z.string(), savedAt: z.string() })).default([]), createdAt: z.string(), updatedAt: z.string() });
+
+
 export const skillSummarySchema = z.object({ id: z.string(), name: z.string(), description: z.string(), scope: z.enum(['project', 'user']), source: z.string(), version: z.string().nullable().default(null), fingerprint: z.string(), bytes: z.number().int().nonnegative(), allowedTools: z.array(z.string()).default([]), valid: z.boolean(), warnings: z.array(z.string()).default([]) });
 
 export const effectiveContextSchema = z.object({ basis: z.enum(['task', 'preview']), budgetBytes: z.number().int().nonnegative(), usedBytes: z.number().int().nonnegative(), sources: z.array(taskContextSourceSchema.extend({ change: z.enum(['unchanged', 'changed', 'removed', 'added']).nullable().default(null), preview: z.string().nullable().default(null) })) });

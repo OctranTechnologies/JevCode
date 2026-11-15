@@ -14,6 +14,7 @@ mod guidance_scope;
 mod mcp;
 mod permissions;
 mod persistence;
+mod plans;
 mod profile;
 mod project_memory;
 mod providers;
@@ -90,6 +91,11 @@ pub fn run() {
             commands::import_project_context,
             commands::effective_context,
             commands::list_skills,
+            commands::create_task_plan,
+            commands::list_task_plans,
+            commands::update_task_plan,
+            commands::export_task_plan,
+            commands::task_plan_handoff,
             commands::export_project_profile,
             commands::preview_project_profile,
             commands::apply_project_profile,

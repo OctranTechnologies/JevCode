@@ -31,7 +31,7 @@ import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
 import { Brand } from '../components/Brand';
-import type { AgentSession, InterfaceMode, Model, ModelReference, PermissionResolution, Project, SkillSummary, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
+import type { AgentSession, InterfaceMode, Model, ModelReference, PermissionResolution, Project, SkillSummary, TaskPlan, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
 import type { View } from '../features/workspaces/Sidebar';
 import { latestRestorableSession } from './restore';
 import { primaryShortcutModifier as shortcutMod } from '../lib/shortcuts';
@@ -518,21 +518,23 @@ export default function App() {
 
   const fileDragging = useComposerFileDrop(!!project && !busy, attachPaths);
 
-  async function send(content = draft) {
+  async function send(content = draft, options: { newTask?: boolean } = {}) {
+    const newTask = options.newTask === true;
     if (!data || !projectId || !content.trim() || busy || sending) return;
     const sentAttachments = attachments;
     const sentSkills = selectedSkills;
     const clearsDraft = content === draft;
+    if (newTask) setMode('agent');
     setSending(true);
-    setPendingPrompt({ text: content.trim(), sessionId: session?.id ?? null });
+    setPendingPrompt({ text: content.trim(), sessionId: newTask ? null : session?.id ?? null });
     if (clearsDraft) setDraft('');
     setAttachments([]);
     desktop.setError(null);
     try {
-      let active = session;
+      let active = newTask ? undefined : session;
       if (!active) {
         active = await command('create_session', { input: {
-          projectId, providerId, modelId, taskMode: mode,
+          projectId, providerId, modelId, taskMode: newTask ? 'agent' : mode,
           workspaceMode,
           baseBranch: workspaceMode === 'isolated' ? baseBranch || null : null,
           taskRequest: content.trim(),
@@ -567,6 +569,14 @@ export default function App() {
       desktop.setError(normalizeError(error).message);
     }
     finally { setSending(false); }
+  }
+
+  /** A new Agent task carries the plan's text and cites its source. It inherits no approvals, grants, or pending calls. */
+  async function startTaskFromPlan(plan: TaskPlan) {
+    try {
+      const prompt = await command('task_plan_handoff', { input: { projectId: plan.projectId, planId: plan.id } });
+      await send(prompt, { newTask: true });
+    } catch (error) { desktop.setError(normalizeError(error).message); }
   }
 
   async function resolvePermission(resolution: PermissionResolution) {
@@ -728,7 +738,7 @@ export default function App() {
 
     {isAgentView && <>
       {inspectorOpen && <ResizeDivider label="Resize task details" width={inspectorWidth} min={276} max={480} reverse onResize={setInspectorWidth} />}
-      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult}usage={desktop.usage} onSelectFile={selectReviewFile} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
+      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult}usage={desktop.usage} onSelectFile={selectReviewFile} onStartPlan={plan => void startTaskFromPlan(plan)} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
     </>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
     <CreateProjectDialog open={createProjectOpen} busy={creatingProject} onClose={() => setCreateProjectOpen(false)} onCreate={createProject} onOpenExisting={() => { setCreateProjectOpen(false); void openFolder(); }} />
