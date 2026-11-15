@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   AlertCircle, ArrowRight, ChevronDown, ChevronRight, CircleDot, ExternalLink,
@@ -50,6 +50,7 @@ export function ProjectOverview({
   const [overview, setOverview] = useState<ProjectOverviewData | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const loadedProjectId = useRef<string | null>(null);
   const [branchBusy, setBranchBusy] = useState(false);
   const [instructions, setInstructions] = useState(project.projectInstructions);
   const [preferredModel, setPreferredModel] = useState(project.preferredModel ?? '');
@@ -70,9 +71,12 @@ export function ProjectOverview({
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setOverview(null);
-    setBranches([]);
+    // The same project refreshes in place, so its sections keep their shape. Only a switch shows placeholders.
+    if (loadedProjectId.current !== project.id) {
+      setLoading(true);
+      setOverview(null);
+      setBranches([]);
+    }
     setInstructions(project.projectInstructions);
     setPreferredModel(project.preferredModel ?? '');
     setPermissions(project.permissions);
@@ -86,7 +90,7 @@ export function ProjectOverview({
       command('project_overview', { projectId: project.id }),
       command('project_branches', { projectId: project.id }).catch(() => []),
     ]).then(([value, names]) => {
-      if (active) { setOverview(value); setBranches(names); }
+      if (active) { setOverview(value); setBranches(names); loadedProjectId.current = project.id; }
     }).catch(error => {
       if (active) onError(normalizeError(error).message);
     }).finally(() => { if (active) setLoading(false); });

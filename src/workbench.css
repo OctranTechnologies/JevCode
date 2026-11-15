@@ -1385,7 +1385,9 @@ body.is-resizing-pane .workbench { transition: none; }
 .project-languages-section ul { padding: 5px 13px 8px; }
 .project-languages-section li { display: flex; align-items: center; justify-content: space-between; min-height: 24px; color: var(--wb-muted-strong); font-size: 12px; }
 .project-languages-section li small { color: var(--wb-muted); font-size: 11px; }
-.project-section-skeleton { display: grid; gap: 8px; padding: 11px 13px; }
+/* Placeholder rows are the height of a real list row, and the padding matches the lists, so the section keeps its shape. */
+.project-section-skeleton { display: grid; grid-auto-rows: 26px; align-content: start; padding: 5px 9px 7px; }
+.project-section-skeleton i { align-self: center; }
 .project-section-skeleton i:nth-child(2n) { width: 72%; }
 .project-instructions-section { margin-top: 15px; padding: 0 13px 13px; }
 .project-instructions-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 53px; border-bottom: 1px solid var(--wb-border); }
