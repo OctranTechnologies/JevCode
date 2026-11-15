@@ -1111,7 +1111,7 @@ impl Database {
     pub fn project_memories(&self, project_id: &str) -> AppResult<Vec<ProjectMemory>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT data FROM project_memories WHERE project_id = ?1 ORDER BY pinned DESC, updated_at DESC",
+            "SELECT data FROM project_memories WHERE project_id = ?1 ORDER BY json_extract(data, '$.pinned') DESC, updated_at DESC",
         )?;
         let rows = statement.query_map([project_id], |row| row.get::<_, String>(0))?;
         rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
@@ -1391,6 +1391,59 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_memories_list_pinned_first_then_newest() {
+        let root = tempfile::tempdir().unwrap();
+        let database = Database::open(&root.path().join("memories.sqlite")).unwrap();
+        let project = Project {
+            id: "project-1".into(),
+            workspace_id: "local".into(),
+            name: "Memory sample".into(),
+            path: root.path().display().to_string(),
+            repository_root: None,
+            active_branch: None,
+            last_opened_at: now(),
+            project_instructions: String::new(),
+            preferred_model: None,
+            permissions: PermissionPolicy::default(),
+            is_recent: true,
+            guidance_precedence: crate::domain::GuidancePrecedence::default(),
+            created_at: now(),
+        };
+        database.save_project(&project).unwrap();
+        let memory_named = |id: &str, pinned: bool, updated_at: &str| ProjectMemory {
+            id: id.into(),
+            project_id: "project-1".into(),
+            title: format!("Memory {id}"),
+            category: ProjectMemoryCategory::Convention,
+            content: "Run the shared fixture tests before merging.".into(),
+            source_path: None,
+            source_fingerprint: None,
+            source_status: ProjectMemorySourceStatus::Unverified,
+            source_checked_at: None,
+            pinned,
+            created_at: updated_at.into(),
+            updated_at: updated_at.into(),
+        };
+        database
+            .save_project_memory(&memory_named("older-pinned", true, "2026-01-01T00:00:00Z"))
+            .unwrap();
+        database
+            .save_project_memory(&memory_named("unpinned", false, "2026-01-03T00:00:00Z"))
+            .unwrap();
+        database
+            .save_project_memory(&memory_named("newer-pinned", true, "2026-01-02T00:00:00Z"))
+            .unwrap();
+
+        let ids: Vec<String> = database
+            .project_memories("project-1")
+            .unwrap()
+            .into_iter()
+            .map(|memory| memory.id)
+            .collect();
+        assert_eq!(ids, vec!["newer-pinned", "older-pinned", "unpinned"]);
+    }
 
     #[test]
     fn jev_preferences_and_usage_survive_database_reopen_separately() {
