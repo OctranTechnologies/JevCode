@@ -355,9 +355,6 @@ body.is-resizing-pane .workbench { transition: none; }
 .composer-tool-button { display: inline-flex; align-items: center; gap: 5px; min-height: 29px; padding: 0 8px; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 1px solid transparent; border-radius: 0; }
 .composer-tool-button:hover:not(:disabled), .composer-tool-button.is-active { color: var(--wb-ink); background: var(--wb-surface-quiet); border-color: var(--wb-border); }
 .composer-tool-button:disabled { opacity: .42; }
-.composer-select-wrap { position: relative; display: inline-flex; align-items: center; min-width: 0; height: 27px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 0; }
-.composer-select-wrap select { width: 100%; max-width: 158px; min-width: 0; height: 27px; padding: 0 23px 0 8px; appearance: none; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 0; outline-offset: -2px; }
-.composer-select-wrap > svg:last-child { position: absolute; right: 5px; color: var(--wb-muted); pointer-events: none; }
 .model-select-wrap select { max-width: 166px; }
 .composer-send-button, .composer-stop-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px; color: var(--wb-accent-ink); font-size: 11px; font-weight: 620; white-space: nowrap; background: var(--wb-accent); border: 1px solid var(--wb-accent); border-radius: 0; }
 .composer-send-button:hover:not(:disabled) { background: var(--wb-accent-hover); border-color: var(--wb-accent-hover); }
@@ -1077,7 +1074,6 @@ body.is-resizing-pane .workbench { transition: none; }
   .composer-toolbar { align-items: flex-start; }
   .composer-tool-actions { flex-wrap: wrap; }
   .composer-controls-right { justify-content: flex-end; flex-wrap: wrap; }
-  .composer-select-wrap select { max-width: 115px; }
   .model-select-wrap select { max-width: 116px; }
   .status-readonly, .status-saved { display: none !important; }
   .workspace-statusbar { gap: 9px; padding-inline: 8px; }
@@ -1796,3 +1792,11 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .undo-delete-banner > button { margin-left: auto; min-height: 26px; padding: 0 9px; color: var(--wb-ink); font-size: 11px; font-weight: 560; background: var(--wb-surface); border: 1px solid var(--wb-border-strong); }
 .undo-delete-banner > button:hover { background: var(--wb-surface-quiet); }
 .undo-delete-banner > i { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: var(--wb-accent); transform-origin: left; animation: undo-countdown 5000ms linear both; }
+
+/* Small inline actions keep their look. An invisible 6px hit area on each side brings a 14-26px control to a 26-38px target. */
+.section-add, .completion-evidence-row button, .test-evidence, .completion-evidence-link, .attached-file > button, .timeline-file-changes button, .task-change-summary button, .undo-delete-banner > button {
+  position: relative;
+}
+.section-add::before, .completion-evidence-row button::before, .test-evidence::before, .completion-evidence-link::before, .attached-file > button::before, .timeline-file-changes button::before, .task-change-summary button::before, .undo-delete-banner > button::before, .code-copy-button::before {
+  content: ''; position: absolute; inset: -6px;
+}
