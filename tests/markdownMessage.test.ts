@@ -16,6 +16,14 @@ describe('conversation Markdown', () => {
     expect(markup).toContain('<th>Name</th>');
   });
 
+  it('adds a copy control to fenced code blocks', () => {
+    const markup = renderToStaticMarkup(createElement(MarkdownMessage, { content: '```ts\nconst total = 1;\n```' }));
+
+    expect(markup).toContain('class="code-block"');
+    expect(markup).toContain('class="code-copy-button"');
+    expect(markup).toContain('<span>Copy</span>');
+  });
+
   it('does not render raw HTML from message content', () => {
     const content = '<img src=x onerror="alert(1)" />\n\nSafe **text**.';
     const markup = renderToStaticMarkup(createElement(MarkdownMessage, { content }));

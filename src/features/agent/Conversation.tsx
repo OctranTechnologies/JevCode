@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertCircle, AlertTriangle, ArrowUpRight, Check, ChevronDown, CircleDot, CircleHelp, Clock3, FileCode2, GitBranch, ShieldCheck,
+  AlertCircle, AlertTriangle, ArrowDown, ArrowUpRight, Check, ChevronDown, CircleDot, CircleHelp, Clock3, FileCode2, GitBranch, ShieldCheck,
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
+import { DisclosureMenu } from '../../components/DisclosureMenu';
 import { MarkdownMessage } from './MarkdownMessage';
+import { scrollBehavior } from '../../lib/motion';
 import type { AgentSession, AgentMessage, InterfaceMode, PermissionResolution, SessionChanges } from '../../types/domain';
 
 const suggestions = [
@@ -14,56 +16,73 @@ const suggestions = [
 ];
 
 export function Conversation({
-  session, projectName, demo = false, review, streamingText = '', toolOutput, interfaceMode, onSuggestion, onPermission, onRetry, onReviewFile, onReviewChanges, permissionBusy,
+  session, projectName, demo = false, review, streamingText = '', pendingPrompt, toolOutput, interfaceMode, onSuggestion, onRetry, onReviewFile, onReviewChanges,
 }: {
   session?: AgentSession;
   projectName?: string;
   demo?: boolean;
   review?: SessionChanges | null;
   streamingText?: string;
+  /** The message just sent, shown before the session has been saved with it. */
+  pendingPrompt?: string;
   toolOutput?: Record<string, { stdout: string; stderr: string }>;
   interfaceMode: InterfaceMode;
   onSuggestion: (prompt: string) => void;
-  onPermission: (resolution: PermissionResolution) => void;
   onRetry: () => void;
   onReviewFile: (path: string) => void;
   onReviewChanges: () => void;
-  permissionBusy: boolean;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
   const end = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
+  const [unseen, setUnseen] = useState(false);
   const messages = useMemo(() => session?.messages.filter(message => message.role !== 'system') ?? [], [session?.messages]);
   const completedCalls = useMemo(() => new Set(messages.flatMap(message => message.toolResult ? [message.toolResult.toolCallId] : [])), [messages]);
-  useEffect(() => { end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [session?.updatedAt]);
+  const previousStatus = useRef<{ sessionId?: string; status?: AgentSession['status'] }>({});
+  const [finishedId, setFinishedId] = useState<string | null>(null);
+  // Only a task that finishes while this view is open gets the completion motion; reopening one does not replay it.
+  const sessionId = session?.id;
+  const status = session?.status;
+  useEffect(() => {
+    const previous = previousStatus.current;
+    previousStatus.current = { sessionId, status };
+    const finishedHere = sessionId !== undefined && previous.sessionId === sessionId && previous.status !== 'completed' && status === 'completed';
+    setFinishedId(finishedHere ? sessionId : null);
+  }, [sessionId, status]);
+  const justFinished = finishedId !== null && finishedId === sessionId;
+  useEffect(() => { following.current = true; setUnseen(false); }, [session?.id]);
+  useEffect(() => {
+    if (pendingPrompt) following.current = true;
+    if (!following.current) { setUnseen(true); return; }
+    end.current?.scrollIntoView({ behavior: scrollBehavior(streamingText ? 'auto' : 'smooth'), block: 'end' });
+  }, [session?.id, session?.updatedAt, streamingText, pendingPrompt]);
 
-  return <div className="conversation-scroll" aria-label="Task conversation">
+  function trackScroll() {
+    const element = scroller.current;
+    if (!element) return;
+    following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+    if (following.current) setUnseen(false);
+  }
+
+  function jumpToLatest() {
+    following.current = true;
+    setUnseen(false);
+    end.current?.scrollIntoView({ behavior: scrollBehavior('smooth'), block: 'end' });
+  }
+
+  return <div className="conversation-scroll" aria-label="Task conversation" ref={scroller} onScroll={trackScroll}>
     {demo && <div className="sample-notice"><Sparkles size={13} /><span><strong>Sample task</strong> · Activity, terminal output, and diff are illustrative. No files were changed.</span></div>}
     {!!session?.projectInstructionFiles.length && <div className="project-guidance-notice"><ShieldCheck size={13} /><span>Project guidance loaded</span><small>{session.projectInstructionFiles.join(' · ')}</small></div>}
-    {messages.length === 0 ? <div className="task-empty-state">
+    {messages.length === 0 && !pendingPrompt ? <div className="task-empty-state">
       <div className="empty-state-mark"><Brand large /></div>
       <h1>{projectName ? `What should JevCode do in ${projectName}?` : 'Start with a project'}</h1>
       <p>{projectName ? 'Describe the outcome you want. JevCode will inspect the project and keep you in control.' : 'Open a local folder to give your agent a place to work.'}</p>
       {projectName ? <div className="starter-prompts" aria-label="Suggested tasks">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={15} /><span>{label}</span><ArrowUpRight size={13} className="starter-prompt-arrow" /></button>)}</div> : <div className="empty-state-note"><Shield size={15} /><span>Project files stay on this device. You approve actions that need it.</span></div>}
     </div> : <div className="task-timeline" aria-live="polite" aria-relevant="additions text">
       {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} interfaceMode={interfaceMode} onReviewFile={onReviewFile} />)}
-      {session?.pendingToolCall && <div className="approval-card" role="group" aria-labelledby="approval-heading">
-        <div className="approval-icon"><Shield size={17} /></div>
-        <div className="approval-content"><div className="approval-title-row"><h2 id="approval-heading">Permission needed</h2><span className="approval-required">Review before continuing</span></div>
-          <p><strong>{session.pendingPermission?.categories.map(category => category.replaceAll('_', ' ')).join(' · ') ?? session.pendingToolCall.name}</strong> in <code>{projectName ?? 'this project'}</code></p>
-          <pre>{session.pendingPermission?.summary ?? session.pendingToolCall.name}</pre>
-          <p className="approval-reason">{session.pendingPermission?.reason ?? 'This action needs your approval.'}</p>
-          <div className="approval-actions">
-            <button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission('deny')}>Deny</button>
-            {session.pendingPermission?.canAlwaysAllow && <>
-              <button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission('allow_session')}>Allow for this session</button>
-              <button className="button-quiet" disabled={permissionBusy} onClick={() => onPermission('always_allow_for_project')}>Always allow for this project</button>
-            </>}
-            <button className="button-primary" disabled={permissionBusy} onClick={() => onPermission('allow_once')}>{permissionBusy ? 'Applying…' : 'Allow once'}</button>
-          </div>
-          {!session.pendingPermission?.canAlwaysAllow && <small className="approval-scrutiny-note">This action will be reviewed again if requested later.</small>}
-        </div>
-      </div>}
+      {pendingPrompt && <article className="timeline-user is-pending" aria-label="Message being sent"><div className="timeline-user-mark"><UserRound size={14} /></div><div className="timeline-user-content"><div className="timeline-meta"><strong>You</strong><span className="timeline-pending-label">Sending</span></div><MarkdownMessage content={pendingPrompt} /></div></article>}
+      {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span></div>}
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
-      {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span><span className="working-dots"><i /><i /><i /></span></div>}
       {interfaceMode === 'simple' ? <>
         {session?.activityEvents.filter(event => event.kind === 'task_overlap_warning').map(event => <div className="agent-activity-summary is-task-overlap-warning" key={event.id}><AlertTriangle size={12} /><span>{event.summary}</span><time dateTime={event.createdAt}>{formatTime(event.createdAt)}</time></div>)}
         {!!session?.activityEvents.filter(event => ['file_inspected', 'search_performed', 'command_executed', 'file_edited', 'test_run', 'context_compacted', 'decision_advisory', 'jev_recovery_hint', 'jev_scope_warning', 'focus_baseline'].includes(event.kind)).length && <details className="simple-activity-summary"><summary><CircleDot size={12} />Activity details<ChevronDown size={12} /></summary>
@@ -80,29 +99,54 @@ export function Conversation({
         ))}
       {streamingText && <article className="timeline-agent is-streaming"><div className="timeline-agent-mark"><Brand /></div><div className="timeline-agent-content"><div className="timeline-meta"><strong>JevCode</strong><span className="streaming-label"><i />Streaming</span></div><MarkdownMessage className="agent-prose" content={streamingText} /></div></article>}
       {session?.status === 'failed' && session.error && <div className="task-error-state" role="alert"><AlertCircle size={16} /><div><strong>The task stopped</strong><p>{session.error}</p><button onClick={onRetry}>Retry this request</button></div></div>}
-      {session?.status === 'completed' && !demo && session.workingContext.completionReview && <CompletionReviewCard review={session.workingContext.completionReview} onReviewFile={onReviewFile} onViewTest={focusToolResult} />}
-      {session?.status === 'completed' && !demo && review?.files.length ? <section className="task-change-summary" aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
+      {session?.status === 'completed' && !demo && session.workingContext.completionReview && <CompletionReviewCard review={session.workingContext.completionReview} animate={justFinished} onReviewFile={onReviewFile} onViewTest={focusToolResult} />}
+      {session?.status === 'completed' && !demo && review?.files.length ? <section className={`task-change-summary${justFinished ? ' is-completing' : ''}`} aria-label="Task change summary"><div className="task-change-summary-icon"><FileCode2 size={14} /></div><div className="task-change-summary-copy"><strong>{review.files.length} {review.files.length === 1 ? 'file' : 'files'} changed</strong><span><b>+{review.additions}</b><i>−{review.deletions}</i>{review.testsSummary && <small>{review.testsSummary}</small>}</span><small>Working tree {review.workingTree}</small></div><button onClick={onReviewChanges}>Review changes <ArrowUpRight size={13} /></button></section> : null}
       <div ref={end} />
     </div>}
+    {unseen && <button type="button" className="jump-to-latest" onClick={jumpToLatest}><ArrowDown size={13} /><span>New activity</span></button>}
   </div>;
 }
 
-function CompletionReviewCard({ review, onReviewFile, onViewTest }: { review: NonNullable<AgentSession['workingContext']['completionReview']>; onReviewFile: (path: string) => void; onViewTest: (toolCallId: string) => void }) {
-  return <section className="completion-review-card" aria-label="Task completion checklist">
+/** The approval request is pinned above the composer so it stays visible while the timeline scrolls. */
+export function PermissionRequest({ session, projectName, busy, onPermission }: { session: AgentSession; projectName?: string; busy: boolean; onPermission: (resolution: PermissionResolution) => void }) {
+  const call = session.pendingToolCall;
+  const pending = session.pendingPermission;
+  if (!call) return null;
+  return <div className="approval-card" role="group" aria-labelledby="approval-heading">
+    <div className="approval-icon"><Shield size={17} /></div>
+    <div className="approval-content"><div className="approval-title-row"><h2 id="approval-heading">Permission needed</h2><span className="approval-required">Review before continuing</span></div>
+      <p><strong>{pending?.categories.map(category => category.replaceAll('_', ' ')).join(' · ') ?? call.name}</strong> in <code>{projectName ?? 'this project'}</code></p>
+      <pre>{pending?.summary ?? call.name}</pre>
+      <p className="approval-reason">{pending?.reason ?? 'This action needs your approval.'}</p>
+      <div className="approval-actions">
+        <button className="button-quiet" disabled={busy} onClick={() => onPermission('deny')}>Deny</button>
+        {pending?.canAlwaysAllow && <DisclosureMenu className="approval-more" summary="Allow more…">
+          <div className="approval-more-menu">
+            <button type="button" disabled={busy} onClick={() => onPermission('allow_session')}>Allow for this session</button>
+            <button type="button" disabled={busy} onClick={() => onPermission('always_allow_for_project')}>Always allow for this project</button>
+          </div>
+        </DisclosureMenu>}
+        <button className="button-primary" disabled={busy} onClick={() => onPermission('allow_once')}>{busy ? 'Applying…' : 'Allow once'}</button>
+      </div>
+      {!pending?.canAlwaysAllow && <small className="approval-scrutiny-note">This action will be reviewed again if requested later.</small>}
+    </div>
+  </div>;
+}
+
+function CompletionReviewCard({ review, animate, onReviewFile, onViewTest }: { review: NonNullable<AgentSession['workingContext']['completionReview']>; animate: boolean; onReviewFile: (path: string) => void; onViewTest: (toolCallId: string) => void }) {
+  return <section className={`completion-review-card${animate ? ' is-completing' : ''}`} aria-label="Task completion checklist">
     <header><div><strong>Completion checklist</strong><span>{review.requirements.length} {review.requirements.length === 1 ? 'item' : 'items'} from the original request</span></div><Check size={15} /></header>
     <ol>{review.requirements.map((requirement, index) => <li key={`${index}-${requirement.text}`}>
       <details className="completion-requirement">
         <summary><span className={`completion-assessment is-${requirement.assessment ?? 'unassessed'}`}>{assessmentLabel(requirement.assessment)}</span><span className="completion-requirement-text">{requirement.text}</span><ChevronDown size={12} /></summary>
         <div className="completion-requirement-evidence">
           <p>{review.jevShadowAssessed && requirement.assessment ? 'Jev’s label is a tentative match. Review the task evidence below; file and test results are not automatically treated as proof for this item.' : 'No Jev classification was recorded for this item. Review the task evidence below; it is not automatically treated as proof.'}</p>
-          {!!review.changedFiles.length && <div>{review.changedFiles.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={11} /></button>)}</div>}
-          {!!review.testRuns.length && <div>{review.testRuns.map(run => <button className={`test-evidence is-${run.status}`} key={run.toolCallId} onClick={() => onViewTest(run.toolCallId)}>{run.label}: {testStatusLabel(run.status)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}<ArrowUpRight size={11} /></button>)}</div>}
-          {!review.changedFiles.length && !review.testRuns.length && <small>No file changes or test runs were recorded as evidence.</small>}
+          <button type="button" className="completion-evidence-link" onClick={focusEvidence}>See task evidence<ArrowUpRight size={11} /></button>
         </div>
       </details>
     </li>)}</ol>
     {review.omittedRequirementCount > 0 && <p className="completion-review-note">{review.omittedRequirementCount} additional request items were not individually listed.</p>}
-    <div className="completion-evidence">
+    <div className="completion-evidence" id="completion-evidence">
       <strong>Task evidence</strong>
       <div className="completion-evidence-row"><span>Files changed</span>{review.changedFiles.length ? <div>{review.changedFiles.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={11} /></button>)}</div> : <small>No task-scoped file changes recorded.</small>}</div>
       <div className="completion-evidence-row"><span>Test runs</span>{review.testRuns.length ? <div>{review.testRuns.map(run => <button className={`test-evidence is-${run.status}`} key={run.toolCallId} onClick={() => onViewTest(run.toolCallId)}>{run.label}: {testStatusLabel(run.status)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}<ArrowUpRight size={11} /></button>)}</div> : <small>No test run was recorded.</small>}</div>
@@ -111,11 +155,15 @@ function CompletionReviewCard({ review, onReviewFile, onViewTest }: { review: No
   </section>;
 }
 
+function focusEvidence() {
+  document.getElementById('completion-evidence')?.scrollIntoView({ behavior: scrollBehavior('smooth'), block: 'center' });
+}
+
 function focusToolResult(toolCallId: string) {
   const result = document.getElementById(`tool-result-${toolCallId}`);
   if (!(result instanceof HTMLDetailsElement)) return;
   result.open = true;
-  result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  result.scrollIntoView({ behavior: scrollBehavior('smooth'), block: 'center' });
 }
 
 function assessmentLabel(assessment: NonNullable<AgentSession['workingContext']['completionReview']>['requirements'][number]['assessment']) {
