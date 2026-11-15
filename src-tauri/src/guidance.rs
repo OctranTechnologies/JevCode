@@ -228,7 +228,9 @@ pub fn against_task(
     let mut sources: Vec<EffectiveContextSource> = recorded
         .iter()
         .map(|source| {
-            let change = (source.status != TaskContextStatus::Skipped).then(|| {
+            // An invoked skill's text is pinned when it is invoked, so it is not compared with the folder.
+            let pinned = source.scope == TaskContextScope::Skill;
+            let change = (source.status != TaskContextStatus::Skipped && !pinned).then(|| {
                 match current
                     .sources
                     .iter()
@@ -651,5 +653,31 @@ mod tests {
             texts(&overridden),
             ["repository", "packages", "override app", "app claude"]
         );
+    }
+
+    #[test]
+    fn an_invoked_skill_stays_pinned_to_what_was_invoked() {
+        let repo = monorepo();
+        let app = repo.path().join("packages/app");
+        let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
+        let skill = TaskContextSource {
+            path: ".agents/skills/review/SKILL.md".into(),
+            scope: TaskContextScope::Skill,
+            status: TaskContextStatus::Included,
+            summary: "Invoked by the user. Version 1.".into(),
+            bytes: 120,
+            secret_lines: Vec::new(),
+            fingerprint: Some("pinned".into()),
+            globs: Vec::new(),
+        };
+
+        let view = against_task(&[skill], &now);
+        let recorded = view
+            .sources
+            .iter()
+            .find(|item| item.source.path == ".agents/skills/review/SKILL.md")
+            .unwrap();
+
+        assert_eq!(recorded.change, None);
     }
 }
