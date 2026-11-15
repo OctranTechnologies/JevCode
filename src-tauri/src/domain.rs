@@ -290,6 +290,40 @@ impl TaskMode {
     }
 }
 
+/// Where a piece of task guidance came from. Folders are the opened folder
+/// (`folder`) or a folder between the repository root and it (`ancestor`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskContextScope {
+    Settings,
+    Ancestor,
+    Folder,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskContextStatus {
+    Included,
+    Skipped,
+}
+
+/// Guidance resolved when a task started. It records metadata only: the text
+/// itself is part of the task's first system message, and the fingerprint lets
+/// the inspector report whether the file has changed since.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskContextSource {
+    pub path: String,
+    pub scope: TaskContextScope,
+    pub status: TaskContextStatus,
+    pub summary: String,
+    pub bytes: u64,
+    #[serde(default)]
+    pub secret_lines: Vec<u32>,
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
@@ -340,6 +374,8 @@ pub struct AgentSession {
     pub working_context: WorkingContext,
     #[serde(default)]
     pub project_instruction_files: Vec<String>,
+    #[serde(default)]
+    pub context_sources: Vec<TaskContextSource>,
 }
 
 /// Durable, user-visible task context. It contains summaries of observable

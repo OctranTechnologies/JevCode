@@ -1164,6 +1164,7 @@ mod tests {
             worktree_path: None,
             working_context: Default::default(),
             project_instruction_files: vec![],
+            context_sources: vec![],
         };
         database.save_session(&session).unwrap();
         session

@@ -681,6 +681,7 @@ mod tests {
             worktree_path: Some(path.to_string_lossy().into_owned()),
             working_context: WorkingContext::default(),
             project_instruction_files: vec![],
+            context_sources: vec![],
         }
     }
 

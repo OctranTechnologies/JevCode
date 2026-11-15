@@ -177,6 +177,17 @@ export interface AgentSession {
   worktreePath: string | null;
   workingContext: WorkingContext;
   projectInstructionFiles: string[];
+  contextSources: TaskContextSource[];
+}
+/** Guidance resolved when the task started. Text is in the task's first system message, not here. */
+export interface TaskContextSource {
+  path: string;
+  scope: 'settings' | 'ancestor' | 'folder';
+  status: 'included' | 'skipped';
+  summary: string;
+  bytes: number;
+  secretLines: number[];
+  fingerprint: string | null;
 }
 /** Durable summaries of visible task context; private model reasoning is never stored. */
 export interface WorkingContext {

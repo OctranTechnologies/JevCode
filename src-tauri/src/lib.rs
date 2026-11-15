@@ -9,6 +9,7 @@ pub mod domain;
 mod error;
 mod extensions;
 mod git;
+mod guidance;
 mod mcp;
 mod permissions;
 mod persistence;

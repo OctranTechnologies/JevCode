@@ -376,7 +376,7 @@ fn add_text_file(
         Ok(text) => text,
         Err(reason) => {
             let summary = match (loaded, reason.as_str()) {
-                (true, NOT_UTF8) => "Not UTF-8 text. New tasks in this project fail to start until it is fixed or removed.".to_owned(),
+                (true, NOT_UTF8) => "Not UTF-8 text. It is skipped when a task starts, and the rest of the guidance still loads.".to_owned(),
                 (true, _) => format!("{reason} It is not included in new tasks."),
                 (false, _) => reason,
             };

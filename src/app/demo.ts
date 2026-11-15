@@ -74,6 +74,7 @@ export const demoSession: AgentSession = {
   archivedAt: null, gitBranch: 'feat/path-safety', workspaceMode: 'direct', baseBranch: null, worktreePath: null,
   workingContext: { objective: 'Centralize project path validation and cover the edge cases. Keep the current behavior for valid paths.', decisions: [], repositoryFacts: [], implementationState: '', outstandingTasks: [], protectedInstructions: [], compactedThrough: null, compactedTurns: 0, completionReview: null, stage1StallSignalEmitted: false, stage1ScopeCheckedPaths: [], stage2FocusBaselineEmitted: false },
   projectInstructionFiles: [],
+  contextSources: [],
 };
 
 export const demoChanges = [

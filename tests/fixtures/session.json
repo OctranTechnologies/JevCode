@@ -37,5 +37,6 @@
     "stage1ScopeCheckedPaths": [],
     "stage2FocusBaselineEmitted": false
   },
-  "projectInstructionFiles": []
+  "projectInstructionFiles": [],
+  "contextSources": []
 }

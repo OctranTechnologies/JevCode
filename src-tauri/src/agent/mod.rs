@@ -2994,6 +2994,7 @@ mod tests {
             worktree_path: None,
             working_context: WorkingContext::default(),
             project_instruction_files: vec![],
+            context_sources: vec![],
         };
         state.database.save_session(&session).unwrap();
         (state, project, session)
@@ -3815,6 +3816,7 @@ mod tests {
             worktree_path: None,
             working_context: Default::default(),
             project_instruction_files: vec![],
+            context_sources: vec![],
         };
         for index in 0..10 {
             session.messages.push(AgentMessage::text(
