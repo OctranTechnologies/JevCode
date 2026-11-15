@@ -362,6 +362,8 @@ body.is-resizing-pane .workbench { transition: none; }
 .composer-send-button:disabled { color: var(--wb-muted); background: var(--wb-border); border-color: var(--wb-border); opacity: .72; }
 .composer-stop-button { color: var(--wb-ink); background: var(--wb-surface); border-color: var(--wb-border-strong); }
 .composer-stop-button:hover { background: var(--wb-danger-soft); color: var(--wb-danger); }
+/* Send and Stop share one footprint so swapping them does not move the toolbar. */
+.composer-send-button, .composer-stop-button { min-width: 92px; }
 .composer-footnote { display: flex; align-items: center; gap: 6px; min-height: 20px; padding: 4px 3px 0; color: var(--wb-muted); font-size: 11px; }
 .auth-route-indicator { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; padding: 2px 6px; border: 1px solid var(--wb-border); border-radius: 0; color: var(--wb-accent); font-size: 11px; font-weight: 600; line-height: 1.2; }
 .privacy-dot { width: 5px; height: 5px; background: var(--wb-accent); border-radius: 50%; }
@@ -1742,6 +1744,9 @@ body.is-resizing-pane .workbench { transition: none; }
 @keyframes reveal-in { from { opacity: 0; transform: translateY(8px); } }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes popover-in { from { opacity: 0; transform: scale(.97); } }
+/* Replacement symbols and buttons fade in over the old state, so the change reads as one gesture. */
+@keyframes swap-in { from { opacity: 0; transform: scale(.8); } }
+.swap-in { display: inline-flex; animation: swap-in 120ms var(--motion-out) backwards; }
 @keyframes undo-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .approval-card { animation: reveal-in 250ms var(--motion-out) both; }
 .completion-review-card.is-completing { animation: reveal-in 250ms var(--motion-out) both; }
@@ -1783,6 +1788,7 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .code-block { position: relative; }
 .code-copy-button { position: absolute; top: 6px; right: 6px; z-index: 1; display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 0 7px; color: var(--wb-muted-strong); font-size: 11px; background: var(--wb-surface); border: 1px solid var(--wb-border); }
 .code-copy-button:hover { color: var(--wb-ink); background: var(--wb-surface-quiet); }
+.code-copy-button { min-width: 78px; justify-content: center; }
 
 /* Composer grows with the draft, up to 40% of the viewport */
 .workspace-composer textarea { field-sizing: content; max-height: 40vh; }

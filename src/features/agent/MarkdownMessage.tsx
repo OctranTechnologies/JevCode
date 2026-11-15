@@ -21,7 +21,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
     } catch { /* The clipboard can be unavailable in some webviews; the code stays selectable. */ }
   }
   return <div className="code-block">
-    <button type="button" className="code-copy-button" onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />}<span>{copied ? 'Copied' : 'Copy'}</span></button>
+    <button type="button" className="code-copy-button" onClick={copy}><span key={copied ? 'copied' : 'copy'} className={copied ? 'swap-in' : undefined}>{copied ? <Check size={12} /> : <Copy size={12} />}</span><span>{copied ? 'Copied' : 'Copy'}</span></button>
     <pre>{children}</pre>
   </div>;
 }

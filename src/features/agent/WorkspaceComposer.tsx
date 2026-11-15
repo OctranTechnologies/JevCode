@@ -66,7 +66,7 @@ export function WorkspaceComposer({
         </div>
         <div className="composer-controls-right">
           <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked || sending} compact openRequest={modelPickerOpenRequest} onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />
-          {busy ? <button type="button" className="composer-stop-button" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button> : <button type="submit" className="composer-send-button" disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open JevCode desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button>}
+          {busy ? <button type="button" className="composer-stop-button swap-in" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button> : <button type="submit" className="composer-send-button swap-in"disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open JevCode desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button>}
         </div>
       </div>
     </form>
