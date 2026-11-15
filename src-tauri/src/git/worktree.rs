@@ -682,6 +682,7 @@ mod tests {
             working_context: WorkingContext::default(),
             project_instruction_files: vec![],
             context_sources: vec![],
+            context_resolver_version: crate::guidance::RESOLVER_VERSION,
         }
     }
 

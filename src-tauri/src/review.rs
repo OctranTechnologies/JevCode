@@ -1166,6 +1166,7 @@ mod tests {
             working_context: Default::default(),
             project_instruction_files: vec![],
             context_sources: vec![],
+            context_resolver_version: crate::guidance::RESOLVER_VERSION,
         };
         database.save_session(&session).unwrap();
         session

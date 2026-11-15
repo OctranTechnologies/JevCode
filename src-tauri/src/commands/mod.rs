@@ -626,10 +626,7 @@ pub fn effective_context(
                     "That task belongs to another project.",
                 ));
             }
-            Ok(crate::guidance::against_task(
-                &session.context_sources,
-                &current,
-            ))
+            Ok(crate::guidance::against_task(&session, &current))
         }
     }
 }
@@ -1462,6 +1459,7 @@ pub async fn create_session(
         working_context: WorkingContext::default(),
         project_instruction_files: instruction_files,
         context_sources,
+        context_resolver_version: crate::guidance::RESOLVER_VERSION,
     };
     if let Err(error) = state.database.save_session(&session) {
         if let (Some(repository_root), Some(worktree_path)) = (
@@ -1947,6 +1945,7 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
         },
         project_instruction_files: source.project_instruction_files,
         context_sources: source.context_sources,
+        context_resolver_version: source.context_resolver_version,
     };
     state.database.save_session(&session)?;
     Ok(session)

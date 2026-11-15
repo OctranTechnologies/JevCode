@@ -76,6 +76,7 @@ export const demoSession: AgentSession = {
   workingContext: { objective: 'Centralize project path validation and cover the edge cases. Keep the current behavior for valid paths.', decisions: [], repositoryFacts: [], implementationState: '', outstandingTasks: [], protectedInstructions: [], compactedThrough: null, compactedTurns: 0, completionReview: null, stage1StallSignalEmitted: false, stage1ScopeCheckedPaths: [], stage2FocusBaselineEmitted: false },
   projectInstructionFiles: [],
   contextSources: [],
+  contextResolverVersion: 1,
 };
 
 export const demoChanges = [

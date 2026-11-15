@@ -62,6 +62,7 @@ export function EffectiveContextView({ projectId, sessionId }: { projectId?: str
       <p className="effective-context-budget">
         <span>{formatBytes(view.usedBytes)} of {formatBytes(view.budgetBytes)}</span>
         <span>≈ {Math.ceil(view.usedBytes / 4).toLocaleString()} tokens</span>
+        {view.resolverVersion > 0 && <span title="Version of the rules that chose these sources">Rules v{view.resolverVersion}</span>}
       </p>
       {view.sources.length === 0
         ? <p className="effective-context-empty">No guidance files or settings apply to this folder.</p>

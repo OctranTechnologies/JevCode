@@ -38,5 +38,6 @@
     "stage2FocusBaselineEmitted": false
   },
   "projectInstructionFiles": [],
-  "contextSources": []
+  "contextSources": [],
+  "contextResolverVersion": 0
 }

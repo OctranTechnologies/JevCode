@@ -3014,6 +3014,7 @@ mod tests {
             working_context: WorkingContext::default(),
             project_instruction_files: vec![],
             context_sources: vec![],
+            context_resolver_version: crate::guidance::RESOLVER_VERSION,
         };
         state.database.save_session(&session).unwrap();
         (state, project, session)
@@ -4027,6 +4028,7 @@ mod tests {
             working_context: Default::default(),
             project_instruction_files: vec![],
             context_sources: vec![],
+            context_resolver_version: crate::guidance::RESOLVER_VERSION,
         };
         for index in 0..10 {
             session.messages.push(AgentMessage::text(

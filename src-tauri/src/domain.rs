@@ -354,6 +354,8 @@ pub struct EffectiveContext {
     pub basis: EffectiveContextBasis,
     pub budget_bytes: u64,
     pub used_bytes: u64,
+    /// The guidance rules version that chose these sources.
+    pub resolver_version: u32,
     pub sources: Vec<EffectiveContextSource>,
 }
 
@@ -435,6 +437,10 @@ pub struct AgentSession {
     pub project_instruction_files: Vec<String>,
     #[serde(default)]
     pub context_sources: Vec<TaskContextSource>,
+    /// The guidance rules version that chose `context_sources`. Zero for tasks
+    /// recorded before versions were stored.
+    #[serde(default)]
+    pub context_resolver_version: u32,
 }
 
 /// Durable, user-visible task context. It contains summaries of observable

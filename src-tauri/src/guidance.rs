@@ -8,8 +8,8 @@
 use crate::{
     context_migration::{preview, secret_line_numbers},
     domain::{
-        EffectiveContext, EffectiveContextBasis, EffectiveContextSource, GuidancePrecedence,
-        SourceChange, TaskContextScope, TaskContextSource, TaskContextStatus,
+        AgentSession, EffectiveContext, EffectiveContextBasis, EffectiveContextSource,
+        GuidancePrecedence, SourceChange, TaskContextScope, TaskContextSource, TaskContextStatus,
     },
     error::{AppError, AppResult},
     workspaces::MAX_INSTRUCTION_BYTES,
@@ -21,6 +21,11 @@ use std::path::{Path, PathBuf};
 /// later. Small-context models must still fit system instructions, so this stays
 /// well under their window.
 pub const MAX_TASK_GUIDANCE_BYTES: u64 = 80 * 1024;
+
+/// Version of the rules that choose guidance files and label their sources. A
+/// task records the version it was resolved with, so its snapshot can still be
+/// read after these rules change. Tasks recorded before versions existed read as zero.
+pub const RESOLVER_VERSION: u32 = 1;
 
 pub struct ResolvedGuidance {
     pub sources: Vec<TaskContextSource>,
@@ -213,6 +218,7 @@ pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
         basis: EffectiveContextBasis::Preview,
         budget_bytes: MAX_TASK_GUIDANCE_BYTES,
         used_bytes: included_bytes(&resolved.sources),
+        resolver_version: RESOLVER_VERSION,
         sources,
     }
 }
@@ -221,10 +227,8 @@ pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
 /// Sources that changed, disappeared, or stopped being readable are reported,
 /// and guidance that appeared since the task started is listed as added.
 /// Pending and activated sources are compared the same way.
-pub fn against_task(
-    recorded: &[TaskContextSource],
-    current: &ResolvedGuidance,
-) -> EffectiveContext {
+pub fn against_task(session: &AgentSession, current: &ResolvedGuidance) -> EffectiveContext {
+    let recorded = &session.context_sources;
     let mut sources: Vec<EffectiveContextSource> = recorded
         .iter()
         .map(|source| {
@@ -268,6 +272,7 @@ pub fn against_task(
         basis: EffectiveContextBasis::Task,
         budget_bytes: MAX_TASK_GUIDANCE_BYTES,
         used_bytes: included_bytes(recorded),
+        resolver_version: session.context_resolver_version,
         sources,
     }
 }
@@ -392,6 +397,14 @@ mod tests {
             .iter()
             .map(|section| section.text.as_str())
             .collect()
+    }
+
+    /// A task whose recorded guidance is `sources`, built from the shared wire fixture.
+    fn recorded_session(sources: Vec<TaskContextSource>) -> AgentSession {
+        let mut session: AgentSession =
+            serde_json::from_str(include_str!("../../tests/fixtures/session.json")).unwrap();
+        session.context_sources = sources;
+        session
     }
 
     fn reported<'a>(resolved: &'a ResolvedGuidance, path: &str) -> &'a TaskContextSource {
@@ -579,7 +592,7 @@ mod tests {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
         let at_start = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
-        let recorded = at_start.sources.clone();
+        let recorded = recorded_session(at_start.sources.clone());
 
         write(repo.path(), "AGENTS.md", b"repository, revised");
         fs::remove_file(app.join("CLAUDE.md")).unwrap();
@@ -610,13 +623,34 @@ mod tests {
     }
 
     #[test]
+    fn tasks_report_the_resolver_version_they_were_recorded_with() {
+        let repo = monorepo();
+        let app = repo.path().join("packages/app");
+        let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
+        assert_eq!(
+            preview_for_new_task(&now).resolver_version,
+            RESOLVER_VERSION
+        );
+
+        // The shared fixture records version zero, as tasks from before versions did.
+        let mut session = recorded_session(now.sources.clone());
+        assert_eq!(against_task(&session, &now).resolver_version, 0);
+
+        session.context_resolver_version = RESOLVER_VERSION;
+        assert_eq!(
+            against_task(&session, &now).resolver_version,
+            RESOLVER_VERSION
+        );
+    }
+
+    #[test]
     fn an_unchanged_task_reports_no_changes() {
         let repo = monorepo();
         let app = repo.path().join("packages/app");
         let at_start = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
-        let view = against_task(&at_start.sources, &now);
+        let view = against_task(&recorded_session(at_start.sources.clone()), &now);
         assert!(view
             .sources
             .iter()
@@ -671,7 +705,7 @@ mod tests {
             globs: Vec::new(),
         };
 
-        let view = against_task(&[skill], &now);
+        let view = against_task(&recorded_session(vec![skill]), &now);
         let recorded = view
             .sources
             .iter()
