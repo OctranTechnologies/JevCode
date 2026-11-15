@@ -2,6 +2,7 @@ import { ArrowUp, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizon
 import type { ReactNode } from 'react';
 import type { ModelPreferences, ModelReference, Provider, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
+import { DisclosureMenu } from '../../components/DisclosureMenu';
 
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
@@ -56,13 +57,12 @@ export function WorkspaceComposer({
       <div className="composer-toolbar">
         <div className="composer-tool-actions">
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
-          <details className="composer-options-menu">
-            <summary><SlidersHorizontal size={14} /><span>Options</span>{mode === 'plan' && <span className="task-option-badge">Plan first</span>}{!includeProject && <span className="task-option-badge">No project context</span>}<ChevronDown size={12} /></summary>
+          <DisclosureMenu className="composer-options-menu" summary={<><SlidersHorizontal size={14} /><span>Options</span>{mode === 'plan' && <span className="task-option-badge">Plan first</span>}{!includeProject && <span className="task-option-badge">No project context</span>}<ChevronDown size={12} /></>}>
             <div className="composer-options-popover">
               <label className="composer-option-row"><span><strong>Task approach</strong><small>Choose whether JevCode plans before acting.</small></span><select value={mode} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task approach"><option value="agent">Agent</option><option value="plan">Plan first</option></select></label>
               <label className="composer-option-row composer-context-toggle"><span><strong>Project context</strong><small>Allow this task to inspect project files.</small></span><input type="checkbox" checked={includeProject} disabled={sessionLocked} onChange={event => setIncludeProject(event.target.checked)} /></label>
             </div>
-          </details>
+          </DisclosureMenu>
         </div>
         <div className="composer-controls-right">
           <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked || sending} compact openRequest={modelPickerOpenRequest} onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />

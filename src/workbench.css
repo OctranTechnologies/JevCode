@@ -1759,11 +1759,15 @@ details.activity-result::details-content, details.simple-activity-summary::detai
 }
 details.activity-result[open]::details-content, details.simple-activity-summary[open]::details-content, details.completion-requirement[open]::details-content { block-size: auto; }
 @keyframes check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
-.permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover, .approval-more-menu { animation: popover-in 120ms var(--motion-out) both; }
-/* Each popover grows from the edge nearest its trigger. */
-.permission-popover, .task-options-popover { transform-origin: top right; }
-.composer-options-popover, .model-picker-popover { transform-origin: top left; }
-.approval-more-menu { transform-origin: bottom right; }
+.model-picker-popover { animation: popover-in 120ms var(--motion-out) both; }
+/* Disclosure menus take their side from data-placement and fade and scale from their trigger edge. Closing transitions out,
+   so a reopen reverses from wherever the panel is; opening starts from @starting-style. */
+.disclosure-menu[data-placement='below'] > :not(summary) { top: calc(100% + 7px); bottom: auto; }
+.disclosure-menu[data-placement='above'] > :not(summary) { top: auto; bottom: calc(100% + 7px); }
+.disclosure-menu > :not(summary) { transition: opacity 120ms var(--motion-out), transform 120ms var(--motion-out); }
+.disclosure-menu[data-state='open'] > :not(summary) { opacity: 1; transform: none; transition-duration: 150ms; }
+.disclosure-menu[data-state='closed'] > :not(summary) { opacity: 0; transform: scale(.97); }
+@starting-style { .disclosure-menu[data-state='open'] > :not(summary) { opacity: 0; transform: scale(.97); } }
 /* The style guide forbids offset shadows, so popovers separate from the page with the stronger border token. */
 .permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover { border-color: var(--wb-border-strong); }
 .command-palette[open] { animation: fade-in 100ms var(--motion-out) both; }

@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import type { AgentSession, InterfaceMode, Project, WorkspaceMode } from '../../types/domain';
 import { primaryShortcutModifier } from '../../lib/shortcuts';
+import { DisclosureMenu } from '../../components/DisclosureMenu';
 
 export function WorkspaceHeader({
   projects, projectId, project, branch, onProject, session, sidebarCollapsed, onToggleSidebar, inspectorOpen, onToggleInspector,
@@ -34,7 +35,7 @@ export function WorkspaceHeader({
   askReads: boolean;
   onAskReads: (value: boolean) => void;
 }) {
-  const permissionControls = <details className="permission-menu"><summary title="Review tool permissions"><ShieldCheck size={14} /><span>Tool access</span><ChevronDown size={12} /></summary><div className="permission-popover"><strong>Session permissions</strong><p>Reads, edits, Git, commands, and outside-project access follow the project policy.</p><label><input type="checkbox" checked={session ? session.permissionPolicy.readFiles === 'ask' : askReads} disabled={!!session} onChange={event => onAskReads(event.target.checked)} />Ask before reading files</label><small>Change edit, command, and outside-project access in the project overview.</small>{session && <small>Start a new task to change this session's permissions.</small>}</div></details>;
+  const permissionControls = <DisclosureMenu className="permission-menu" summaryTitle="Review tool permissions" summary={<><ShieldCheck size={14} /><span>Tool access</span><ChevronDown size={12} /></>}><div className="permission-popover"><strong>Session permissions</strong><p>Reads, edits, Git, commands, and outside-project access follow the project policy.</p><label><input type="checkbox" checked={session ? session.permissionPolicy.readFiles === 'ask' : askReads} disabled={!!session} onChange={event => onAskReads(event.target.checked)} />Ask before reading files</label><small>Change edit, command, and outside-project access in the project overview.</small>{session && <small>Start a new task to change this session's permissions.</small>}</div></DisclosureMenu>;
   const workspaceControls = <>
     <label className="toolbar-workspace-wrap" title="Choose where this task works">
       <GitBranch size={13} /><span className="sr-only">Task workspace</span>
@@ -60,12 +61,11 @@ export function WorkspaceHeader({
       <span className="branch-indicator" title={branch ? `Git branch ${branch}` : 'Git branch not detected'}><GitBranch size={13} /><span>{branch ?? 'No branch'}</span></span>
     </div>
     <div className="toolbar-actions">
-      {interfaceMode === 'maximum' ? <>{permissionControls}{workspaceControls}</> : <details className="task-options-menu">
-        <summary><SlidersHorizontal size={14} /><span>Task options</span>{workspaceMode === 'isolated' && <span className="task-option-badge">Isolated</span>}<ChevronDown size={12} /></summary>
+      {interfaceMode === 'maximum' ? <>{permissionControls}{workspaceControls}</> : <DisclosureMenu className="task-options-menu" summary={<><SlidersHorizontal size={14} /><span>Task options</span>{workspaceMode === 'isolated' && <span className="task-option-badge">Isolated</span>}<ChevronDown size={12} /></>}>
         <div className="task-options-popover">{permissionControls}{workspaceControls}
           <button type="button" className="task-details-option" onClick={onToggleInspector} aria-pressed={inspectorOpen}><PanelRight size={13} />{inspectorOpen ? 'Hide task details' : 'Show task details'}</button>
         </div>
-      </details>}
+      </DisclosureMenu>}
       <button className="quiet-icon-button toolbar-search" onClick={onSearch} aria-label={`Search projects and tasks, ${primaryShortcutModifier} K`}><Search size={15} /><kbd aria-hidden="true">{primaryShortcutModifier} K</kbd></button>
       {interfaceMode === 'maximum' && <>
         <button className="quiet-icon-button theme-toggle" onClick={onToggleTheme} title={darkMode ? 'Switch to light appearance' : 'Switch to dark appearance'} aria-label={darkMode ? 'Switch to light appearance' : 'Switch to dark appearance'}>{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button>

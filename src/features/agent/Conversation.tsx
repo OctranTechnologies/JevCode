@@ -4,6 +4,7 @@ import {
   LoaderCircle, Shield, Sparkles, Terminal, UserRound,
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
+import { DisclosureMenu } from '../../components/DisclosureMenu';
 import { MarkdownMessage } from './MarkdownMessage';
 import { scrollBehavior } from '../../lib/motion';
 import type { AgentSession, AgentMessage, InterfaceMode, PermissionResolution, SessionChanges } from '../../types/domain';
@@ -119,13 +120,12 @@ export function PermissionRequest({ session, projectName, busy, onPermission }: 
       <p className="approval-reason">{pending?.reason ?? 'This action needs your approval.'}</p>
       <div className="approval-actions">
         <button className="button-quiet" disabled={busy} onClick={() => onPermission('deny')}>Deny</button>
-        {pending?.canAlwaysAllow && <details className="approval-more">
-          <summary>Allow more…</summary>
+        {pending?.canAlwaysAllow && <DisclosureMenu className="approval-more" summary="Allow more…">
           <div className="approval-more-menu">
             <button type="button" disabled={busy} onClick={() => onPermission('allow_session')}>Allow for this session</button>
             <button type="button" disabled={busy} onClick={() => onPermission('always_allow_for_project')}>Always allow for this project</button>
           </div>
-        </details>}
+        </DisclosureMenu>}
         <button className="button-primary" disabled={busy} onClick={() => onPermission('allow_once')}>{busy ? 'Applying…' : 'Allow once'}</button>
       </div>
       {!pending?.canAlwaysAllow && <small className="approval-scrutiny-note">This action will be reviewed again if requested later.</small>}
