@@ -1143,6 +1143,7 @@ body.is-resizing-pane .workbench { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
   button:active { transform: none !important; }
+  details::details-content { transition: none !important; }
 }
 
 .workspace-offline-banner { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 34px; padding: 7px 16px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border-bottom: 1px solid var(--wb-border); font-size: 11px; }
@@ -1750,6 +1751,12 @@ body.is-resizing-pane .workbench { transition: none; }
 .completion-review-card.is-completing { animation: reveal-in 250ms var(--motion-out) both; }
 .completion-review-card.is-completing > header > svg path { stroke-dasharray: 24; animation: check-draw 300ms var(--motion-out) 100ms both; }
 .task-change-summary.is-completing { animation: fade-in 250ms var(--motion-out) 150ms both; }
+/* Disclosures ease open and closed where ::details-content is supported; elsewhere they snap. Menus are excluded because they are popovers. */
+:root { interpolate-size: allow-keywords; }
+details.activity-result::details-content, details.simple-activity-summary::details-content, details.completion-requirement::details-content {
+  block-size: 0; overflow: hidden; transition: block-size 200ms var(--motion-out), content-visibility 200ms allow-discrete;
+}
+details.activity-result[open]::details-content, details.simple-activity-summary[open]::details-content, details.completion-requirement[open]::details-content { block-size: auto; }
 @keyframes check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
 .permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover, .approval-more-menu { animation: popover-in 120ms var(--motion-out) both; }
 /* Each popover grows from the edge nearest its trigger. */
