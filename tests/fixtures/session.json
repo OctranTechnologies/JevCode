@@ -39,5 +39,6 @@
   },
   "projectInstructionFiles": [],
   "contextSources": [],
-  "contextResolverVersion": 0
+  "contextResolverVersion": 0,
+  "contextRoot": "project"
 }

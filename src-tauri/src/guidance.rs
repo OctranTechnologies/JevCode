@@ -9,7 +9,8 @@ use crate::{
     context_migration::{preview, secret_line_numbers},
     domain::{
         AgentSession, EffectiveContext, EffectiveContextBasis, EffectiveContextSource,
-        GuidancePrecedence, SourceChange, TaskContextScope, TaskContextSource, TaskContextStatus,
+        GuidancePrecedence, GuidanceRoot, SourceChange, TaskContextScope, TaskContextSource,
+        TaskContextStatus, WorkspaceMode,
     },
     error::{AppError, AppResult},
     workspaces::MAX_INSTRUCTION_BYTES,
@@ -192,6 +193,63 @@ pub(crate) fn display_base(project_root: &Path, repository_root: Option<&Path>) 
         .unwrap_or(project)
 }
 
+/// Where a task reads its guidance: the folder its tools work in, the directory
+/// that bounds the lookup and labels every path, and which kind of directory that is.
+pub struct GuidanceLocation {
+    pub folder: PathBuf,
+    pub repository: PathBuf,
+    pub root: GuidanceRoot,
+}
+
+/// An isolated task reads the opened folder inside its own workspace, so its
+/// guidance matches the files it edits. Other tasks read the opened folder.
+pub async fn location(
+    project_path: &Path,
+    repository_root: Option<&Path>,
+    workspace: Option<&Path>,
+) -> AppResult<GuidanceLocation> {
+    let Some(workspace) = workspace else {
+        return Ok(GuidanceLocation {
+            folder: project_path.to_path_buf(),
+            repository: display_base(project_path, repository_root),
+            root: GuidanceRoot::Project,
+        });
+    };
+    let repository_root = repository_root.ok_or_else(|| {
+        AppError::new(
+            "not_git_repository",
+            "Isolated workspaces need a Git repository.",
+        )
+    })?;
+    let folder =
+        crate::git::worktree::project_path(repository_root, project_path, workspace).await?;
+    Ok(GuidanceLocation {
+        folder,
+        repository: workspace_base(workspace),
+        root: GuidanceRoot::TaskWorkspace,
+    })
+}
+
+/// The directory a task's guidance paths are relative to when scoped guidance is
+/// activated. Isolated tasks use their workspace root, the same base their
+/// guidance was labelled from when they started.
+pub(crate) fn repository_base(
+    session: &AgentSession,
+    project_path: &Path,
+    repository_root: Option<&Path>,
+) -> PathBuf {
+    match session.worktree_path.as_deref() {
+        Some(workspace) if session.workspace_mode == WorkspaceMode::Isolated => {
+            workspace_base(Path::new(workspace))
+        }
+        _ => display_base(project_path, repository_root),
+    }
+}
+
+fn workspace_base(workspace: &Path) -> PathBuf {
+    std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf())
+}
+
 /// What a new task would send right now, with secret lines masked in the previews.
 pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
     let sources = resolved
@@ -219,6 +277,7 @@ pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
         budget_bytes: MAX_TASK_GUIDANCE_BYTES,
         used_bytes: included_bytes(&resolved.sources),
         resolver_version: RESOLVER_VERSION,
+        root: GuidanceRoot::Project,
         sources,
     }
 }
@@ -226,25 +285,32 @@ pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
 /// Compares what a task recorded when it started with the files as they are now.
 /// Sources that changed, disappeared, or stopped being readable are reported,
 /// and guidance that appeared since the task started is listed as added.
-/// Pending and activated sources are compared the same way.
-pub fn against_task(session: &AgentSession, current: &ResolvedGuidance) -> EffectiveContext {
+/// Pending and activated sources are compared the same way. Without `current`,
+/// the task's workspace no longer exists, so its sources are listed unchanged.
+pub fn against_task(
+    session: &AgentSession,
+    current: Option<&ResolvedGuidance>,
+) -> EffectiveContext {
     let recorded = &session.context_sources;
     let mut sources: Vec<EffectiveContextSource> = recorded
         .iter()
         .map(|source| {
             // An invoked skill's text is pinned when it is invoked, so it is not compared with the folder.
             let pinned = source.scope == TaskContextScope::Skill;
-            let change = (source.status != TaskContextStatus::Skipped && !pinned).then(|| {
-                match current
-                    .sources
-                    .iter()
-                    .find(|now| now.path == source.path && now.status != TaskContextStatus::Skipped)
-                {
-                    Some(now) if now.fingerprint == source.fingerprint => SourceChange::Unchanged,
-                    Some(_) => SourceChange::Changed,
-                    None => SourceChange::Removed,
-                }
-            });
+            let change = match current {
+                Some(current) if source.status != TaskContextStatus::Skipped && !pinned => Some(
+                    match current.sources.iter().find(|now| {
+                        now.path == source.path && now.status != TaskContextStatus::Skipped
+                    }) {
+                        Some(now) if now.fingerprint == source.fingerprint => {
+                            SourceChange::Unchanged
+                        }
+                        Some(_) => SourceChange::Changed,
+                        None => SourceChange::Removed,
+                    },
+                ),
+                _ => None,
+            };
             EffectiveContextSource {
                 source: source.clone(),
                 change,
@@ -252,20 +318,22 @@ pub fn against_task(session: &AgentSession, current: &ResolvedGuidance) -> Effec
             }
         })
         .collect();
-    for now in current
-        .sources
-        .iter()
-        .filter(|now| now.status != TaskContextStatus::Skipped)
-    {
-        let recorded_active = recorded
+    if let Some(current) = current {
+        for now in current
+            .sources
             .iter()
-            .any(|source| source.path == now.path && source.status != TaskContextStatus::Skipped);
-        if !recorded_active {
-            sources.push(EffectiveContextSource {
-                source: now.clone(),
-                change: Some(SourceChange::Added),
-                preview: None,
+            .filter(|now| now.status != TaskContextStatus::Skipped)
+        {
+            let recorded_active = recorded.iter().any(|source| {
+                source.path == now.path && source.status != TaskContextStatus::Skipped
             });
+            if !recorded_active {
+                sources.push(EffectiveContextSource {
+                    source: now.clone(),
+                    change: Some(SourceChange::Added),
+                    preview: None,
+                });
+            }
         }
     }
     EffectiveContext {
@@ -273,6 +341,7 @@ pub fn against_task(session: &AgentSession, current: &ResolvedGuidance) -> Effec
         budget_bytes: MAX_TASK_GUIDANCE_BYTES,
         used_bytes: included_bytes(recorded),
         resolver_version: session.context_resolver_version,
+        root: session.context_root,
         sources,
     }
 }
@@ -600,7 +669,7 @@ mod tests {
         write(repo.path(), "packages/CLAUDE.md", b"new ancestor");
         let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
-        let view = against_task(&recorded, &now);
+        let view = against_task(&recorded, Some(&now));
         let change = |path: &str| {
             view.sources
                 .iter()
@@ -634,13 +703,98 @@ mod tests {
 
         // The shared fixture records version zero, as tasks from before versions did.
         let mut session = recorded_session(now.sources.clone());
-        assert_eq!(against_task(&session, &now).resolver_version, 0);
+        assert_eq!(against_task(&session, Some(&now)).resolver_version, 0);
 
         session.context_resolver_version = RESOLVER_VERSION;
         assert_eq!(
-            against_task(&session, &now).resolver_version,
+            against_task(&session, Some(&now)).resolver_version,
             RESOLVER_VERSION
         );
+    }
+
+    #[test]
+    fn a_task_whose_workspace_is_gone_lists_its_sources_without_changes() {
+        let repo = monorepo();
+        let app = repo.path().join("packages/app");
+        let at_start = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
+
+        let view = against_task(&recorded_session(at_start.sources.clone()), None);
+
+        assert_eq!(view.sources.len(), at_start.sources.len());
+        assert!(view.sources.iter().all(|item| item.change.is_none()));
+    }
+
+    #[test]
+    fn isolated_tasks_label_guidance_from_their_workspace_root() {
+        let repo = monorepo();
+        let workspace = tempfile::tempdir().unwrap();
+        let project = repo.path().join("packages/app");
+        let mut session = recorded_session(vec![]);
+
+        session.workspace_mode = WorkspaceMode::Isolated;
+        session.worktree_path = Some(workspace.path().to_string_lossy().into_owned());
+        assert_eq!(
+            repository_base(&session, &project, Some(repo.path())),
+            std::fs::canonicalize(workspace.path()).unwrap()
+        );
+
+        session.workspace_mode = WorkspaceMode::Direct;
+        session.worktree_path = None;
+        assert_eq!(
+            repository_base(&session, &project, Some(repo.path())),
+            std::fs::canonicalize(repo.path()).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_isolated_task_reads_guidance_from_its_own_workspace() {
+        let temp = tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
+        let repo = temp.path().join("repository");
+        write(&repo, "packages/app/AGENTS.md", b"committed app guidance");
+        git(&repo, &["init", "--quiet"]);
+        git(
+            &repo,
+            &["config", "user.email", "jevcode-test@example.invalid"],
+        );
+        git(&repo, &["config", "user.name", "JevCode Test"]);
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "--quiet", "-m", "guidance"]);
+        let base = git(&repo, &["branch", "--show-current"]);
+        // An uncommitted edit in the opened checkout must not reach the isolated task.
+        write(&repo, "packages/app/AGENTS.md", b"uncommitted app guidance");
+        let workspace = temp.path().join("task-workspace");
+        crate::git::worktree::create(&repo, &workspace, &base, "jevcode/guidance-test")
+            .await
+            .unwrap();
+
+        let located = location(&repo.join("packages/app"), Some(&repo), Some(&workspace))
+            .await
+            .unwrap();
+        let resolved = resolve(
+            &located.folder,
+            Some(&located.repository),
+            "",
+            GuidancePrecedence::Default,
+        )
+        .unwrap();
+
+        assert_eq!(located.root, GuidanceRoot::TaskWorkspace);
+        assert_eq!(included_paths(&resolved), ["packages/app/AGENTS.md"]);
+        assert_eq!(texts(&resolved), ["committed app guidance"]);
+    }
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("Git is required for the isolated guidance test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 
     #[test]
@@ -650,7 +804,7 @@ mod tests {
         let at_start = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
         let now = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
 
-        let view = against_task(&recorded_session(at_start.sources.clone()), &now);
+        let view = against_task(&recorded_session(at_start.sources.clone()), Some(&now));
         assert!(view
             .sources
             .iter()
@@ -705,7 +859,7 @@ mod tests {
             globs: Vec::new(),
         };
 
-        let view = against_task(&recorded_session(vec![skill]), &now);
+        let view = against_task(&recorded_session(vec![skill]), Some(&now));
         let recorded = view
             .sources
             .iter()

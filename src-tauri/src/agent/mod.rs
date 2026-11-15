@@ -925,7 +925,8 @@ impl AgentRuntime {
             checkpoint(state, sink, session)?;
         }
         if !touched.is_empty() {
-            let repository = crate::guidance::display_base(
+            let repository = crate::guidance::repository_base(
+                session,
                 Path::new(&project.path),
                 project.repository_root.as_deref().map(Path::new),
             );
@@ -3015,6 +3016,7 @@ mod tests {
             project_instruction_files: vec![],
             context_sources: vec![],
             context_resolver_version: crate::guidance::RESOLVER_VERSION,
+            context_root: crate::domain::GuidanceRoot::Project,
         };
         state.database.save_session(&session).unwrap();
         (state, project, session)
@@ -4029,6 +4031,7 @@ mod tests {
             project_instruction_files: vec![],
             context_sources: vec![],
             context_resolver_version: crate::guidance::RESOLVER_VERSION,
+            context_root: crate::domain::GuidanceRoot::Project,
         };
         for index in 0..10 {
             session.messages.push(AgentMessage::text(

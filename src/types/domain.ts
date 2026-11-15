@@ -180,6 +180,8 @@ export interface AgentSession {
   contextSources: TaskContextSource[];
   /** Guidance rules version that chose `contextSources`; zero for tasks recorded before versions. */
   contextResolverVersion: number;
+  /** Where `contextSources` were read: the opened folder, or the task's own workspace. */
+  contextRoot: 'project' | 'task_workspace';
 }
 /** Guidance resolved when the task started. Text is in the task's first system message, not here. */
 export interface TaskContextSource {
@@ -244,6 +246,7 @@ export interface EffectiveContext {
   usedBytes: number;
   /** Version of the rules that chose these sources; zero for tasks recorded before versions. */
   resolverVersion: number;
+  root: 'project' | 'task_workspace';
   sources: EffectiveContextSource[];
 }
 /** Durable summaries of visible task context; private model reasoning is never stored. */

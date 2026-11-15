@@ -306,6 +306,16 @@ pub enum TaskContextScope {
     Skill,
 }
 
+/// The directory a task's guidance was read from: the opened folder, or the
+/// task's own isolated workspace, which is where its tools act.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GuidanceRoot {
+    #[default]
+    Project,
+    TaskWorkspace,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskContextStatus {
@@ -356,6 +366,8 @@ pub struct EffectiveContext {
     pub used_bytes: u64,
     /// The guidance rules version that chose these sources.
     pub resolver_version: u32,
+    /// The directory the sources were read from.
+    pub root: GuidanceRoot,
     pub sources: Vec<EffectiveContextSource>,
 }
 
@@ -441,6 +453,10 @@ pub struct AgentSession {
     /// recorded before versions were stored.
     #[serde(default)]
     pub context_resolver_version: u32,
+    /// Where `context_sources` were read from. Tasks recorded before this was
+    /// stored read from the opened folder.
+    #[serde(default)]
+    pub context_root: GuidanceRoot,
 }
 
 /// Durable, user-visible task context. It contains summaries of observable

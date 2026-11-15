@@ -77,6 +77,7 @@ export const demoSession: AgentSession = {
   projectInstructionFiles: [],
   contextSources: [],
   contextResolverVersion: 1,
+  contextRoot: 'project',
 };
 
 export const demoChanges = [
