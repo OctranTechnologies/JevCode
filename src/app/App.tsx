@@ -51,6 +51,7 @@ export default function App() {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<{ text: string; sessionId: string | null } | null>(null);
   const [opening, setOpening] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -493,7 +494,12 @@ export default function App() {
 
   async function send(content = draft) {
     if (!data || !projectId || !content.trim() || busy || sending) return;
+    const sentAttachments = attachments;
+    const clearsDraft = content === draft;
     setSending(true);
+    setPendingPrompt({ text: content.trim(), sessionId: session?.id ?? null });
+    if (clearsDraft) setDraft('');
+    setAttachments([]);
     desktop.setError(null);
     try {
       let active = session;
@@ -516,16 +522,22 @@ export default function App() {
         desktop.dispatch({ type: 'session', session: active });
         updateRecent({ providerId: active.providerId, modelId: active.modelId });
         setSessionId(active.id);
+        const createdId = active.id;
+        setPendingPrompt(current => current && { ...current, sessionId: createdId });
       }
       let prompt = content.trim();
       if (mode === 'plan') prompt += '\n\nPlanning mode: inspect relevant project files and return a clear step-by-step plan. Do not edit files or run commands.';
       if (!includeProject) prompt += '\n\nDo not inspect project files for this task; answer using only the conversation context.';
-      if (attachments.length) prompt += `\n\nPlease use these selected project files as context:\n${attachments.map(path => `- ${path}`).join('\n')}`;
+      if (sentAttachments.length) prompt += `\n\nPlease use these selected project files as context:\n${sentAttachments.map(path => `- ${path}`).join('\n')}`;
       const updated = await command('send_message', { sessionId: active.id, content: prompt });
       desktop.dispatch({ type: 'session', session: updated });
-      setDraft('');
-      setAttachments([]);
-    } catch (error) { desktop.setError(normalizeError(error).message); }
+      setPendingPrompt(null);
+    } catch (error) {
+      setPendingPrompt(null);
+      if (clearsDraft) setDraft(current => current || content);
+      setAttachments(current => current.length ? current : sentAttachments);
+      desktop.setError(normalizeError(error).message);
+    }
     finally { setSending(false); }
   }
 
@@ -677,7 +689,7 @@ export default function App() {
 
       {view === 'agent' ? <>
         <div className="workspace-content">
-          <Conversation session={session} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} />
+          <Conversation session={session} pendingPrompt={pendingPrompt?.sessionId === (session?.id ?? null) ? pendingPrompt.text : undefined} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} />
           <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} contextOpen={contextOpen} setContextOpen={setContextOpen} includeProject={includeProject} setIncludeProject={setIncludeProject} interfaceMode={interfaceMode} lastPrompt={lastPrompt} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>

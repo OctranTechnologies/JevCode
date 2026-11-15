@@ -14,13 +14,15 @@ const suggestions = [
 ];
 
 export function Conversation({
-  session, projectName, demo = false, review, streamingText = '', toolOutput, interfaceMode, onSuggestion, onRetry, onReviewFile, onReviewChanges,
+  session, projectName, demo = false, review, streamingText = '', pendingPrompt, toolOutput, interfaceMode, onSuggestion, onRetry, onReviewFile, onReviewChanges,
 }: {
   session?: AgentSession;
   projectName?: string;
   demo?: boolean;
   review?: SessionChanges | null;
   streamingText?: string;
+  /** The message just sent, shown before the session has been saved with it. */
+  pendingPrompt?: string;
   toolOutput?: Record<string, { stdout: string; stderr: string }>;
   interfaceMode: InterfaceMode;
   onSuggestion: (prompt: string) => void;
@@ -36,9 +38,10 @@ export function Conversation({
   const completedCalls = useMemo(() => new Set(messages.flatMap(message => message.toolResult ? [message.toolResult.toolCallId] : [])), [messages]);
   useEffect(() => { following.current = true; setUnseen(false); }, [session?.id]);
   useEffect(() => {
+    if (pendingPrompt) following.current = true;
     if (!following.current) { setUnseen(true); return; }
     end.current?.scrollIntoView({ behavior: streamingText ? 'auto' : 'smooth', block: 'end' });
-  }, [session?.id, session?.updatedAt, streamingText]);
+  }, [session?.id, session?.updatedAt, streamingText, pendingPrompt]);
 
   function trackScroll() {
     const element = scroller.current;
@@ -56,13 +59,14 @@ export function Conversation({
   return <div className="conversation-scroll" aria-label="Task conversation" ref={scroller} onScroll={trackScroll}>
     {demo && <div className="sample-notice"><Sparkles size={13} /><span><strong>Sample task</strong> · Activity, terminal output, and diff are illustrative. No files were changed.</span></div>}
     {!!session?.projectInstructionFiles.length && <div className="project-guidance-notice"><ShieldCheck size={13} /><span>Project guidance loaded</span><small>{session.projectInstructionFiles.join(' · ')}</small></div>}
-    {messages.length === 0 ? <div className="task-empty-state">
+    {messages.length === 0 && !pendingPrompt ? <div className="task-empty-state">
       <div className="empty-state-mark"><Brand large /></div>
       <h1>{projectName ? `What should JevCode do in ${projectName}?` : 'Start with a project'}</h1>
       <p>{projectName ? 'Describe the outcome you want. JevCode will inspect the project and keep you in control.' : 'Open a local folder to give your agent a place to work.'}</p>
       {projectName ? <div className="starter-prompts" aria-label="Suggested tasks">{suggestions.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => onSuggestion(prompt)}><Icon size={15} /><span>{label}</span><ArrowUpRight size={13} className="starter-prompt-arrow" /></button>)}</div> : <div className="empty-state-note"><Shield size={15} /><span>Project files stay on this device. You approve actions that need it.</span></div>}
     </div> : <div className="task-timeline" aria-live="polite" aria-relevant="additions text">
       {messages.map(message => <TimelineMessage key={message.id} message={message} completedCalls={completedCalls} toolOutput={toolOutput} interfaceMode={interfaceMode} onReviewFile={onReviewFile} />)}
+      {pendingPrompt && <article className="timeline-user is-pending" aria-label="Message being sent"><div className="timeline-user-mark"><UserRound size={14} /></div><div className="timeline-user-content"><div className="timeline-meta"><strong>You</strong><span className="timeline-pending-label">Sending</span></div><MarkdownMessage content={pendingPrompt} /></div></article>}
       {session?.status && ['queued', 'planning', 'working'].includes(session.status) && <div className="agent-working" role="status"><LoaderCircle size={15} className="spin" /><span>{session.status === 'planning' ? 'Collecting project context' : 'JevCode is working through this task'}</span></div>}
       {session?.pendingUserInput && <div className="agent-question-card" role="status"><CircleHelp size={15} /><div><strong>JevCode needs an answer</strong><p>{String(session.pendingUserInput.arguments.question ?? 'Please provide the requested information.')}</p><small>Reply in the composer to continue this task.</small></div></div>}
       {interfaceMode === 'simple' ? <>

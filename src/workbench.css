@@ -248,6 +248,8 @@ body.is-resizing-pane .workbench { transition: none; }
 .timeline-meta > strong { color: var(--wb-ink); font-size: 11px; font-weight: 630; }
 .timeline-meta time { color: var(--wb-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .timeline-user-content .message-markdown { margin-top: 6px; color: var(--wb-ink); font-size: 14px; line-height: 1.65; }
+.timeline-user.is-pending { opacity: .6; }
+.timeline-pending-label { color: var(--wb-muted); font-size: 11px; }
 .timeline-agent { margin-top: 3px; }
 .timeline-agent-content { padding: 2px 0 0; }
 .agent-prose { max-width: 72ch; margin-top: 6px; color: var(--wb-ink); font-size: 14px; line-height: 1.75; }
