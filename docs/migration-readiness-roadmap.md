@@ -1,7 +1,7 @@
 # JevCode migration and parity roadmap
 
 **Research checked:** 15 November 2026  
-**Implementation status:** The first two increments are integrated locally on `main` in `ccf8cfd` and `5e12053`. They have not been pushed.
+**Implementation status:** Progress is tracked in the status section at the end of this document. Work continues on the `improvement` branch.
 
 ## Product goal
 
@@ -181,3 +181,17 @@ These pages describe vendor-supported workflows. They are not independent tests 
 - **Workflow reliability:** conflict/recovery rate for concurrent tasks and successful, user-reviewed handoffs from plan to implementation.
 - **Outcome quality:** task completion and verification rates measured on representative repositories before increasing Jev assistance or automatic execution.
 
+## Status on `improvement`
+
+Each item below was implemented, verified (Rust tests, clippy, format, frontend tests, lint, and build), and committed in its own commit.
+
+| Phase | Status | What is in place | Not yet |
+| --- | --- | --- | --- |
+| 0 | Mostly done | Scanner tests (symlinks, secret blocking and masking, oversized and non-UTF-8 files, selection safety); one Plan denial rule (`TaskMode::permits`) on every execution path, tested; the `.test.tsx` files now run | An end-to-end runtime test of pending approvals and parallel calls; desktop flow checks on Windows and Linux |
+| 1 | Largely done | Ancestor guidance inside the repository, outermost first; nested folder guidance and path-scoped rules (`.claude/rules`, `.cursor/rules`, `.github/instructions`) applied when a matching path is touched, with the activity log naming the rule; effective context view with budget, changes since start, and masked previews; `AGENTS.override.md` precedence as a project setting; an 80 KiB per-task guidance budget | A versioned resolver identifier; a separate working-directory scope for isolated worktrees; precedence for GEMINI.md and Copilot files |
+| 2 | Partly done | Agent Skills discovery in `.agents/skills` and `.claude/skills`, project and user scope; validated names and descriptions; bodies read only on invocation, with source, version, and fingerprint recorded; `allowed-tools` shown as informational | Gemini and Antigravity skill locations; a search field for skills; a preview-and-convert path for custom commands |
+| 3 | Partly done | Versioned profile export and import (instructions, preferred model, precedence); no credentials, grants, trust decisions, or machine paths; unknown and repeated fields rejected; newer versions refused; import previews and writes only on apply | MCP config import with trust review; guided setup for external harnesses |
+| 4 | Partly done | Plans saved from finished Plan tasks, edited with bounded history, exported to Markdown; "Start Agent task from plan" creates a fresh task that cites the plan and its source | Review comments on plans; importing external transcripts as labeled context; safe export of tasks, diffs, and activity |
+| 5 | Not started | Containment is designed in this document only | OS-level containment for subprocesses, hooks, Git helpers, and MCP children; task-to-branch ownership display |
+| 6 | Not started | None | Harness adapters, delegation, and GitHub draft-PR workflow |
+| 7 | Not started | Test discovery fixed | Evaluation set, desktop smoke flows per OS, outcome records |
