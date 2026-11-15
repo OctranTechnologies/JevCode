@@ -592,7 +592,10 @@ pub fn list_skills(
     state: State<'_, SharedState>,
 ) -> AppResult<Vec<crate::skills::SkillSummary>> {
     let project = state.database.project(&project_id)?;
-    Ok(crate::skills::discover(Path::new(&project.path)))
+    Ok(crate::skills::discover(
+        Path::new(&project.path),
+        project.repository_root.as_deref().map(Path::new),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -1736,7 +1739,13 @@ pub fn send_message(
         if !skill_ids.is_empty() {
             let project = state.database.project(&session.project_id)?;
             for skill_id in &skill_ids {
-                crate::skills::attach(&mut session, Path::new(&project.path), skill_id, &now())?;
+                crate::skills::attach(
+                    &mut session,
+                    Path::new(&project.path),
+                    project.repository_root.as_deref().map(Path::new),
+                    skill_id,
+                    &now(),
+                )?;
             }
         }
         let answering_question = session.status == SessionStatus::WaitingForUser;

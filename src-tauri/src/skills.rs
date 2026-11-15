@@ -25,6 +25,9 @@ const MAX_DESCRIPTION_CHARS: usize = 1024;
 const MAX_NAME_CHARS: usize = 64;
 /// Folders searched inside each project, in order. Each holds one folder per skill.
 const PROJECT_ROOTS: [&str; 3] = [".agents/skills", ".claude/skills", ".gemini/skills"];
+/// Folders Antigravity also reads in each parent of the project, up to the
+/// repository root. The project's own folder is searched with `PROJECT_ROOTS`.
+const ANCESTOR_ROOTS: [&str; 1] = [".agents/skills"];
 /// Folders searched in the user's home folder, after the project folders. Antigravity keeps
 /// its global skills in `.gemini/antigravity/skills`.
 const USER_ROOTS: [&str; 4] = [
@@ -71,14 +74,14 @@ struct Found {
     location: PathBuf,
 }
 
-pub fn discover(project_root: &Path) -> Vec<SkillSummary> {
-    find(project_root)
+pub fn discover(project_root: &Path, repository_root: Option<&Path>) -> Vec<SkillSummary> {
+    find(project_root, repository_root)
         .into_iter()
         .map(|found| found.summary)
         .collect()
 }
 
-fn find(project_root: &Path) -> Vec<Found> {
+fn find(project_root: &Path, repository_root: Option<&Path>) -> Vec<Found> {
     let mut found = Vec::new();
     for root in PROJECT_ROOTS {
         collect(
@@ -87,6 +90,17 @@ fn find(project_root: &Path) -> Vec<Found> {
             SkillScope::Project,
             root,
         );
+    }
+    // Nearer folders are searched first, so the nearest skill with a name wins.
+    for (folder, prefix) in ancestor_folders(project_root, repository_root) {
+        for root in ANCESTOR_ROOTS {
+            collect(
+                &mut found,
+                &folder.join(root),
+                SkillScope::Project,
+                &format!("{prefix}{root}"),
+            );
+        }
     }
     if let Some(home) = home_dir() {
         for root in USER_ROOTS {
@@ -111,6 +125,32 @@ fn find(project_root: &Path) -> Vec<Found> {
     }
     found.truncate(MAX_SKILLS);
     found
+}
+
+/// The parent folders of the project, nearest first, up to and including the
+/// repository root. Each comes with the prefix that makes its skill paths
+/// project-relative, such as `../` for the project's parent. Folders outside the
+/// repository are never searched.
+fn ancestor_folders(project_root: &Path, repository_root: Option<&Path>) -> Vec<(PathBuf, String)> {
+    let Some(repository_root) = repository_root else {
+        return Vec::new();
+    };
+    let (Ok(project), Ok(repository)) = (
+        std::fs::canonicalize(project_root),
+        std::fs::canonicalize(repository_root),
+    ) else {
+        return Vec::new();
+    };
+    let mut folders = Vec::new();
+    let mut current = project.parent();
+    while let Some(folder) = current.filter(|folder| folder.starts_with(&repository)) {
+        let levels = project
+            .strip_prefix(folder)
+            .map_or(0, |relative| relative.components().count());
+        folders.push((folder.to_path_buf(), "../".repeat(levels)));
+        current = folder.parent();
+    }
+    folders
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -316,8 +356,12 @@ fn list(value: Option<String>) -> Vec<String> {
 /// Reads a skill's body for one task. The id must name a skill that is listed
 /// as valid now; the file is read again, so the recorded fingerprint is the one
 /// the task actually received.
-pub fn load(project_root: &Path, id: &str) -> AppResult<LoadedSkill> {
-    let found = find(project_root)
+pub fn load(
+    project_root: &Path,
+    repository_root: Option<&Path>,
+    id: &str,
+) -> AppResult<LoadedSkill> {
+    let found = find(project_root, repository_root)
         .into_iter()
         .find(|found| found.summary.id == id)
         .ok_or_else(|| {
@@ -361,10 +405,11 @@ pub fn load(project_root: &Path, id: &str) -> AppResult<LoadedSkill> {
 pub fn attach(
     session: &mut AgentSession,
     project_root: &Path,
+    repository_root: Option<&Path>,
     id: &str,
     created_at: &str,
 ) -> AppResult<()> {
-    let loaded = load(project_root, id)?;
+    let loaded = load(project_root, repository_root, id)?;
     let skill = loaded.summary;
     if included_bytes(&session.context_sources) + loaded.body.len() as u64 > MAX_TASK_GUIDANCE_BYTES
     {
@@ -444,7 +489,7 @@ mod tests {
             &skill("review", "Long body text."),
         );
 
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
         let review = by_name(&skills, "review");
 
         assert!(review.valid);
@@ -463,7 +508,7 @@ mod tests {
             &skill("api-audit", "Audit API routes."),
         );
 
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
         let audit = by_name(&skills, "api-audit");
 
         assert!(audit.valid);
@@ -490,7 +535,7 @@ mod tests {
             &skill("other", "x"),
         );
 
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
 
         assert!(!by_name(&skills, "Bad_Name").valid);
         assert!(by_name(&skills, "no-meta").warnings[0].contains("name and a description"));
@@ -514,7 +559,7 @@ mod tests {
             &skill("review", "two"),
         );
 
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
         let reviews: Vec<&SkillSummary> = skills
             .iter()
             .filter(|skill| skill.name == "review")
@@ -528,6 +573,75 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_reads_parent_skills_up_to_the_repository_root() {
+        let outer = tempfile::tempdir().unwrap();
+        let repo = outer.path().join("repository");
+        let app = repo.join("packages/app");
+        write(
+            outer.path(),
+            ".agents/skills/outside/SKILL.md",
+            &skill("outside", "Above the repository."),
+        );
+        write(
+            &repo,
+            ".agents/skills/shared/SKILL.md",
+            &skill("shared", "Repository copy."),
+        );
+        write(
+            &repo,
+            "packages/.agents/skills/team/SKILL.md",
+            &skill("team", "Package copy."),
+        );
+        write(
+            &app,
+            ".agents/skills/shared/SKILL.md",
+            &skill("shared", "Project copy."),
+        );
+
+        let skills = discover(&app, Some(&repo));
+
+        assert!(skills.iter().all(|skill| skill.name != "outside"));
+        let team = by_name(&skills, "team");
+        assert!(team.valid);
+        assert_eq!(team.source, "../.agents/skills/team/SKILL.md");
+        // The project's own copy is nearer than the repository's, so it is the one used.
+        let project_copy = skills
+            .iter()
+            .find(|skill| skill.source == ".agents/skills/shared/SKILL.md")
+            .unwrap();
+        assert!(project_copy.valid);
+        let repository_copy = skills
+            .iter()
+            .find(|skill| skill.source == "../../.agents/skills/shared/SKILL.md")
+            .unwrap();
+        assert!(!repository_copy.valid);
+        assert!(repository_copy
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("used instead")));
+    }
+
+    #[test]
+    fn parent_skills_are_not_read_without_a_repository() {
+        let repo = tempfile::tempdir().unwrap();
+        let app = repo.path().join("packages/app");
+        fs::create_dir_all(&app).unwrap();
+        write(
+            repo.path(),
+            ".agents/skills/shared/SKILL.md",
+            &skill("shared", "Repository copy."),
+        );
+
+        // The user's own skills are read too, so only the repository's copy is checked.
+        assert!(discover(&app, None)
+            .iter()
+            .all(|skill| skill.name != "shared"));
+        assert!(discover(&app, Some(repo.path()))
+            .iter()
+            .any(|skill| skill.name == "shared"));
+    }
+
+    #[test]
     fn oversized_and_non_utf8_skills_are_reported_not_read() {
         let project = tempfile::tempdir().unwrap();
         let big = format!("{}\n", skill("big", &"a".repeat(MAX_SKILL_BYTES as usize)));
@@ -536,7 +650,7 @@ mod tests {
         fs::create_dir_all(&binary).unwrap();
         fs::write(binary.join("SKILL.md"), [0xff, 0xfe, 0x00]).unwrap();
 
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
 
         assert!(by_name(&skills, "big").warnings[0].contains("Larger than 64 KiB"));
         assert!(by_name(&skills, "binary").warnings[0].contains("Not UTF-8"));
@@ -559,12 +673,12 @@ mod tests {
         )
         .unwrap();
 
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
         let review = by_name(&skills, "review");
 
         assert!(!review.valid);
         assert!(review.warnings[0].contains("Symbolic link"));
-        assert!(load(project.path(), &review.id).is_err());
+        assert!(load(project.path(), None, &review.id).is_err());
     }
 
     #[test]
@@ -575,11 +689,20 @@ mod tests {
             ".agents/skills/review/SKILL.md",
             &skill("review", "Check the diff first."),
         );
-        let id = by_name(&discover(project.path()), "review").id.clone();
+        let id = by_name(&discover(project.path(), None), "review")
+            .id
+            .clone();
 
         let mut session: AgentSession =
             serde_json::from_str(include_str!("../../tests/fixtures/session.json")).unwrap();
-        attach(&mut session, project.path(), &id, "2026-11-15T00:00:00Z").unwrap();
+        attach(
+            &mut session,
+            project.path(),
+            None,
+            &id,
+            "2026-11-15T00:00:00Z",
+        )
+        .unwrap();
 
         let recorded = session.context_sources.last().unwrap();
         assert_eq!(recorded.scope, TaskContextScope::Skill);
@@ -613,7 +736,7 @@ mod tests {
             ".agents/skills/review/SKILL.md",
             "---\nname: review\ndescription: Review code.\nallowed-tools: git_diff, read_file\n---\nRead the diff.\n",
         );
-        let skills = discover(project.path());
+        let skills = discover(project.path(), None);
         let review = by_name(&skills, "review");
         assert_eq!(review.allowed_tools, ["git_diff", "read_file"]);
 
@@ -622,6 +745,7 @@ mod tests {
         attach(
             &mut session,
             project.path(),
+            None,
             &review.id,
             "2026-11-15T00:00:00Z",
         )
