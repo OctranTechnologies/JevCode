@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
 import { MarkdownMessage } from './MarkdownMessage';
+import { scrollBehavior } from '../../lib/motion';
 import type { AgentSession, AgentMessage, InterfaceMode, PermissionResolution, SessionChanges } from '../../types/domain';
 
 const suggestions = [
@@ -52,7 +53,7 @@ export function Conversation({
   useEffect(() => {
     if (pendingPrompt) following.current = true;
     if (!following.current) { setUnseen(true); return; }
-    end.current?.scrollIntoView({ behavior: streamingText ? 'auto' : 'smooth', block: 'end' });
+    end.current?.scrollIntoView({ behavior: scrollBehavior(streamingText ? 'auto' : 'smooth'), block: 'end' });
   }, [session?.id, session?.updatedAt, streamingText, pendingPrompt]);
 
   function trackScroll() {
@@ -65,7 +66,7 @@ export function Conversation({
   function jumpToLatest() {
     following.current = true;
     setUnseen(false);
-    end.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    end.current?.scrollIntoView({ behavior: scrollBehavior('smooth'), block: 'end' });
   }
 
   return <div className="conversation-scroll" aria-label="Task conversation" ref={scroller} onScroll={trackScroll}>
@@ -155,14 +156,14 @@ function CompletionReviewCard({ review, animate, onReviewFile, onViewTest }: { r
 }
 
 function focusEvidence() {
-  document.getElementById('completion-evidence')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('completion-evidence')?.scrollIntoView({ behavior: scrollBehavior('smooth'), block: 'center' });
 }
 
 function focusToolResult(toolCallId: string) {
   const result = document.getElementById(`tool-result-${toolCallId}`);
   if (!(result instanceof HTMLDetailsElement)) return;
   result.open = true;
-  result.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  result.scrollIntoView({ behavior: scrollBehavior('smooth'), block: 'center' });
 }
 
 function assessmentLabel(assessment: NonNullable<AgentSession['workingContext']['completionReview']>['requirements'][number]['assessment']) {
