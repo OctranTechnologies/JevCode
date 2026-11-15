@@ -387,7 +387,10 @@ body.is-resizing-pane .workbench { transition: none; }
 .inspector-tab small { display: inline-flex; align-items: center; justify-content: center; min-width: 14px; height: 14px; padding: 0 3px; color: var(--wb-muted); font-size: 11px; background: var(--wb-code); border-radius: 0; }
 .inspector-tab:hover { color: var(--wb-ink); }
 .inspector-tab.is-active { color: var(--wb-accent); }
-.inspector-tab.is-active::after { position: absolute; right: 5px; bottom: -1px; left: 5px; height: 2px; content: ''; background: var(--wb-accent); border-radius: 0; }
+.inspector-tab::after { position: absolute; right: 5px; bottom: -1px; left: 5px; height: 2px; content: ''; background: var(--wb-accent); border-radius: 0; transform: scaleX(0); }
+.inspector-tab.is-active::after { transform: scaleX(1); }
+/* Pointer selection draws the indicator in; keyboard selection stays immediate. */
+.inspector-tabs[data-input='pointer'] .inspector-tab::after { transition: transform 150ms var(--motion-out); }
 .inspector-panel { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: none; scrollbar-width: thin; }
 .inspector-demo-note { display: flex; align-items: center; gap: 6px; margin: 11px 10px 6px; padding: 6px 7px; color: var(--wb-muted); font-size: 12px; background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); border-radius: 0; }
 .demo-note-mark { display: grid; place-items: center; width: 13px; height: 13px; color: var(--wb-accent); font-size: 11px; font-weight: 700; border: 1px solid var(--wb-accent-line); border-radius: 50%; }

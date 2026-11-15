@@ -1,8 +1,8 @@
 import {
-  Check, ChevronDown, CircleHelp, Clock3, Copy, ExternalLink, FileCode2, FilePlus2, GitBranch,
+  Check, ChevronDown, ChevronLeft, CircleHelp, Clock3, Copy, ExternalLink, FileCode2, FilePlus2, GitBranch,
   ListChecks, RotateCcw, Shield, Terminal, X, GitCommitHorizontal,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentSession, Project, Provider, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UsageRecord } from '../../types/domain';
 import { demoChanges, demoDiff, demoTerminal } from '../../app/demo';
 
@@ -36,13 +36,24 @@ export function InspectorPanel({
     { id: 'context', label: 'Context', icon: <CircleHelp size={13} /> },
     { id: 'task', label: 'Task', icon: <Clock3 size={13} /> },
   ];
+  // The list unmounts when a file opens, so its scroll position is kept here and restored on return.
+  const panel = useRef<HTMLDivElement>(null);
+  const changesScroll = useRef(0);
+  const [inputMode, setInputMode] = useState<'pointer' | 'keyboard'>('pointer');
+  function switchTab(next: InspectorTab) {
+    if (tab === 'changes' && panel.current) changesScroll.current = panel.current.scrollTop;
+    onTab(next);
+  }
+  useLayoutEffect(() => {
+    if (tab === 'changes' && panel.current) panel.current.scrollTop = changesScroll.current;
+  }, [tab]);
   return <aside className={`workbench-inspector${open ? ' is-open' : ''}`} aria-label="Task details">
     <header className="inspector-heading"><span>Task details</span><button className="quiet-icon-button inspector-close" onClick={onClose} aria-label="Close task details"><X size={15} /></button></header>
-    <div className="inspector-tabs" role="tablist" aria-label="Task detail panels">{tabs.map(item => <button key={item.id} id={`inspector-tab-${item.id}`} className={`inspector-tab${tab === item.id ? ' is-active' : ''}`} role="tab" aria-selected={tab === item.id} aria-controls="inspector-panel" onClick={() => onTab(item.id)} title={item.label}>{item.icon}<span>{item.label}</span>{item.count && <small>{item.count}</small>}</button>)}</div>
-    <div className="inspector-panel" role="tabpanel" id="inspector-panel" aria-labelledby={`inspector-tab-${tab}`}>
+    <div className="inspector-tabs" role="tablist" aria-label="Task detail panels" data-input={inputMode} onPointerDown={() => setInputMode('pointer')} onKeyDown={() => setInputMode('keyboard')}>{tabs.map(item => <button key={item.id} id={`inspector-tab-${item.id}`} className={`inspector-tab${tab === item.id ? ' is-active' : ''}`} role="tab" aria-selected={tab === item.id} aria-controls="inspector-panel" onClick={() => switchTab(item.id)} title={item.label}>{item.icon}<span>{item.label}</span>{item.count && <small>{item.count}</small>}</button>)}</div>
+    <div ref={panel} className="inspector-panel" role="tabpanel" id="inspector-panel" aria-labelledby={`inspector-tab-${tab}`}>
       {demo && <div className="inspector-demo-note"><span className="demo-note-mark">i</span><span>Example data · not applied to files</span></div>}
-      {tab === 'changes' && <ChangesPanel demo={demo} session={session} review={review} selectedPath={selectedPath} busy={reviewBusy} onSelect={path => { onSelectFile(path); onTab('diff'); }} onFileAction={onFileAction} onAllAction={onAllAction} />}
-      {tab === 'diff' && <DiffPanel demo={demo} selectedFile={selectedPath} selectedChange={review?.files.find(file => file.path === selectedPath)} reviewDiff={reviewDiff} reviewBusy={reviewBusy} onFileAction={onFileAction} />}
+      {tab === 'changes' && <ChangesPanel demo={demo} session={session} review={review} selectedPath={selectedPath} busy={reviewBusy} onSelect={path => { onSelectFile(path); switchTab('diff'); }} onFileAction={onFileAction} onAllAction={onAllAction} />}
+      {tab === 'diff' && <DiffPanel demo={demo} selectedFile={selectedPath} selectedChange={review?.files.find(file => file.path === selectedPath)} reviewDiff={reviewDiff} reviewBusy={reviewBusy} onBack={() => switchTab('changes')} onFileAction={onFileAction} />}
       {tab === 'terminal' && <TerminalPanel demo={demo} />}
       {tab === 'context' && <ContextPanel project={project} branch={branch} session={session} provider={provider} />}
       {tab === 'task' && <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />}
@@ -69,18 +80,18 @@ function ChangesPanel({ demo, session, review, selectedPath, busy, onSelect, onF
   </div>;
 }
 
-function DiffPanel({ demo, selectedFile, selectedChange, reviewDiff, reviewBusy, onFileAction }: { demo: boolean; selectedFile: string | null; selectedChange?: SessionChanges['files'][number]; reviewDiff: SessionFileDiff | null; reviewBusy: boolean; onFileAction: (path: string, action: ReviewFileAction) => void }) {
+function DiffPanel({ demo, selectedFile, selectedChange, reviewDiff, reviewBusy, onBack, onFileAction }: { demo: boolean; onBack: () => void; selectedFile: string | null; selectedChange?: SessionChanges['files'][number]; reviewDiff: SessionFileDiff | null; reviewBusy: boolean; onFileAction: (path: string, action: ReviewFileAction) => void }) {
   if (!demo && (!selectedFile || !reviewDiff)) return <div className="inspector-empty"><ListChecks size={18} /><strong>Select a changed file</strong><p>Choose a file from Files to inspect its task-scoped diff.</p></div>;
   if (!demo && reviewDiff) {
     const file = reviewDiff;
     const lines = file.diff.split('\n');
-    return <div className="diff-view"><div className="diff-file-heading"><FileCode2 size={13} /><span title={file.path}>{file.path}</span><button title="Copy diff" aria-label="Copy diff" onClick={() => void navigator.clipboard?.writeText(file.diff)}><Copy size={13} /></button></div>
+    return <div className="diff-view"><div className="diff-file-heading"><button title="Back to changed files" aria-label="Back to changed files" onClick={onBack}><ChevronLeft size={13} /></button><FileCode2 size={13} /><span title={file.path}>{file.path}</span><button title="Copy diff" aria-label="Copy diff" onClick={() => void navigator.clipboard?.writeText(file.diff)}><Copy size={13} /></button></div>
       {file.conflicted && <div className="diff-conflict-note"><CircleHelp size={13} />This file changed after the agent edit. Revert and stage are disabled until you inspect the current file.</div>}
       <div className="diff-code" role="region" aria-label={`Diff for ${file.path}`}>{file.binary ? <div className="diff-binary-note">Binary file changed; text diff is unavailable.</div> : lines.map((line, index) => <div key={`${index}-${line}`} className={`diff-text-line${line.startsWith('+') ? ' is-add' : line.startsWith('-') ? ' is-delete' : line.startsWith('@@') ? ' is-hunk' : ''}`}><span className="diff-gutter">{line.startsWith('+') ? '+' : line.startsWith('-') ? '−' : ' '}</span><code>{line || ' '}</code></div>)}</div>
       <div className="review-diff-actions"><button disabled={reviewBusy} onClick={() => onFileAction(file.path, 'open')}><ExternalLink size={13} />Open file</button><button disabled={reviewBusy || file.conflicted || !selectedChange?.canStage} title={selectedChange?.preexistingStatus ? 'Staging is disabled because this file had user changes before the task.' : 'Stage the complete file'} onClick={() => onFileAction(file.path, 'stage')}><GitCommitHorizontal size={13} />{selectedChange?.staged ? 'Staged' : 'Stage file'}</button><span /><button disabled={reviewBusy || selectedChange?.reviewed} onClick={() => onFileAction(file.path, 'accept')}><Check size={13} />{selectedChange?.reviewed ? 'Accepted' : 'Accept'}</button><button disabled={reviewBusy || file.conflicted} onClick={() => onFileAction(file.path, 'revert')}><RotateCcw size={13} />Revert</button></div>
     </div>;
   }
-  return <div className="diff-view"><div className="diff-file-heading"><FileCode2 size={13} /><span>{selectedFile ?? demoChanges[0].path}</span><button title="Copy diff" aria-label="Copy diff" onClick={() => void navigator.clipboard?.writeText(demoDiff.map(line => line.text).join('\n'))}><Copy size={13} /></button></div>
+  return <div className="diff-view"><div className="diff-file-heading"><button title="Back to changed files" aria-label="Back to changed files" onClick={onBack}><ChevronLeft size={13} /></button><FileCode2 size={13} /><span>{selectedFile ?? demoChanges[0].path}</span><button title="Copy diff" aria-label="Copy diff" onClick={() => void navigator.clipboard?.writeText(demoDiff.map(line => line.text).join('\n'))}><Copy size={13} /></button></div>
     <div className="diff-code" role="region" aria-label={`Illustrative diff for ${selectedFile}`}>{demoDiff.map((line, index) => <div key={`${line.kind}-${index}`} className={`diff-line is-${line.kind}`}><span className="diff-number">{line.old}</span><span className="diff-number">{line.next}</span><span className="diff-sign">{line.kind === 'add' ? '+' : line.kind === 'delete' ? '−' : line.kind === 'hunk' ? '@' : ' '}</span><code>{line.text}</code></div>)}</div>
     <div className="diff-explainer">This patch is a visual example. It has not been applied.</div>
   </div>;
