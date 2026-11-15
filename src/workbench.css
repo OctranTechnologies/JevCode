@@ -1751,7 +1751,13 @@ body.is-resizing-pane .workbench { transition: none; }
 .completion-review-card.is-completing > header > svg path { stroke-dasharray: 24; animation: check-draw 300ms var(--motion-out) 100ms both; }
 .task-change-summary.is-completing { animation: fade-in 250ms var(--motion-out) 150ms both; }
 @keyframes check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
-.permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover { animation: popover-in 120ms var(--motion-out) both; }
+.permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover, .approval-more-menu { animation: popover-in 120ms var(--motion-out) both; }
+/* Each popover grows from the edge nearest its trigger. */
+.permission-popover, .task-options-popover { transform-origin: top right; }
+.composer-options-popover, .model-picker-popover { transform-origin: top left; }
+.approval-more-menu { transform-origin: bottom right; }
+/* The style guide forbids offset shadows, so popovers separate from the page with the stronger border token. */
+.permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover { border-color: var(--wb-border-strong); }
 .command-palette[open] { animation: fade-in 100ms var(--motion-out) both; }
 
 /* Pinned approval above the composer */
