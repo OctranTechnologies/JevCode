@@ -52,6 +52,7 @@ export function WorkspaceComposer({
   const provider = providers.find(item => item.id === providerId);
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
   const unavailable = !desktopAllowed || !hasProject || !providerConnected || workspaceUnavailable;
+  const availableSkills = skills.filter(skill => skill.valid && !selectedSkills.includes(skill.id));
   return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {mode === 'plan' && <p role="status" className="composer-footnote">Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.</p>}
     {approval}
@@ -63,7 +64,12 @@ export function WorkspaceComposer({
       <div className="composer-toolbar">
         <div className="composer-tool-actions">
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
-          {skills.some(skill => skill.valid) && <select className="composer-skill-select" aria-label="Add a skill to this task" value="" disabled={busy} onChange={event => { if (event.target.value) onSkillSelect(event.target.value); }} title="Invoke a project or user skill for this task"><option value="">Skill</option>{skills.filter(skill => skill.valid && !selectedSkills.includes(skill.id)).map(skill => <option key={skill.id} value={skill.id}>{skill.name} · {skill.scope === 'project' ? 'project' : 'user'}</option>)}</select>}
+          {skills.some(skill => skill.valid) && <DisclosureMenu className="composer-skill-menu" closeOnChoice summary={<><Sparkles size={14} /><span>Skill</span><ChevronDown size={12} /></>} summaryTitle="Invoke a project or user skill for this task">
+            <div className="composer-skill-popover" role="group" aria-label="Skills you can add to this task">
+              {availableSkills.map(skill => <button type="button" className="composer-skill-choice" key={skill.id} disabled={busy} onClick={() => onSkillSelect(skill.id)}><span><strong>{skill.name}</strong><em>{skill.scope === 'project' ? 'Project' : 'User'}</em></span>{skill.description && <small>{skill.description}</small>}</button>)}
+              {availableSkills.length === 0 && <p className="composer-skill-empty">Every available skill is already attached.</p>}
+            </div>
+          </DisclosureMenu>}
           <DisclosureMenu className="composer-options-menu" summary={<><SlidersHorizontal size={14} /><span>Options</span>{mode === 'plan' && <span className="task-option-badge">Plan · read-only</span>}{!includeProject && <span className="task-option-badge">No project context</span>}<ChevronDown size={12} /></>}>
             <div className="composer-options-popover">
               <label className="composer-option-row"><span><strong>Task approach</strong><small>Plan tasks stay read-only. Implementation requires a new Agent task.</small></span><select value={mode} disabled={sessionLocked || sending || busy} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task approach"><option value="agent">Agent</option><option value="plan">Plan · read-only</option></select></label>

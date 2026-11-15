@@ -6,12 +6,15 @@ const closeMs = 120;
 
 /**
  * A disclosure menu. Its panel stays mounted while it fades out, opens on the side with room,
- * grows from the edge nearest its trigger, and closes on Escape or an outside press.
+ * grows from the edge nearest its trigger, and closes on Escape, an outside press, or, with
+ * `closeOnChoice`, a button pressed inside the panel.
  */
-export function DisclosureMenu({ className, summary, summaryTitle, children }: {
+export function DisclosureMenu({ className, summary, summaryTitle, closeOnChoice = false, children }: {
   className: string;
   summary: ReactNode;
   summaryTitle?: string;
+  /** Closes the panel when a button in it is pressed, for menus whose buttons each choose one thing. */
+  closeOnChoice?: boolean;
   children: ReactNode;
 }) {
   const details = useRef<HTMLDetailsElement>(null);
@@ -52,7 +55,10 @@ export function DisclosureMenu({ className, summary, summaryTitle, children }: {
     };
   }, [open]);
 
-  return <details ref={details} className={`disclosure-menu ${className}`} open={rendered} data-state={open ? 'open' : 'closed'}>
+  return <details ref={details} className={`disclosure-menu ${className}`} open={rendered} data-state={open ? 'open' : 'closed'} onClick={event => {
+    const target = event.target as Element;
+    if (closeOnChoice && target.closest('button') && !target.closest('summary')) setOpen(false);
+  }}>
     <summary title={summaryTitle} onClick={event => { event.preventDefault(); setOpen(value => !value); }}>{summary}</summary>
     {children}
   </details>;

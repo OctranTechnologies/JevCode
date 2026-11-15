@@ -1661,10 +1661,10 @@ body.is-resizing-pane .workbench { transition: none; }
 .is-collapsed .sidebar-more-menu > summary span, .is-collapsed .sidebar-more-menu > summary > svg:last-child { display: none; }
 .is-collapsed .sidebar-more-actions { right: auto; left: calc(100% + 7px); bottom: 0; width: 150px; }
 
-.task-options-menu, .composer-options-menu { position: relative; flex: 0 0 auto; }
-.task-options-menu > summary, .composer-options-menu > summary { display: flex; align-items: center; gap: 6px; min-height: 29px; padding: 0 8px; color: var(--wb-muted-strong); font-size: 11px; list-style: none; border: 1px solid var(--wb-border); border-radius: 0; cursor: pointer; white-space: nowrap; }
-.task-options-menu > summary::-webkit-details-marker, .composer-options-menu > summary::-webkit-details-marker { display: none; }
-.task-options-menu > summary:hover, .task-options-menu[open] > summary, .composer-options-menu > summary:hover, .composer-options-menu[open] > summary { color: var(--wb-ink); background: var(--wb-surface); }
+.task-options-menu, .composer-options-menu, .composer-skill-menu { position: relative; flex: 0 0 auto; }
+.task-options-menu > summary, .composer-options-menu > summary, .composer-skill-menu > summary { display: flex; align-items: center; gap: 6px; min-height: 29px; padding: 0 8px; color: var(--wb-muted-strong); font-size: 11px; list-style: none; border: 1px solid var(--wb-border); border-radius: 0; cursor: pointer; white-space: nowrap; }
+.task-options-menu > summary::-webkit-details-marker, .composer-options-menu > summary::-webkit-details-marker, .composer-skill-menu > summary::-webkit-details-marker { display: none; }
+.task-options-menu > summary:hover, .task-options-menu[open] > summary, .composer-options-menu > summary:hover, .composer-options-menu[open] > summary, .composer-skill-menu > summary:hover, .composer-skill-menu[open] > summary { color: var(--wb-ink); background: var(--wb-surface); }
 .task-option-badge { padding: 2px 5px; color: var(--wb-accent); font-size: 11px; background: var(--wb-accent-soft); border-radius: 0; }
 .task-options-popover, .composer-options-popover { position: absolute; z-index: 35; top: calc(100% + 7px); right: 0; display: grid; gap: 10px; min-width: 250px; padding: 12px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 0; }
 .task-options-popover > .permission-menu { padding: 0; }
@@ -1717,7 +1717,7 @@ body.is-resizing-pane .workbench { transition: none; }
 .sidebar-search, .sidebar-row, .utility-row { min-height: 40px; }
 .permission-menu > summary { min-height: 40px; }
 .toolbar-workspace-wrap select, .toolbar-workspace-base-wrap select { min-height: 40px; }
-.task-options-menu > summary, .composer-options-menu > summary { min-height: 40px; font-size: 11px; }
+.task-options-menu > summary, .composer-options-menu > summary, .composer-skill-menu > summary { min-height: 40px; font-size: 11px; }
 .composer-tool-button, .composer-send-button, .composer-stop-button { min-height: 44px; }
 .inspector-tab { min-height: 40px; font-size: 11px; }
 .settings-section-nav button, .appearance-mode-option { min-height: 44px; }
@@ -1886,8 +1886,15 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .effective-context-empty, .effective-context-error { margin: 0; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
 .effective-context-error { color: var(--wb-danger); }
 .effective-context-source.is-pending .effective-context-status { color: var(--wb-muted-strong); }
-.composer-skill-select { height: 29px; max-width: 150px; padding: 0 22px 0 8px; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 1px solid transparent; border-radius: 0; }
-.composer-skill-select:hover:not(:disabled), .composer-skill-select:focus-visible { color: var(--wb-ink); border-color: var(--wb-border); }
+.composer-skill-popover { position: absolute; z-index: 35; top: calc(100% + 7px); left: 0; display: grid; gap: 2px; width: max-content; min-width: 240px; max-width: min(340px, calc(100vw - 32px)); max-height: min(360px, calc(100dvh - 140px)); overflow-y: auto; padding: 6px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border-strong); border-radius: 0; }
+.composer-skill-choice { display: grid; gap: 3px; width: 100%; min-height: 40px; padding: 6px 8px; color: var(--wb-ink); text-align: left; background: transparent; border: 0; border-radius: 0; font-size: 11px; cursor: pointer; }
+.composer-skill-choice:hover:not(:disabled), .composer-skill-choice:focus-visible { background: var(--wb-surface-quiet); }
+.composer-skill-choice:disabled { opacity: .48; cursor: not-allowed; }
+.composer-skill-choice > span { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.composer-skill-choice strong { overflow: hidden; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
+.composer-skill-choice em { flex: 0 0 auto; padding: 0 4px; color: var(--wb-muted); border: 1px solid var(--wb-border); font-size: 11px; font-style: normal; }
+.composer-skill-choice small { overflow: hidden; color: var(--wb-muted); text-overflow: ellipsis; white-space: nowrap; }
+.composer-skill-empty { margin: 4px 8px; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
 
 .project-profile-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
 .project-profile-row > button { min-height: 29px; padding: 0 9px; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 1px solid var(--wb-border-strong); border-radius: 0; }
