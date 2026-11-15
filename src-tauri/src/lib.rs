@@ -12,6 +12,7 @@ mod extensions;
 mod git;
 mod guidance;
 mod guidance_scope;
+mod harnesses;
 mod mcp;
 mod mcp_import;
 mod permissions;
@@ -98,6 +99,7 @@ pub fn run() {
             commands::preview_custom_command,
             commands::convert_custom_command,
             commands::scan_mcp_imports,
+            commands::detect_harnesses,
             commands::import_mcp_servers,
             commands::create_task_plan,
             commands::list_task_plans,

@@ -238,7 +238,14 @@ export interface McpImportServer {
   warnings: string[];
   blocked: string | null;
 }
-export type CustomCommandFormat ='claude_command' | 'antigravity_workflow' | 'gemini_command';
+/** An external coding-agent tool, found by its command on PATH. Its sign-in stays in that tool. */
+export interface HarnessStatus {
+  id: string;
+  name: string;
+  executable: string;
+  installed: boolean;
+}
+export type CustomCommandFormat = 'claude_command' | 'antigravity_workflow' | 'gemini_command';
 /** A command another agent keeps in this project. `blocked` says why it cannot become a skill. */
 export interface CustomCommand {
   id: string;

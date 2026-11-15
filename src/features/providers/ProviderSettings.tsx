@@ -1,11 +1,42 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { Check, CircleAlert, CircleCheck, CircleX, Copy, ExternalLink, KeyRound, LoaderCircle, RotateCw, ShieldCheck, Trash2, Waypoints } from 'lucide-react';
-import type { GoogleAuthAttemptEvent, GoogleAuthStatus, Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
-import { cancelGoogleAuth, cancelOpenAIAuth, copyOpenAIAuthLink, desktopAvailable, disconnectGoogleApiKey, getGoogleAuthStatus, getOpenAIAuthStatus, logoutGoogleAuth, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectGoogleAccount, selectGoogleAuthMethod, selectOpenAIAPIKey, selectOpenAIAccount, setGoogleCloudProject, startGoogleAuth, startOpenAIAuth, subscribeGoogleAuthAttempts } from '../../lib/ipc';
+import type { GoogleAuthAttemptEvent, GoogleAuthStatus, HarnessStatus, Model, OpenAIAuthAttemptEvent, OpenAIAuthStatus, Provider, ProviderAccount, ProviderAuthMethod } from '../../types/domain';
+import { cancelGoogleAuth, cancelOpenAIAuth, command, copyOpenAIAuthLink, desktopAvailable, disconnectGoogleApiKey, getGoogleAuthStatus, getOpenAIAuthStatus, logoutGoogleAuth, logoutOpenAIAuth, openAIAuthAttemptEventSchema, providerAuthAdapter, selectGoogleAccount, selectGoogleAuthMethod, selectOpenAIAPIKey, selectOpenAIAccount, setGoogleCloudProject, startGoogleAuth, startOpenAIAuth, subscribeGoogleAuthAttempts } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import { initialOpenAIAuthFlow, openAIAccountNeedsReconnect, openAIAccountStatus, openAIAuthFlowReducer, openAIAuthStartErrorMessage } from './openaiAuthUi';
 import { googleAccountNeedsReconnect, googleAuthFlowReducer, googleAuthStartErrorMessage, googleAuthStatusSummary, googleProviderErrorMessage, initialGoogleAuthFlow } from './googleAuthUi';
+
+/** Explains the two kinds of sign-in and shows which external coding-agent tools are on this computer. */
+function HarnessSetup() {
+  const [harnesses, setHarnesses] = useState<HarnessStatus[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const detect = useCallback(async () => {
+    try {
+      setHarnesses(await command('detect_harnesses', undefined));
+      setError(null);
+    } catch (cause) { setError(normalizeError(cause).message); }
+  }, []);
+
+  useEffect(() => { if (desktopAvailable) void detect(); }, [detect]);
+
+  return <section className="harness-setup" aria-labelledby="harness-setup-title">
+    <div className="harness-setup-heading">
+      <h2 id="harness-setup-title">How sign-in works</h2>
+      {desktopAvailable && <button type="button" className="harness-refresh" onClick={() => void detect()}>Check again</button>}
+    </div>
+    <p><strong>JevCode providers</strong> are connected below. JevCode signs in to them and calls them directly. Keys and accounts stay on this device.</p>
+    <p><strong>External tools</strong> such as Codex CLI or Claude Code keep their own sign-in. JevCode only checks whether a tool's command is on this computer's PATH. It does not start the tool, read its sign-in, or copy it. An IDE or desktop app with the same name is not checked.</p>
+    {!desktopAvailable && <p className="harness-empty">Tool detection is available in the desktop application.</p>}
+    {harnesses && <ul className="harness-list" aria-label="External coding-agent tools">{harnesses.map(harness => <li key={harness.id} className={`harness-item is-${harness.installed ? 'installed' : 'missing'}`}>
+      <span className="harness-name">{harness.name}</span>
+      <code>{harness.executable}</code>
+      <span className="harness-state">{harness.installed ? 'Found on this computer' : 'Not found. Install it, then check again.'}</span>
+    </li>)}</ul>}
+    {error && <p className="accounts-feedback failure" role="alert"><CircleAlert size={14} />{error}</p>}
+  </section>;
+}
 
 const apiKeyMethod: ProviderAuthMethod = 'api_key';
 
@@ -537,6 +568,8 @@ export function ProviderSettings({
 
     {notice && <p className="accounts-feedback success" role="status"><Check size={14} />{notice}</p>}
     {error && <p className="accounts-feedback failure" role="alert"><CircleAlert size={14} />{error}</p>}
+
+    <HarnessSetup />
 
     <div className="account-list" aria-label="Model provider accounts">
       {remoteProviders.map(provider => {

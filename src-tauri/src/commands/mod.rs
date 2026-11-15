@@ -234,6 +234,13 @@ pub async fn save_mcp_server(
         .await
 }
 
+/// Reports which external coding-agent tools are installed. Their sign-in stays in
+/// each tool, and JevCode does not start them.
+#[tauri::command]
+pub fn detect_harnesses() -> Vec<crate::harnesses::HarnessStatus> {
+    crate::harnesses::detect()
+}
+
 /// Previews the MCP servers other tools keep in this project's files. Nothing is read
 /// into JevCode's settings until the user imports the ones they select.
 #[tauri::command]

@@ -56,7 +56,8 @@ export const projectProfilePreviewSchema = z.object({ name: z.string(), instruct
 export const taskPlanSchema = z.object({ id: z.string(), projectId: z.string(), sourceSessionId: z.string(), title: z.string(), markdown: z.string(), version: z.number().int().positive(), history: z.array(z.object({ version: z.number().int().positive(), markdown: z.string(), savedAt: z.string() })).default([]), createdAt: z.string(), updatedAt: z.string() });
 
 
-export const mcpImportServerSchema = z.object({ key: z.string(), name: z.string(), serverId: z.string().nullable(), transport: z.string().nullable(), envNames: z.array(z.string()), storedEnvNames: z.array(z.string()), warnings: z.array(z.string()), blocked: z.string().nullable() });
+export const harnessStatusSchema = z.object({ id: z.string(), name: z.string(), executable: z.string(), installed: z.boolean() });
+export const mcpImportServerSchema =z.object({ key: z.string(), name: z.string(), serverId: z.string().nullable(), transport: z.string().nullable(), envNames: z.array(z.string()), storedEnvNames: z.array(z.string()), warnings: z.array(z.string()), blocked: z.string().nullable() });
 export const mcpImportSourceSchema = z.object({ path: z.string(), problem: z.string().nullable(), servers: z.array(mcpImportServerSchema) });
 export const customCommandSchema =z.object({ id: z.string(), format: z.enum(['claude_command', 'antigravity_workflow', 'gemini_command']), name: z.string().nullable(), description: z.string().nullable(), blocked: z.string().nullable(), warnings: z.array(z.string()) });
 export const customCommandPreviewSchema = z.object({ command: customCommandSchema, target: z.string().nullable(), skillText: z.string().nullable() });
