@@ -95,7 +95,8 @@ html, body, #root { width: 100%; min-width: 0; height: 100%; min-height: 0; over
 body { color: var(--wb-ink); background: var(--wb-canvas); }
 button, input, textarea, select { color: inherit; }
 button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role='separator']:focus-visible { outline-color: var(--wb-accent); }
-button:active:not(:disabled) { transform: scale(.97); }
+/* Press feedback is limited to actions and standalone icon buttons; rows, tabs, and options stay still. */
+:is(.button-primary, .button-quiet, .new-task-button, .composer-send-button, .composer-stop-button, .quiet-icon-button):active:not(:disabled) { transform: scale(.97); }
 ::selection { background: var(--wb-accent-soft); color: var(--wb-ink); }
 
 .workbench {
