@@ -74,6 +74,12 @@ export default function App() {
   const [selectedReviewPath, setSelectedReviewPath] = useState<string | null>(null);
   const [reviewDiff, setReviewDiff] = useState<SessionFileDiff | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewResult, setReviewResult] = useState<string | null>(null);
+  useEffect(() => {
+    if (!reviewResult) return;
+    const timer = window.setTimeout(() => setReviewResult(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [reviewResult]);
   const [sidebarWidth, setSidebarWidth] = useState(288);
   const [inspectorWidth, setInspectorWidth] = useState(370);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -581,6 +587,8 @@ export default function App() {
         setReviewDiff(null);
       }
       if (action === 'open') return;
+      // Confirmed only after the native action has succeeded.
+      setReviewResult(`${action === 'accept' ? 'Accepted' : action === 'stage' ? 'Staged' : 'Reverted'} ${path.split('/').at(-1)}`);
       if (action === 'stage') setError(null);
     } catch (error) { setError(normalizeError(error).message); }
     finally { setReviewBusy(false); }
@@ -594,6 +602,7 @@ export default function App() {
       setReviewChanges(updated);
       setSelectedReviewPath(updated.files[0]?.path ?? null);
       setReviewDiff(null);
+      setReviewResult(action === 'accept_all' ? 'Accepted all task changes' : 'Reverted task changes');
     } catch (error) { setError(normalizeError(error).message); }
     finally { setReviewBusy(false); }
   }, [reviewBusy, session, setError]);
@@ -704,7 +713,7 @@ export default function App() {
 
     {isAgentView && <>
       {inspectorOpen && <ResizeDivider label="Resize task details" width={inspectorWidth} min={276} max={480} reverse onResize={setInspectorWidth} />}
-      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} usage={desktop.usage} onSelectFile={selectReviewFile} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
+      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult}usage={desktop.usage} onSelectFile={selectReviewFile} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
     </>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
     <CreateProjectDialog open={createProjectOpen} busy={creatingProject} onClose={() => setCreateProjectOpen(false)} onCreate={createProject} onOpenExisting={() => { setCreateProjectOpen(false); void openFolder(); }} />

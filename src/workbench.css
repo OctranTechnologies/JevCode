@@ -1484,6 +1484,7 @@ body.is-resizing-pane .workbench { transition: none; }
 /* Task-scoped code review */
 .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; color: var(--wb-muted); border-bottom: 1px solid var(--wb-border); font-size: 11px; }
 .review-actions > div { display: flex; gap: 4px; }
+.review-actions .review-result { color: var(--wb-ink); }
 .review-actions button, .review-row-actions button, .review-diff-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 25px; padding: 0 7px; color: var(--wb-muted-strong); font-size: 11px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 0; }
 .review-actions button:hover:not(:disabled), .review-row-actions button:hover:not(:disabled), .review-diff-actions button:hover:not(:disabled) { color: var(--wb-ink); background: var(--wb-surface-quiet); border-color: var(--wb-border-strong); }
 .review-actions button:disabled, .review-row-actions button:disabled, .review-diff-actions button:disabled { opacity: .48; cursor: not-allowed; }
