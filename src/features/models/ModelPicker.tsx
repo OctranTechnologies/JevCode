@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Clock3, Eye, Radio, Search, Sparkles, Star, Wrench, BrainCircuit } from 'lucide-react';
 import type { Model, ModelPreferences, ModelReference, Provider } from '../../types/domain';
 import { choosePlacement, type Placement } from '../../lib/popoverPlacement';
+import { usePresence } from '../../lib/presence';
 
 type Entry = { provider: Provider; model: Model; key: string };
 type PickerPosition = { left: number; width: number; placement: Placement; offset: number; maxHeight: number };
@@ -31,6 +32,7 @@ function entryKey(providerId: string, modelId: string): string { return `${provi
 
 export function ModelPicker({ providers, preferences, providerId, modelId, locked = false, compact = false, openRequest = 0, onSelect, onToggleFavorite, onSetDefault }: Props) {
   const [open, setOpen] = useState(false);
+  const mounted = usePresence(open, 120);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [position, setPosition] = useState<PickerPosition>({ left: 0, width: 352, placement: 'below', offset: 0, maxHeight: 520 });
@@ -147,7 +149,7 @@ export function ModelPicker({ providers, preferences, providerId, modelId, locke
     <button ref={triggerRef} type="button" className={`model-picker-trigger${compact ? ' is-compact' : ''}`} aria-haspopup="dialog" aria-expanded={open} aria-label={`Model: ${selected ? `${selected.model.displayName}, ${selected.provider.name}` : stale ? `Unavailable model ${modelId}` : 'Choose a model'}`} disabled={locked} onClick={() => { if (!open) updatePosition(); setOpen(value => !value); }}>
       <Sparkles size={13} aria-hidden="true" /><span className="model-picker-trigger-label">{selected?.model.displayName ?? (stale ? `Unavailable · ${modelId}` : 'Choose model')}</span><ChevronDown size={12} aria-hidden="true" />
     </button>
-    {open && createPortal(<div ref={panelRef} className="model-picker-popover" role="dialog" aria-label="Choose a model" style={{ position: 'fixed', left: position.left, width: position.width, maxHeight: position.maxHeight, transformOrigin: position.placement === 'below' ? 'top left' : 'bottom left', ...(position.placement === 'below' ? { top: position.offset } : { bottom: position.offset }) }}>
+    {mounted && createPortal(<div ref={panelRef} className="model-picker-popover" role="dialog" aria-label="Choose a model" data-state={open ? 'open' : 'closed'} inert={!open} style={{ position: 'fixed', left: position.left, width: position.width, maxHeight: position.maxHeight, transformOrigin: position.placement === 'below' ? 'top left' : 'bottom left', ...(position.placement === 'below' ? { top: position.offset } : { bottom: position.offset }) }}>
       <div className="model-picker-search"><Search size={14} /><input ref={searchRef} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={handleSearchKey} placeholder="Search models" aria-label="Search models" /><kbd>↑↓</kbd></div>
       {(stale || staleDefault) && <p className="model-picker-unavailable" role="status">{stale ? 'The selected model is no longer in the provider catalog. Choose an available model to continue.' : 'Your saved workspace default is no longer available. Set an available model as the new default.'}</p>}
       <div className="model-picker-results" role="listbox" aria-label="Available models">
