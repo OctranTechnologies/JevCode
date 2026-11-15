@@ -298,6 +298,10 @@ pub enum TaskContextScope {
     Settings,
     Ancestor,
     Folder,
+    /// Guidance in a subfolder, applying to paths under it.
+    Nested,
+    /// A file-scoped rule, applying to the paths its frontmatter names.
+    Scoped,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,6 +309,8 @@ pub enum TaskContextScope {
 pub enum TaskContextStatus {
     Included,
     Skipped,
+    /// Recorded at task start and added to the conversation only when a matching path is touched.
+    Pending,
 }
 
 /// Guidance resolved when a task started. It records metadata only: the text
@@ -322,6 +328,9 @@ pub struct TaskContextSource {
     pub secret_lines: Vec<u32>,
     #[serde(default)]
     pub fingerprint: Option<String>,
+    /// Path patterns for `Nested` and `Scoped` sources, relative to the opened folder.
+    #[serde(default)]
+    pub globs: Vec<String>,
 }
 
 /// The effective-context view. A task compares its recorded sources with the
@@ -553,6 +562,7 @@ pub enum AgentActivityKind {
     JevScopeWarning,
     FocusBaseline,
     TaskOverlapWarning,
+    ContextActivated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

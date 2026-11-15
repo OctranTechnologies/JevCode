@@ -10,6 +10,7 @@ mod error;
 mod extensions;
 mod git;
 mod guidance;
+mod guidance_scope;
 mod mcp;
 mod permissions;
 mod persistence;

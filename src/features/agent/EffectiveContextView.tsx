@@ -8,6 +8,14 @@ const scopeLabel: Record<EffectiveContextSource['scope'], string> = {
   settings: 'Project settings',
   ancestor: 'Repository',
   folder: 'This folder',
+  nested: 'Folder guidance',
+  scoped: 'Path rule',
+};
+
+const statusLabel: Record<EffectiveContextSource['status'], string> = {
+  included: 'Included',
+  pending: 'Applies on match',
+  skipped: 'Skipped',
 };
 
 const changeLabel: Record<NonNullable<EffectiveContextSource['change']>, string> = {
@@ -62,15 +70,15 @@ export function EffectiveContextView({ projectId, sessionId }: { projectId?: str
 }
 
 export function SourceRow({ item }: { item: EffectiveContextSource }) {
-  const included = item.status === 'included';
   return <li className={`effective-context-source is-${item.status}`}>
     <div className="effective-context-source-head">
-      <span className="effective-context-status">{included ? 'Included' : 'Skipped'}</span>
+      <span className="effective-context-status">{statusLabel[item.status]}</span>
       <code title={item.path}>{item.path}</code>
     </div>
     <p className="effective-context-meta">
       <span>{scopeLabel[item.scope]}</span>
       <span>{formatBytes(item.bytes)}</span>
+      {item.globs.length > 0 && <span title="Applies to paths matching">applies to {item.globs.join(', ')}</span>}
       {item.change && <span className={`effective-context-change is-${item.change}`}>{changeLabel[item.change]}</span>}
     </p>
     <p className="effective-context-summary">{item.summary}</p>

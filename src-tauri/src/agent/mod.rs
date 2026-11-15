@@ -899,6 +899,12 @@ impl AgentRuntime {
                 }
             }
         }
+        // Guidance scoped to paths is added after this batch's results, so the
+        // tool-call and tool-result sequence stays intact.
+        let touched: Vec<String> = batch
+            .iter()
+            .flat_map(|(call, _)| crate::guidance_scope::touched_paths(&call.arguments))
+            .collect();
         for ((call, _), result) in batch.into_iter().zip(results) {
             if !result.is_error {
                 if let Some(kind) = completed_tool_activity(&call) {
@@ -917,6 +923,19 @@ impl AgentRuntime {
             );
             append_result(session, result);
             checkpoint(state, sink, session)?;
+        }
+        if !touched.is_empty() {
+            let repository = crate::guidance::display_base(
+                Path::new(&project.path),
+                project.repository_root.as_deref().map(Path::new),
+            );
+            let notes = crate::guidance_scope::activate(session, &repository, &touched);
+            if !notes.is_empty() {
+                for note in notes {
+                    record_activity(session, AgentActivityKind::ContextActivated, note, None);
+                }
+                checkpoint(state, sink, session)?;
+            }
         }
         self.maybe_record_local_focus_baseline(state, sink, session, available_tools)?;
         self.maybe_shadow_recovery_hint(state, sink, session, cancel)

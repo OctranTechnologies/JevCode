@@ -1885,3 +1885,4 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .effective-context-source pre { max-height: 180px; margin: 4px 0 0; padding: 6px; overflow: auto; color: var(--wb-ink); font: 11px var(--font-mono); white-space: pre-wrap; background: var(--wb-code); border: 1px solid var(--wb-border); }
 .effective-context-empty, .effective-context-error { margin: 0; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
 .effective-context-error { color: var(--wb-danger); }
+.effective-context-source.is-pending .effective-context-status { color: var(--wb-muted-strong); }

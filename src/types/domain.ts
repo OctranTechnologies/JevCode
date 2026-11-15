@@ -182,12 +182,13 @@ export interface AgentSession {
 /** Guidance resolved when the task started. Text is in the task's first system message, not here. */
 export interface TaskContextSource {
   path: string;
-  scope: 'settings' | 'ancestor' | 'folder';
-  status: 'included' | 'skipped';
+  scope: 'settings' | 'ancestor' | 'folder' | 'nested' | 'scoped';
+  status: 'included' | 'skipped' | 'pending';
   summary: string;
   bytes: number;
   secretLines: number[];
   fingerprint: string | null;
+  globs: string[];
 }
 export interface EffectiveContextSource extends TaskContextSource {
   change: 'unchanged' | 'changed' | 'removed' | 'added' | null;
@@ -250,7 +251,7 @@ export interface Tool {
   parallelSafe: boolean;
   inputSchema: Record<string, unknown>;
 }
-export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory' | 'jev_recovery_hint' | 'jev_scope_warning' | 'focus_baseline' | 'task_overlap_warning';
+export type AgentActivityKind = 'plan' | 'progress' | 'tool_started' | 'tool_completed' | 'file_inspected' | 'search_performed' | 'command_executed' | 'file_edited' | 'test_run' | 'context_compacted' | 'decision_advisory' | 'jev_recovery_hint' | 'jev_scope_warning' | 'focus_baseline' | 'task_overlap_warning' | 'context_activated';
 export interface AgentActivityEvent {
   id: string;
   sessionId: string;

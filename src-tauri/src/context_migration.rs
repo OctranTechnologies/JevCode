@@ -771,7 +771,7 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
 
 /// Split a leading YAML frontmatter block into simple key/value pairs. List
 /// items are joined with commas; nested structures are not interpreted.
-fn split_frontmatter(text: &str) -> (Vec<(String, String)>, &str) {
+pub(crate) fn split_frontmatter(text: &str) -> (Vec<(String, String)>, &str) {
     let normalized = text.strip_prefix('\u{feff}').unwrap_or(text);
     let Some(rest) = normalized
         .strip_prefix("---")
@@ -845,7 +845,7 @@ fn unquote(value: &str) -> &str {
         .unwrap_or(value)
 }
 
-fn frontmatter_value(pairs: &[(String, String)], key: &str) -> Option<String> {
+pub(crate) fn frontmatter_value(pairs: &[(String, String)], key: &str) -> Option<String> {
     pairs
         .iter()
         .find(|(name, value)| name == key && !value.trim().is_empty())

@@ -11,6 +11,7 @@ const included: EffectiveContextSource = {
   bytes: 2048,
   secretLines: [],
   fingerprint: 'abc',
+  globs: [],
   change: 'changed',
   preview: 'Run focused tests.\n[possible secret hidden]',
 };

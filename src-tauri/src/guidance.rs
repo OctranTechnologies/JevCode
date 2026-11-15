@@ -17,8 +17,10 @@ use crate::{
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// Guidance text one task may carry, counting settings and every file.
-pub const MAX_TASK_GUIDANCE_BYTES: u64 = 256 * 1024;
+/// Guidance text one task may carry, counting settings, files, and rules added
+/// later. Small-context models must still fit system instructions, so this stays
+/// well under their window.
+pub const MAX_TASK_GUIDANCE_BYTES: u64 = 80 * 1024;
 
 pub struct ResolvedGuidance {
     pub sources: Vec<TaskContextSource>,
@@ -107,7 +109,7 @@ pub fn resolve(
                             label,
                             scope,
                             TaskContextStatus::Skipped,
-                            "Over the 256 KiB guidance budget for one task.".to_owned(),
+                            "Over the 80 KiB guidance budget for one task.".to_owned(),
                             bytes,
                             Vec::new(),
                             None,
@@ -150,7 +152,21 @@ pub fn resolve(
             }
         }
     }
+    resolved
+        .sources
+        .extend(crate::guidance_scope::discover(&project, &repository));
     Ok(resolved)
+}
+
+/// The folder resolved paths are shown relative to: the repository root when it
+/// contains the opened folder, otherwise the opened folder itself.
+pub(crate) fn display_base(project_root: &Path, repository_root: Option<&Path>) -> PathBuf {
+    let project =
+        std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    repository_root
+        .and_then(|root| std::fs::canonicalize(root).ok())
+        .filter(|root| project.starts_with(root))
+        .unwrap_or(project)
 }
 
 /// What a new task would send right now, with secret lines masked in the previews.
@@ -184,8 +200,9 @@ pub fn preview_for_new_task(resolved: &ResolvedGuidance) -> EffectiveContext {
 }
 
 /// Compares what a task recorded when it started with the files as they are now.
-/// Included sources that changed, disappeared, or stopped being readable are
-/// reported; guidance that appeared since the task started is listed as added.
+/// Sources that changed, disappeared, or stopped being readable are reported,
+/// and guidance that appeared since the task started is listed as added.
+/// Pending and activated sources are compared the same way.
 pub fn against_task(
     recorded: &[TaskContextSource],
     current: &ResolvedGuidance,
@@ -193,10 +210,12 @@ pub fn against_task(
     let mut sources: Vec<EffectiveContextSource> = recorded
         .iter()
         .map(|source| {
-            let change = (source.status == TaskContextStatus::Included).then(|| {
-                match current.sources.iter().find(|now| {
-                    now.path == source.path && now.status == TaskContextStatus::Included
-                }) {
+            let change = (source.status != TaskContextStatus::Skipped).then(|| {
+                match current
+                    .sources
+                    .iter()
+                    .find(|now| now.path == source.path && now.status != TaskContextStatus::Skipped)
+                {
                     Some(now) if now.fingerprint == source.fingerprint => SourceChange::Unchanged,
                     Some(_) => SourceChange::Changed,
                     None => SourceChange::Removed,
@@ -212,12 +231,12 @@ pub fn against_task(
     for now in current
         .sources
         .iter()
-        .filter(|now| now.status == TaskContextStatus::Included)
+        .filter(|now| now.status != TaskContextStatus::Skipped)
     {
-        let recorded_included = recorded
+        let recorded_active = recorded
             .iter()
-            .any(|source| source.path == now.path && source.status == TaskContextStatus::Included);
-        if !recorded_included {
+            .any(|source| source.path == now.path && source.status != TaskContextStatus::Skipped);
+        if !recorded_active {
             sources.push(EffectiveContextSource {
                 source: now.clone(),
                 change: Some(SourceChange::Added),
@@ -233,7 +252,7 @@ pub fn against_task(
     }
 }
 
-fn included_bytes(sources: &[TaskContextSource]) -> u64 {
+pub(crate) fn included_bytes(sources: &[TaskContextSource]) -> u64 {
     sources
         .iter()
         .filter(|source| source.status == TaskContextStatus::Included)
@@ -241,7 +260,7 @@ fn included_bytes(sources: &[TaskContextSource]) -> u64 {
         .sum()
 }
 
-fn read_guidance(path: &Path, metadata: &std::fs::Metadata) -> Result<String, String> {
+pub(crate) fn read_guidance(path: &Path, metadata: &std::fs::Metadata) -> Result<String, String> {
     if metadata.file_type().is_symlink() {
         return Err("Symbolic link. JevCode does not follow links for guidance.".into());
     }
@@ -258,7 +277,7 @@ fn read_guidance(path: &Path, metadata: &std::fs::Metadata) -> Result<String, St
     String::from_utf8(bytes).map_err(|_| "Not UTF-8 text.".to_owned())
 }
 
-fn included_summary(secrets: &[u32], base: &str) -> String {
+pub(crate) fn included_summary(secrets: &[u32], base: &str) -> String {
     match secrets.first() {
         None => base.to_owned(),
         Some(line) => {
@@ -284,6 +303,7 @@ fn source(
         bytes,
         secret_lines,
         fingerprint,
+        globs: Vec::new(),
     }
 }
 
@@ -303,7 +323,7 @@ fn canonical(root: &Path) -> AppResult<PathBuf> {
 
 /// Forward-slash path relative to the repository (or the opened folder when
 /// there is no repository), so the same file reads the same in every view.
-fn display_path(base: &Path, path: &Path) -> String {
+pub(crate) fn display_path(base: &Path, path: &Path) -> String {
     path.strip_prefix(base)
         .unwrap_or(path)
         .components()
