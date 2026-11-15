@@ -648,8 +648,9 @@ impl AgentRuntime {
             ));
         }
         // Gate before discovery, approval assessment, grants, or review snapshots.
-        if !session.task_mode.allows_tool(&call.name)
-            || (session.task_mode == TaskMode::Plan && state.extensions.owns(&call.name))
+        if !session
+            .task_mode
+            .permits(&call.name, state.extensions.owns(&call.name))
         {
             append_result(session, tool_error(&call, TaskMode::PLAN_NOTICE));
             record_activity(
@@ -762,8 +763,9 @@ impl AgentRuntime {
                 == PermissionDecision::Allow
         {
             while let Some(next) = session.queued_tool_calls.first() {
-                if !session.task_mode.allows_tool(&next.name)
-                    || (session.task_mode == TaskMode::Plan && state.extensions.owns(&next.name))
+                if !session
+                    .task_mode
+                    .permits(&next.name, state.extensions.owns(&next.name))
                 {
                     break;
                 }
@@ -2185,8 +2187,9 @@ async fn execute_batch(
 }
 
 async fn execute(root: &Path, call: &ToolCall, context: &ToolExecutionContext) -> ToolResult {
-    if !context.task_mode.allows_tool(&call.name)
-        || (context.task_mode == TaskMode::Plan && context.extensions.owns(&call.name))
+    if !context
+        .task_mode
+        .permits(&call.name, context.extensions.owns(&call.name))
     {
         return tool_error(call, TaskMode::PLAN_NOTICE);
     }
@@ -2209,8 +2212,9 @@ async fn execute_one(
     context: &ToolExecutionContext,
     sink: &dyn EventSink,
 ) -> ToolResult {
-    if !context.task_mode.allows_tool(&call.name)
-        || (context.task_mode == TaskMode::Plan && context.extensions.owns(&call.name))
+    if !context
+        .task_mode
+        .permits(&call.name, context.extensions.owns(&call.name))
     {
         return tool_error(call, TaskMode::PLAN_NOTICE);
     }

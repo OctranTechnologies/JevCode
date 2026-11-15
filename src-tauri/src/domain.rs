@@ -282,6 +282,12 @@ impl TaskMode {
                     | "ask_user"
             )
     }
+
+    /// The one rule every execution path applies. An extension tool is refused
+    /// in Plan mode even when its name matches a read-only built-in.
+    pub fn permits(self, name: &str, extension_owned: bool) -> bool {
+        self == Self::Agent || (!extension_owned && self.allows_tool(name))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1379,5 +1385,65 @@ mod tests {
             serde_json::from_str(include_str!("../../tests/fixtures/session.json")).unwrap();
         let session: AgentSession = serde_json::from_value(fixture.clone()).unwrap();
         assert_eq!(serde_json::to_value(session).unwrap(), fixture);
+    }
+
+    #[test]
+    fn plan_mode_permits_only_built_in_read_tools() {
+        for name in [
+            "read_file",
+            "read_files",
+            "list_directory",
+            "search_files",
+            "search_text",
+            "file_metadata",
+            "find_symbol",
+            "find_references",
+            "inspect_project",
+            "git_status",
+            "git_diff",
+            "git_log",
+            "git_show",
+            "git_branch",
+            "ask_user",
+        ] {
+            assert!(
+                TaskMode::Plan.permits(name, false),
+                "{name} should run in Plan mode"
+            );
+        }
+        for name in [
+            "apply_patch",
+            "create_file",
+            "delete_file",
+            "move_file",
+            "run_command",
+            "a_tool_added_later",
+        ] {
+            assert!(
+                !TaskMode::Plan.permits(name, false),
+                "{name} must be refused in Plan mode"
+            );
+        }
+    }
+
+    #[test]
+    fn plan_mode_refuses_extension_tools_even_under_a_read_only_name() {
+        assert!(!TaskMode::Plan.permits("read_file", true));
+        assert!(!TaskMode::Plan.permits("mcp__docs__search", true));
+    }
+
+    #[test]
+    fn agent_mode_keeps_built_in_and_extension_tools_available() {
+        assert!(TaskMode::Agent.permits("apply_patch", false));
+        assert!(TaskMode::Agent.permits("mcp__docs__search", true));
+    }
+
+    #[test]
+    fn legacy_sessions_without_task_mode_load_as_agent() {
+        let mut fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/session.json")).unwrap();
+        fixture.as_object_mut().unwrap().remove("taskMode");
+        let session: AgentSession = serde_json::from_value(fixture).unwrap();
+        assert_eq!(session.task_mode, TaskMode::Agent);
     }
 }
