@@ -23,8 +23,16 @@ pub const MAX_SKILL_BYTES: u64 = 64 * 1024;
 const MAX_SKILLS: usize = 200;
 const MAX_DESCRIPTION_CHARS: usize = 1024;
 const MAX_NAME_CHARS: usize = 64;
-/// Roots searched in each project, then in the user's home folder.
-const ROOTS: [&str; 2] = [".agents/skills", ".claude/skills"];
+/// Folders searched inside each project, in order. Each holds one folder per skill.
+const PROJECT_ROOTS: [&str; 3] = [".agents/skills", ".claude/skills", ".gemini/skills"];
+/// Folders searched in the user's home folder, after the project folders. Antigravity keeps
+/// its global skills in `.gemini/antigravity/skills`.
+const USER_ROOTS: [&str; 4] = [
+    ".agents/skills",
+    ".claude/skills",
+    ".gemini/skills",
+    ".gemini/antigravity/skills",
+];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -72,7 +80,7 @@ pub fn discover(project_root: &Path) -> Vec<SkillSummary> {
 
 fn find(project_root: &Path) -> Vec<Found> {
     let mut found = Vec::new();
-    for root in ROOTS {
+    for root in PROJECT_ROOTS {
         collect(
             &mut found,
             &project_root.join(root),
@@ -81,7 +89,7 @@ fn find(project_root: &Path) -> Vec<Found> {
         );
     }
     if let Some(home) = home_dir() {
-        for root in ROOTS {
+        for root in USER_ROOTS {
             collect(
                 &mut found,
                 &home.join(root),
@@ -444,6 +452,23 @@ mod tests {
         assert_eq!(review.scope, SkillScope::Project);
         assert_eq!(review.source, ".agents/skills/review/SKILL.md");
         assert!(review.id.starts_with("project:"));
+    }
+
+    #[test]
+    fn discovers_gemini_project_skills_beside_the_other_roots() {
+        let project = tempfile::tempdir().unwrap();
+        write(
+            project.path(),
+            ".gemini/skills/api-audit/SKILL.md",
+            &skill("api-audit", "Audit API routes."),
+        );
+
+        let skills = discover(project.path());
+        let audit = by_name(&skills, "api-audit");
+
+        assert!(audit.valid);
+        assert_eq!(audit.scope, SkillScope::Project);
+        assert_eq!(audit.source, ".gemini/skills/api-audit/SKILL.md");
     }
 
     #[test]
