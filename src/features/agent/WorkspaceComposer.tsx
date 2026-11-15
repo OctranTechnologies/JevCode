@@ -1,13 +1,13 @@
-import { ArrowUp, AtSign, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizontal, Square, X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { InterfaceMode, ModelPreferences, ModelReference, Provider, WorkspaceMode } from '../../types/domain';
+import type { ModelPreferences, ModelReference, Provider, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, baseBranch, branches, canIsolate, modelPickerOpenRequest,
-  onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject, interfaceMode,
-  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, contextOpen, setContextOpen, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false,
+  onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
+  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -34,13 +34,10 @@ export function WorkspaceComposer({
   busy: boolean;
   sending: boolean;
   hasProject: boolean;
-  interfaceMode: InterfaceMode;
   sessionLocked: boolean;
   desktopAllowed: boolean;
   providerConnected: boolean;
   authRouteLabel?: string | null;
-  contextOpen: boolean;
-  setContextOpen: (open: boolean) => void;
   includeProject: boolean;
   setIncludeProject: (include: boolean) => void;
   approval?: ReactNode;
@@ -52,37 +49,22 @@ export function WorkspaceComposer({
   const unavailable = !desktopAllowed || !hasProject || !providerConnected || workspaceUnavailable;
   return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {approval}
-    {contextOpen && interfaceMode === 'maximum' && <button className="popover-dismiss-area" aria-label="Close context controls" onClick={() => setContextOpen(false)} />}
     <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); }}>
       {attachments.length > 0 && <div className="attached-files" aria-label="Files selected as task context">{attachments.map(path => <span className="attached-file" key={path}><FilePlus2 size={12} /><span>{path}</span><button type="button" onClick={() => onRemoveAttachment(path)} aria-label={`Remove ${path}`}><X size={12} /></button></span>)}</div>}
       <label className="sr-only" htmlFor="workspace-prompt">Describe a task for JevCode</label>
       <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={!hasProject ? 'Open a project to start a task…' : busy ? 'JevCode is working. Draft your next message here…' : 'Ask JevCode to explore, explain, or change something…'} rows={3} onKeyDown={event => { if (event.key === 'ArrowUp' && !draft && lastPrompt) { event.preventDefault(); setDraft(lastPrompt); } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); } }} />
-      <div className={`composer-toolbar${interfaceMode === 'simple' ? ' is-simple' : ''}`}>
+      <div className="composer-toolbar">
         <div className="composer-tool-actions">
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
-          {interfaceMode === 'maximum' ? <>
-          <div className="context-control-wrap">
-            <button type="button" className={`composer-tool-button${contextOpen ? ' is-active' : ''}`} aria-expanded={contextOpen} onClick={() => setContextOpen(!contextOpen)}><AtSign size={14} /><span>Context</span><ChevronDown size={12} /></button>
-            {contextOpen && <div className="context-popover" role="group" aria-label="Task context controls">
-              <div className="context-popover-heading"><strong>Task context</strong><span>Choose what this task can use</span></div>
-              <label className="context-option"><input type="checkbox" checked={includeProject} disabled={sessionLocked} onChange={event => setIncludeProject(event.target.checked)} /><span><strong>Project files</strong><small>{sessionLocked ? 'Permission is fixed for this task' : 'Allow read-only access to the selected project'}</small></span><ShieldCheck size={14} /></label>
-              <div className="context-disabled"><span className="context-square" /><span><strong>Terminal output</strong><small>Shell tools are disabled in this foundation</small></span></div>
-            </div>}
-          </div>
-          <span className="context-scope">{includeProject && hasProject ? 'Project context on' : 'No project context'}</span>
-          </> : <details className="composer-options-menu">
+          <details className="composer-options-menu">
             <summary><SlidersHorizontal size={14} /><span>Options</span>{mode === 'plan' && <span className="task-option-badge">Plan first</span>}{!includeProject && <span className="task-option-badge">No project context</span>}<ChevronDown size={12} /></summary>
             <div className="composer-options-popover">
               <label className="composer-option-row"><span><strong>Task approach</strong><small>Choose whether JevCode plans before acting.</small></span><select value={mode} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task approach"><option value="agent">Agent</option><option value="plan">Plan first</option></select></label>
               <label className="composer-option-row composer-context-toggle"><span><strong>Project context</strong><small>Allow this task to inspect project files.</small></span><input type="checkbox" checked={includeProject} disabled={sessionLocked} onChange={event => setIncludeProject(event.target.checked)} /></label>
             </div>
-          </details>}
+          </details>
         </div>
         <div className="composer-controls-right">
-          {interfaceMode === 'maximum' && <>
-          <label className="sr-only" htmlFor="task-mode">Task mode</label>
-          <span className="composer-select-wrap mode-select-wrap"><span className="mode-select-icon"><SparkleMode /></span><select id="task-mode" value={mode} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task mode"><option value="agent">Agent</option><option value="plan">Plan first</option></select><ChevronDown size={12} /></span>
-          </>}
           <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked || sending} compact openRequest={modelPickerOpenRequest} onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />
           {busy ? <button type="button" className="composer-stop-button" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button> : <button type="submit" className="composer-send-button" disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open JevCode desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button>}
         </div>
@@ -90,8 +72,4 @@ export function WorkspaceComposer({
     </form>
     <div className="composer-footnote"><span className="privacy-dot" />{dropActive ? 'Drop files to attach them to this task' : workspaceMode === 'isolated' && workspaceUnavailable ? 'Choose a Git repository and a local starting branch for this isolated task' : !desktopAllowed ? 'Sample workspace · tasks and activity are illustrative' : !hasProject ? 'Choose a project to enable tasks' : !providerConnected ? 'Connect a provider in Settings to start a task' : provider?.protocol === 'preview' ? 'Local preview · project files stay on this device' : `Connected to ${provider?.name} · project files stay on this device`}{authRouteLabel && <span className="auth-route-indicator"><ShieldCheck size={10} />{authRouteLabel}</span>}</div>
   </section>;
-}
-
-function SparkleMode() {
-  return <Sparkles size={13} />;
 }
