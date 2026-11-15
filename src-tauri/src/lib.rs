@@ -13,6 +13,7 @@ mod git;
 mod guidance;
 mod guidance_scope;
 mod mcp;
+mod mcp_import;
 mod permissions;
 mod persistence;
 mod plans;
@@ -96,6 +97,8 @@ pub fn run() {
             commands::list_custom_commands,
             commands::preview_custom_command,
             commands::convert_custom_command,
+            commands::scan_mcp_imports,
+            commands::import_mcp_servers,
             commands::create_task_plan,
             commands::list_task_plans,
             commands::update_task_plan,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Globe2, LoaderCircle, PlugZap, Plus, RefreshCw, ShieldAlert, ShieldCheck, Terminal, Trash2, X } from 'lucide-react';
 import { command, desktopAvailable } from '../../lib/ipc';
-import type { McpScope, McpServerConfig, McpServerView, McpTransport, Project } from '../../types/domain';
+import type { McpImportServer, McpImportSource, McpScope, McpServerConfig, McpServerView, McpTransport, Project } from '../../types/domain';
 
 type SecretField = { name: string; value: string };
 type Draft = {
@@ -155,6 +155,8 @@ export function McpSettings({ project, onError }: { project?: Project; onError: 
       </table></div>
     </section>
 
+    {project && <ProjectImport project={project} onImported={() => void reload(true)} onError={onError} />}
+
     {draft && <div className="mcp-form-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDraft(null); }}>
       <section className="mcp-form" role="dialog" aria-modal="true" aria-labelledby="mcp-form-title">
         <header><div><span className="mcp-form-kicker">External tool integration</span><h2 id="mcp-form-title">{draft.id ? 'Edit server' : 'Add MCP server'}</h2></div><button className="mcp-icon-action" onClick={() => setDraft(null)} aria-label="Close"><X size={15} /></button></header>
@@ -180,4 +182,79 @@ function updateEnv(draft: Draft, setDraft: (value: Draft) => void, index: number
 function slug(value: string) { return value.toLowerCase().trim().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64); }
 function getKey(server: McpServerView) { return `${server.config.scope}:${server.config.projectId ?? ''}:${server.config.id}`; }
 function actionInput(server: McpServerView) { return { scope: server.config.scope, projectId: server.config.projectId, serverId: server.config.id }; }
+/** Previews the MCP servers in this project's files from other tools and imports the chosen ones disabled. */
+function ProjectImport({ project, onImported, onError }: { project: Project; onImported: () => void; onError: (error: string) => void }) {
+  const [sources, setSources] = useState<McpImportSource[] | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => { setSources(null); setPicked(new Set()); setNotice(null); }, [project.id]);
+
+  async function scan() {
+    setBusy(true);
+    try {
+      setSources(await command('scan_mcp_imports', { projectId: project.id }));
+      setPicked(new Set());
+    } catch (error) { onError(error instanceof Error ? error.message : 'MCP files could not be scanned.'); }
+    finally { setBusy(false); }
+  }
+
+  async function importPicked() {
+    const keys = [...picked];
+    if (!keys.length) return;
+    setBusy(true);
+    try {
+      await command('import_mcp_servers', { projectId: project.id, keys });
+      setSources(await command('scan_mcp_imports', { projectId: project.id }));
+      setPicked(new Set());
+      setNotice(`Imported ${keys.length} ${keys.length === 1 ? 'server' : 'servers'} disabled. Review and trust each one before it runs.`);
+    } catch (error) { onError(error instanceof Error ? error.message : 'MCP servers could not be imported.'); }
+    finally { setBusy(false); onImported(); }
+  }
+
+  return <section className="mcp-server-section" aria-labelledby="mcp-import-heading">
+    <div className="mcp-section-title">
+      <div><h2 id="mcp-import-heading">Import from other tools</h2><p>Reads MCP files in this project from Claude Code, Cursor, VS Code, and Gemini CLI. Nothing is imported until you choose it, and each server starts disabled and untrusted.</p></div>
+      <button className="mcp-add-button" onClick={() => void scan()} disabled={busy}>{busy && !sources ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}Scan project</button>
+    </div>
+    {sources === null ? <p className="mcp-import-hint">Scanning reads the files only. It does not start any server.</p>
+      : !sources.length ? <p className="mcp-import-hint">No MCP servers were found in this project's files.</p>
+        : <>
+          {sources.map(source => <div className="mcp-import-source" key={source.path}>
+            <code>{source.path}</code>
+            {source.problem && <p className="mcp-import-error">{source.problem}</p>}
+            <ul className="mcp-import-list">{source.servers.map(server => <ImportRow key={server.key} server={server} checked={picked.has(server.key)} disabled={busy} onToggle={on => setPicked(current => withKey(current, server.key, on))} />)}</ul>
+          </div>)}
+          <div className="mcp-import-actions">
+            <span>{picked.size ? `${picked.size} selected` : 'Select servers to import'}</span>
+            <button className="mcp-save-button" onClick={() => void importPicked()} disabled={busy || !picked.size}>{busy ? <LoaderCircle size={14} className="spin" /> : <ShieldCheck size={14} />}Import disabled</button>
+          </div>
+        </>}
+    {notice && <p className="mcp-import-notice" role="status">{notice}</p>}
+  </section>;
+}
+
+export function ImportRow({ server, checked, disabled, onToggle }:{ server: McpImportServer; checked: boolean; disabled: boolean; onToggle: (on: boolean) => void }) {
+  return <li>
+    <label className={`mcp-import-row${server.blocked ? ' is-blocked' : ''}`}>
+      <input type="checkbox" checked={checked} disabled={disabled || !!server.blocked} onChange={event => onToggle(event.target.checked)} aria-label={`Import ${server.name}`} />
+      <span>
+        <strong>{server.name}</strong>
+        {server.transport && <small>{server.transport}</small>}
+        {server.serverId && <small>Imported as <code>{server.serverId}</code></small>}
+        {server.envNames.length > 0 && <small>Environment: {server.envNames.join(', ')}{server.storedEnvNames.length > 0 ? ` · ${server.storedEnvNames.length} stored in the OS credential store` : ''}</small>}
+        {server.warnings.map(warning => <small className="mcp-import-warning" key={warning}>{warning}</small>)}
+        {server.blocked && <small className="mcp-import-error">{server.blocked}</small>}
+      </span>
+    </label>
+  </li>;
+}
+
+function withKey(set: Set<string>, key: string, on: boolean) {
+  const next = new Set(set);
+  if (on) next.add(key); else next.delete(key);
+  return next;
+}
+
 function formatStatus(status: McpServerView['status']) { return status === 'connected' ? 'Connected' : status === 'untrusted' ? 'Needs trust' : status === 'disabled' ? 'Disabled' : status === 'error' ? 'Error' : 'Disconnected'; }

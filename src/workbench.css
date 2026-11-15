@@ -672,6 +672,20 @@ body.is-resizing-pane .workbench { transition: none; }
 .mcp-env-heading { display: flex; align-items: center; justify-content: space-between; padding-top: 3px; border-top: 1px solid var(--wb-border); }
 .mcp-env-heading > div { display: grid; gap: 3px; }.mcp-env-heading strong { color: var(--wb-ink); font-size: 11px; }.mcp-env-heading small { color: var(--wb-muted); font-size: 11px; }
 .mcp-env-row { display: grid; grid-template-columns: minmax(90px, .7fr) minmax(0, 1.3fr) 25px; align-items: center; gap: 6px; }
+.mcp-import-hint, .mcp-import-notice { margin: 4px 0 12px; color: var(--wb-muted); font-size: 12px; }
+.mcp-import-notice { color: var(--wb-ink); }
+.mcp-import-source { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--wb-border); }
+.mcp-import-source > code { color: var(--wb-muted-strong); font-size: 11px; }
+.mcp-import-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.mcp-import-row { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px; padding: 8px 10px; border: 1px solid var(--wb-border); cursor: pointer; }
+.mcp-import-row.is-blocked { cursor: default; opacity: .75; }
+.mcp-import-row > span { display: grid; gap: 3px; min-width: 0; }
+.mcp-import-row strong { color: var(--wb-ink); font-size: 12px; font-weight: 620; }
+.mcp-import-row small { color: var(--wb-muted); font-size: 11px; overflow-wrap: anywhere; }
+.mcp-import-row code { color: var(--wb-muted-strong); font-size: 11px; }
+.mcp-import-warning { color: var(--wb-muted-strong); }
+.mcp-import-error { color: var(--wb-danger); font-size: 12px; overflow-wrap: anywhere; }
+.mcp-import-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; color: var(--wb-muted); font-size: 12px; }
 .mcp-form footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; padding-top: 8px; border-top: 1px solid var(--wb-border); }
 .mcp-form footer > span { display: flex; flex: 1 1 100%; align-items: flex-start; gap: 5px; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
 .mcp-form footer > span svg { flex: 0 0 auto; color: var(--wb-warning, #b17d3c); }

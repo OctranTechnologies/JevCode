@@ -234,6 +234,37 @@ pub async fn save_mcp_server(
         .await
 }
 
+/// Previews the MCP servers other tools keep in this project's files. Nothing is read
+/// into JevCode's settings until the user imports the ones they select.
+#[tauri::command]
+pub fn scan_mcp_imports(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<crate::mcp_import::McpImportSource>> {
+    let project = state.database.project(&project_id)?;
+    crate::mcp_import::scan(Path::new(&project.path), &project_id)
+}
+
+/// Imports the selected servers, disabled and untrusted. The keys name servers in
+/// a fresh scan, so the webview never supplies a file path or a value.
+#[tauri::command]
+pub async fn import_mcp_servers(
+    project_id: String,
+    keys: Vec<String>,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<McpServerConfig>> {
+    let project = state.database.project(&project_id)?;
+    crate::mcp_import::import(
+        &state.mcp,
+        &state.database,
+        &state.credentials,
+        Path::new(&project.path),
+        &project_id,
+        &keys,
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn set_mcp_server_enabled(
     input: McpServerActionInput,

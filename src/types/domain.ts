@@ -221,7 +221,24 @@ export interface TaskPlan {
   createdAt: string;
   updatedAt: string;
 }
-export type CustomCommandFormat = 'claude_command' | 'antigravity_workflow' | 'gemini_command';
+/** A project file other tools keep MCP servers in. `problem` says why it could not be read. */
+export interface McpImportSource {
+  path: string;
+  problem: string | null;
+  servers: McpImportServer[];
+}
+/** One server in such a file, as an import would save it. Values are never included. */
+export interface McpImportServer {
+  key: string;
+  name: string;
+  serverId: string | null;
+  transport: string | null;
+  envNames: string[];
+  storedEnvNames: string[];
+  warnings: string[];
+  blocked: string | null;
+}
+export type CustomCommandFormat ='claude_command' | 'antigravity_workflow' | 'gemini_command';
 /** A command another agent keeps in this project. `blocked` says why it cannot become a skill. */
 export interface CustomCommand {
   id: string;

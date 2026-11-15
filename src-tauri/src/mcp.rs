@@ -1002,7 +1002,7 @@ fn remote_content(value: &Value) -> String {
     }
 }
 
-fn validate_config(config: &mut McpServerConfig) -> AppResult<()> {
+pub(crate) fn validate_config(config: &mut McpServerConfig) -> AppResult<()> {
     if !valid_identifier(&config.id) || config.name.trim().is_empty() || config.name.len() > 120 {
         return Err(AppError::new(
             "invalid_mcp_config",
@@ -1083,7 +1083,7 @@ fn valid_identifier(value: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
-fn valid_env_name(value: &str) -> bool {
+pub(crate) fn valid_env_name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
@@ -1366,6 +1366,14 @@ fn read_project_servers(root: &Path, project_id: &str) -> AppResult<Vec<McpServe
             Ok(config)
         })
         .collect()
+}
+
+/// IDs of the servers already in the project's MCP file, so an import never reuses one.
+pub(crate) fn project_server_ids(root: &Path, project_id: &str) -> AppResult<Vec<String>> {
+    Ok(read_project_servers(root, project_id)?
+        .into_iter()
+        .map(|server| server.id)
+        .collect())
 }
 
 fn write_project_server(root: &Path, project_id: &str, config: &McpServerConfig) -> AppResult<()> {
