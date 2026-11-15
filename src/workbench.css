@@ -1144,7 +1144,7 @@ body.is-resizing-pane .workbench { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
   button:active { transform: none !important; }
-  details::details-content { transition: none !important; }
+  details::details-content, .command-palette::backdrop { transition: none !important; }
 }
 
 .workspace-offline-banner { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 34px; padding: 7px 16px; color: var(--wb-muted-strong); background: var(--wb-surface-quiet); border-bottom: 1px solid var(--wb-border); font-size: 11px; }
@@ -1774,7 +1774,16 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 @starting-style { .disclosure-menu[data-state='open'] > :not(summary), .model-picker-popover[data-state='open'] { opacity: 0; transform: scale(.97); } }
 /* The style guide forbids offset shadows, so popovers separate from the page with the stronger border token. */
 .permission-popover, .model-picker-popover, .composer-options-popover, .task-options-popover { border-color: var(--wb-border-strong); }
-.command-palette[open] { animation: fade-in 100ms var(--motion-out) both; }
+/* The command palette fades and scales from its top edge, like the menus. Its dialog stays open for the exit, so a reopen reverses in place. */
+.command-palette { transform-origin: top center; transition: opacity 150ms var(--motion-out), transform 150ms var(--motion-out); }
+.command-palette[data-state='open'] { opacity: 1; transform: none; }
+.command-palette[data-state='closed'] { opacity: 0; transform: scale(.97); transition-duration: 120ms; }
+.command-palette::backdrop { transition: opacity 150ms var(--motion-out); }
+.command-palette[data-state='closed']::backdrop { opacity: 0; }
+@starting-style {
+  .command-palette[open][data-state='open'] { opacity: 0; transform: scale(.97); }
+  .command-palette[open][data-state='open']::backdrop { opacity: 0; }
+}
 
 /* Pinned approval above the composer */
 .composer-dock > .approval-card { margin: 0 0 8px; }

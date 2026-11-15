@@ -12,6 +12,8 @@ export interface PaletteAction {
   run: () => void;
 }
 
+const closeMs = 120;
+
 export function CommandPalette({ open, onClose, actions }: { open: boolean; onClose: () => void; actions: PaletteAction[] }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -33,12 +35,17 @@ export function CommandPalette({ open, onClose, actions }: { open: boolean; onCl
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
-    if (open && !element.open) {
-      element.showModal();
+    if (open) {
+      if (!element.open) element.showModal();
       setQuery('');
       setActiveIndex(0);
       requestAnimationFrame(() => input.current?.focus());
-    } else if (!open && element.open) element.close();
+      return;
+    }
+    // The dialog stays open for its exit. A reopen before the timer runs cancels the close, so it reverses in place.
+    if (!element.open) return;
+    const timer = window.setTimeout(() => element.close(), closeMs);
+    return () => window.clearTimeout(timer);
   }, [open]);
 
   useEffect(() => {
@@ -51,7 +58,7 @@ export function CommandPalette({ open, onClose, actions }: { open: boolean; onCl
     action.run();
   }
 
-  return <dialog className="command-palette" ref={dialog} aria-label="Search tasks and commands" onClose={onClose} onClick={event => { if (event.target === dialog.current) onClose(); }}>
+  return <dialog className="command-palette" ref={dialog} aria-label="Search tasks and commands" data-state={open ? 'open' : 'closed'} inert={!open} onClose={onClose} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === dialog.current) onClose(); }}>
     <div className="palette-search-row"><Search size={18} /><input ref={input} value={query} onChange={event => { setQuery(event.target.value); setActiveIndex(0); }} onKeyDown={event => {
       if (event.key === 'ArrowDown') { event.preventDefault(); setActiveIndex(index => (index + 1) % Math.max(filtered.length, 1)); }
       else if (event.key === 'ArrowUp') { event.preventDefault(); setActiveIndex(index => (index - 1 + Math.max(filtered.length, 1)) % Math.max(filtered.length, 1)); }
