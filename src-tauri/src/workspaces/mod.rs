@@ -8,14 +8,16 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_DIRECTORY_ENTRIES: usize = 500;
 const MAX_SCANNED_FILES: usize = 20_000;
-const MAX_INSTRUCTION_BYTES: u64 = 64 * 1024;
+pub const MAX_INSTRUCTION_BYTES: u64 = 64 * 1024;
+/// Root files included in every new task. The context scanner reports these as loaded.
+pub const LOADED_INSTRUCTION_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 
 /// Load root-level project guidance without giving the webview a filesystem
 /// primitive. Symlinks and unexpectedly large instruction files are ignored.
 pub fn load_project_instructions(root: &Path) -> AppResult<Vec<(String, String)>> {
     let root = std::fs::canonicalize(root)?;
     let mut loaded = Vec::new();
-    for name in ["AGENTS.md", "CLAUDE.md"] {
+    for name in LOADED_INSTRUCTION_FILES {
         let path = root.join(name);
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,

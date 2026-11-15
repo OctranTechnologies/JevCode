@@ -699,6 +699,69 @@ pub struct ProjectMemoryView {
     pub updated_at: String,
 }
 
+/// Coding agent whose documented file conventions produced a context item.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextAgent {
+    Jevcode,
+    Codex,
+    ClaudeCode,
+    Cursor,
+    GeminiCli,
+    Antigravity,
+    Copilot,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextItemKind {
+    Instructions,
+    Rule,
+    Skill,
+    SkillIndex,
+    Command,
+    Workflow,
+    Settings,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextItemStatus {
+    Loaded,
+    Importable,
+    ImportedStale,
+    Imported,
+    Unsupported,
+    Skipped,
+}
+
+/// One discovered instruction, rule, skill, or configuration file. Secret
+/// findings carry line numbers only; values never leave the native process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectContextItem {
+    pub id: String,
+    pub path: String,
+    pub kind: ContextItemKind,
+    pub agents: Vec<ContextAgent>,
+    pub status: ContextItemStatus,
+    pub summary: String,
+    pub scope: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub warnings: Vec<String>,
+    pub secret_lines: Vec<u32>,
+    pub import_blocked: Option<String>,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectContextScan {
+    pub project_id: String,
+    pub items: Vec<ProjectContextItem>,
+    pub scan_limited: bool,
+}
+
 fn default_true() -> bool {
     true
 }

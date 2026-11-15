@@ -2,6 +2,7 @@ mod agent;
 mod auth;
 mod commands;
 mod config;
+mod context_migration;
 mod credentials;
 mod decisions;
 pub mod domain;
@@ -81,6 +82,8 @@ pub fn run() {
             commands::create_project,
             commands::remove_project_from_recents,
             commands::update_project_settings,
+            commands::scan_project_context,
+            commands::import_project_context,
             commands::list_project_memories,
             commands::save_project_memory,
             commands::refresh_project_memory_source,

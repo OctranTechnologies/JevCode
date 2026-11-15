@@ -30,6 +30,7 @@ JevCode is a desktop workspace for asking AI agents to work in local repositorie
 - Connect OpenAI, Anthropic, Google Gemini, OpenCode Zen, or OpenCode Go.
 - Review task-scoped diffs; accept or revert files while preserving earlier edits.
 - Choose direct project work or an isolated Git worktree.
+- See which instruction, rule, and skill files from Codex, Claude Code, Cursor, Gemini CLI, Antigravity, or Copilot JevCode loads, and copy reviewed ones into project instructions. Project files are never changed. See [docs/context-migration.md](docs/context-migration.md).
 - Use native permission prompts for edits and terminal commands.
 - Track local request usage and estimated costs.
 - Configure Jev as a separate decision assistant, or add MCP tools with explicit trust and permissions.

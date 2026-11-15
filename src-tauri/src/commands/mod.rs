@@ -1,6 +1,6 @@
 use crate::{
     agent::{self, EventSink},
-    auth,
+    auth, context_migration,
     domain::*,
     error::{AppError, AppResult},
     git,
@@ -389,6 +389,43 @@ pub fn update_project_settings(
     project.project_instructions = input.project_instructions;
     project.preferred_model = input.preferred_model;
     project.permissions = input.permissions;
+    state.database.save_project(&project)?;
+    Ok(project)
+}
+
+#[tauri::command]
+pub fn scan_project_context(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<ProjectContextScan> {
+    let project = state.database.project(&project_id)?;
+    context_migration::scan(
+        Path::new(&project.path),
+        &project.id,
+        &project.project_instructions,
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportProjectContextInput {
+    project_id: String,
+    item_ids: Vec<String>,
+}
+
+/// Copy reviewed context files into JevCode's stored project instructions.
+/// Project files are only read; their text is taken from a fresh native scan.
+#[tauri::command]
+pub fn import_project_context(
+    input: ImportProjectContextInput,
+    state: State<'_, SharedState>,
+) -> AppResult<Project> {
+    let mut project = state.database.project(&input.project_id)?;
+    project.project_instructions = context_migration::apply_imports(
+        Path::new(&project.path),
+        &project.project_instructions,
+        &input.item_ids,
+    )?;
     state.database.save_project(&project)?;
     Ok(project)
 }

@@ -286,6 +286,24 @@ export interface ProjectMemoryView {
   createdAt: string;
   updatedAt: string;
 }
+export type ContextAgent = 'jevcode' | 'codex' | 'claude_code' | 'cursor' | 'gemini_cli' | 'antigravity' | 'copilot';
+export type ContextItemKind = 'instructions' | 'rule' | 'skill' | 'skill_index' | 'command' | 'workflow' | 'settings';
+export type ContextItemStatus = 'loaded' | 'importable' | 'imported_stale' | 'imported' | 'unsupported' | 'skipped';
+export interface ProjectContextItem {
+  id: string;
+  path: string;
+  kind: ContextItemKind;
+  agents: ContextAgent[];
+  status: ContextItemStatus;
+  summary: string;
+  scope: string | null;
+  sizeBytes: number | null;
+  warnings: string[];
+  secretLines: number[];
+  importBlocked: string | null;
+  preview: string | null;
+}
+export interface ProjectContextScan { projectId: string; items: ProjectContextItem[]; scanLimited: boolean }
 export interface ProjectFileEntry { name: string; path: string; kind: 'file' | 'directory'; sizeBytes: number; isSymlink: boolean }
 export interface ChangedFile { path: string; status: string }
 export type ChangeKind = 'added' | 'modified' | 'deleted';
