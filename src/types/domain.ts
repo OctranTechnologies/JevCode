@@ -221,6 +221,21 @@ export interface TaskPlan {
   createdAt: string;
   updatedAt: string;
 }
+export type CustomCommandFormat = 'claude_command' | 'antigravity_workflow' | 'gemini_command';
+/** A command another agent keeps in this project. `blocked` says why it cannot become a skill. */
+export interface CustomCommand {
+  id: string;
+  format: CustomCommandFormat;
+  name: string | null;
+  description: string | null;
+  blocked: string | null;
+  warnings: string[];
+}
+export interface CustomCommandPreview {
+  command: CustomCommand;
+  target: string | null;
+  skillText: string | null;
+}
 /** A skill a user can invoke. Only valid skills can be invoked; the body is read when a task uses it. */
 export interface SkillSummary {
   id: string;

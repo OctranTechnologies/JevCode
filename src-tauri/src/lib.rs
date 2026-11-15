@@ -4,6 +4,7 @@ mod commands;
 mod config;
 mod context_migration;
 mod credentials;
+mod custom_commands;
 mod decisions;
 pub mod domain;
 mod error;
@@ -92,6 +93,9 @@ pub fn run() {
             commands::import_project_context,
             commands::effective_context,
             commands::list_skills,
+            commands::list_custom_commands,
+            commands::preview_custom_command,
+            commands::convert_custom_command,
             commands::create_task_plan,
             commands::list_task_plans,
             commands::update_task_plan,

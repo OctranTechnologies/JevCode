@@ -11,6 +11,7 @@ import { normalizeError } from '../../lib/errors';
 import { displayPath } from '../../lib/paths';
 import { TaskWorktreesPanel } from './TaskWorktreesPanel';
 import { ProjectMemoryPanel } from './ProjectMemoryPanel';
+import { CustomCommandsPanel } from './CustomCommandsPanel';
 import { ProjectContextPanel } from './ProjectContextPanel';
 import type {
   AgentSession, ChangedFile, PermissionDecision, PermissionPolicy, Project,
@@ -241,6 +242,7 @@ export function ProjectOverview({
       </div>
 
       <ProjectContextPanel project={project} desktopAllowed={desktopAllowed} settingsDirty={instructions !== project.projectInstructions || preferredModel !== (project.preferredModel ?? '') || !samePolicy(permissions, project.permissions)} onProjectUpdated={onProjectUpdated} />
+      <CustomCommandsPanel project={project} desktopAllowed={desktopAllowed} />
 
       <section className="project-instructions-section">
         <div className="project-instructions-heading"><div><h2>Project instructions</h2><p>These are included when a new agent task starts in this project.</p></div><button className="project-save-button" onClick={() => void saveSettings()} disabled={!desktopAllowed || saving || (instructions === project.projectInstructions && precedence === project.guidancePrecedence && preferredModel === (project.preferredModel ?? '') && samePolicy(permissions, project.permissions))}>{saving ? <LoaderCircle size={13} className="spin" /> : <Save size={13} />}{saving ? 'Saving' : 'Save changes'}</button></div>

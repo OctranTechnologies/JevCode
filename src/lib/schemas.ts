@@ -56,7 +56,9 @@ export const projectProfilePreviewSchema = z.object({ name: z.string(), instruct
 export const taskPlanSchema = z.object({ id: z.string(), projectId: z.string(), sourceSessionId: z.string(), title: z.string(), markdown: z.string(), version: z.number().int().positive(), history: z.array(z.object({ version: z.number().int().positive(), markdown: z.string(), savedAt: z.string() })).default([]), createdAt: z.string(), updatedAt: z.string() });
 
 
-export const skillSummarySchema = z.object({ id: z.string(), name: z.string(), description: z.string(), scope: z.enum(['project', 'user']), source: z.string(), version: z.string().nullable().default(null), fingerprint: z.string(), bytes: z.number().int().nonnegative(), allowedTools: z.array(z.string()).default([]), valid: z.boolean(), warnings: z.array(z.string()).default([]) });
+export const customCommandSchema = z.object({ id: z.string(), format: z.enum(['claude_command', 'antigravity_workflow', 'gemini_command']), name: z.string().nullable(), description: z.string().nullable(), blocked: z.string().nullable(), warnings: z.array(z.string()) });
+export const customCommandPreviewSchema = z.object({ command: customCommandSchema, target: z.string().nullable(), skillText: z.string().nullable() });
+export const skillSummarySchema =z.object({ id: z.string(), name: z.string(), description: z.string(), scope: z.enum(['project', 'user']), source: z.string(), version: z.string().nullable().default(null), fingerprint: z.string(), bytes: z.number().int().nonnegative(), allowedTools: z.array(z.string()).default([]), valid: z.boolean(), warnings: z.array(z.string()).default([]) });
 
 export const effectiveContextSchema = z.object({ basis: z.enum(['task', 'preview']), budgetBytes: z.number().int().nonnegative(), usedBytes: z.number().int().nonnegative(), resolverVersion: z.number().int().nonnegative(), root: z.enum(['project', 'task_workspace']), sources: z.array(taskContextSourceSchema.extend({ change: z.enum(['unchanged', 'changed', 'removed', 'added']).nullable().default(null), preview: z.string().nullable().default(null) })) });
 

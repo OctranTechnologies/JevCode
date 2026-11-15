@@ -587,6 +587,38 @@ pub async fn export_task_transcript(
 
 /// Skills a user can invoke in a project: project skills, then user skills.
 #[tauri::command]
+pub fn list_custom_commands(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<crate::custom_commands::CustomCommand>> {
+    let project = state.database.project(&project_id)?;
+    Ok(crate::custom_commands::list(Path::new(&project.path)))
+}
+
+#[tauri::command]
+pub fn preview_custom_command(
+    project_id: String,
+    id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<crate::custom_commands::CustomCommandPreview> {
+    let project = state.database.project(&project_id)?;
+    crate::custom_commands::preview(Path::new(&project.path), &id)
+}
+
+/// Creates the skill for a custom command. The webview sends only the command's
+/// id; the file is found again from the project, never from a path it supplies.
+#[tauri::command]
+pub fn convert_custom_command(
+    project_id: String,
+    id: String,
+    confirmed: bool,
+    state: State<'_, SharedState>,
+) -> AppResult<String> {
+    let project = state.database.project(&project_id)?;
+    crate::custom_commands::convert(Path::new(&project.path), &id, confirmed)
+}
+
+#[tauri::command]
 pub fn list_skills(
     project_id: String,
     state: State<'_, SharedState>,
