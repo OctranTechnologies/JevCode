@@ -4,6 +4,7 @@
   "providerId": "preview",
   "modelId": "workspace-explorer",
   "title": "Review Git status",
+  "taskMode": "agent",
   "status": "waiting_for_permission",
   "messages": [{ "id": "message", "role": "assistant", "content": "Inspecting project", "toolCalls": [{ "id": "call", "name": "git_status", "arguments": {} }], "toolResult": null, "createdAt": "2026-10-09T01:00:00+00:00", "providerData": null }],
   "permissionPolicy": { "readFiles": "allow", "git": "ask", "writeFiles": "deny", "shell": "deny", "externalFiles": "deny", "maxToolRounds": 8 },
