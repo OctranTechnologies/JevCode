@@ -11,14 +11,14 @@ use crate::{
         TaskContextSource, TaskContextStatus,
     },
     guidance::{
-        display_path, fingerprint, included_bytes, included_summary, read_guidance,
-        MAX_TASK_GUIDANCE_BYTES,
+        display_path, fingerprint, included_bytes, included_summary, read_guidance, root_choices,
+        RootChoice, MAX_TASK_GUIDANCE_BYTES,
     },
 };
 use ignore::WalkBuilder;
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -62,27 +62,34 @@ pub fn discover(
             candidates.push((relative, kind, entry.path().to_path_buf(), metadata));
         }
     }
-    // An override file has no effect under the default precedence. Under
-    // AgentsOverride it replaces AGENTS.md in its own folder.
-    let overridden: HashSet<String> = candidates
+    // Each folder reads one root file, chosen by the precedence, and reports the others.
+    let present: HashSet<&str> = candidates
         .iter()
-        .filter(|(relative, ..)| relative.ends_with("/AGENTS.override.md"))
-        .map(|(relative, ..)| folder_of(relative).to_owned())
+        .map(|(relative, ..)| relative.as_str())
         .collect();
+    let folders: HashSet<&str> = candidates
+        .iter()
+        .map(|(relative, ..)| folder_of(relative))
+        .collect();
+    let mut choices: HashMap<String, RootChoice> = HashMap::new();
+    for folder in folders {
+        let exists = |name: &str| present.contains(join_relative(folder, name).as_str());
+        for (name, choice) in root_choices(precedence, false, exists) {
+            choices.insert(join_relative(folder, name), choice);
+        }
+    }
     let mut found = Vec::new();
     for (relative, kind, path, metadata) in candidates {
-        let name = relative.rsplit('/').next().unwrap_or(&relative);
-        if name == "AGENTS.override.md" && precedence == GuidancePrecedence::Default {
-            continue;
-        }
-        if name == "AGENTS.md"
-            && precedence == GuidancePrecedence::AgentsOverride
-            && overridden.contains(folder_of(&relative))
+        match choices
+            .get(&relative)
+            .and_then(|choice| choice.skip_reason())
         {
-            continue;
-        }
-        if let Some(source) = record(&path, &relative, kind, repository, &metadata) {
-            found.push(source);
+            Some(reason) => found.push(skipped(&path, repository, &metadata, reason)),
+            None => {
+                if let Some(source) = record(&path, &relative, kind, repository, &metadata) {
+                    found.push(source);
+                }
+            }
         }
     }
     found.sort_by(|left, right| left.path.cmp(&right.path));
@@ -103,7 +110,10 @@ fn classify(relative: &str) -> Option<Kind> {
     // Guidance folders that are hidden (such as `.github/`) are not treated as nested scopes.
     let folder = relative.rsplit_once('/').map(|(folder, _)| folder)?;
     let hidden_folder = folder.split('/').any(|part| part.starts_with('.'));
-    let guidance_name = matches!(name, "AGENTS.md" | "AGENTS.override.md" | "CLAUDE.md");
+    let guidance_name = matches!(
+        name,
+        "AGENTS.md" | "AGENTS.override.md" | "GEMINI.md" | "CLAUDE.md"
+    );
     if guidance_name && !hidden_folder {
         return Some(Kind::Nested);
     }
@@ -192,6 +202,37 @@ fn record(
 
 fn folder_of(relative: &str) -> &str {
     relative.rsplit_once('/').map_or("", |(folder, _)| folder)
+}
+
+fn join_relative(folder: &str, name: &str) -> String {
+    if folder.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{folder}/{name}")
+    }
+}
+
+/// Nested guidance the task will not read, with the reason it is listed.
+fn skipped(
+    path: &Path,
+    repository: &Path,
+    metadata: &std::fs::Metadata,
+    reason: String,
+) -> TaskContextSource {
+    TaskContextSource {
+        path: display_path(repository, path),
+        scope: TaskContextScope::Nested,
+        status: TaskContextStatus::Skipped,
+        summary: reason,
+        bytes: if metadata.is_file() {
+            metadata.len()
+        } else {
+            0
+        },
+        secret_lines: Vec::new(),
+        fingerprint: None,
+        globs: Vec::new(),
+    }
 }
 
 fn list(value: Option<String>) -> Vec<String> {
@@ -575,6 +616,13 @@ mod tests {
         );
     }
 
+    fn status_of(found: &[TaskContextSource], path: &str) -> Option<TaskContextStatus> {
+        found
+            .iter()
+            .find(|source| source.path == path)
+            .map(|source| source.status)
+    }
+
     #[test]
     fn nested_override_replaces_nested_agents_md_under_its_precedence() {
         let repo = project_with_rules();
@@ -585,19 +633,52 @@ mod tests {
         );
 
         let default = discover(repo.path(), repo.path(), GuidancePrecedence::Default);
-        assert!(default
+        assert_eq!(
+            status_of(&default, "src/api/AGENTS.md"),
+            Some(TaskContextStatus::Pending)
+        );
+        let unused = default
             .iter()
-            .any(|source| source.path == "src/api/AGENTS.md"));
-        assert!(default
-            .iter()
-            .all(|source| source.path != "src/api/AGENTS.override.md"));
+            .find(|source| source.path == "src/api/AGENTS.override.md")
+            .unwrap();
+        assert_eq!(unused.status, TaskContextStatus::Skipped);
+        assert!(unused.summary.starts_with("Not read"));
 
         let overridden = discover(repo.path(), repo.path(), GuidancePrecedence::AgentsOverride);
-        assert!(overridden
+        assert_eq!(
+            status_of(&overridden, "src/api/AGENTS.override.md"),
+            Some(TaskContextStatus::Pending)
+        );
+        let superseded = overridden
             .iter()
-            .any(|source| source.path == "src/api/AGENTS.override.md"));
-        assert!(overridden
-            .iter()
-            .all(|source| source.path != "src/api/AGENTS.md"));
+            .find(|source| source.path == "src/api/AGENTS.md")
+            .unwrap();
+        assert_eq!(superseded.status, TaskContextStatus::Skipped);
+        assert_eq!(
+            superseded.summary,
+            "Not used: AGENTS.override.md takes precedence in this folder."
+        );
+    }
+
+    #[test]
+    fn nested_gemini_files_follow_the_root_guidance_setting() {
+        let repo = project_with_rules();
+        write(repo.path(), "src/api/GEMINI.md", b"Gemini API rules.");
+
+        let default = discover(repo.path(), repo.path(), GuidancePrecedence::Default);
+        assert_eq!(
+            status_of(&default, "src/api/GEMINI.md"),
+            Some(TaskContextStatus::Skipped)
+        );
+
+        let gemini = discover(repo.path(), repo.path(), GuidancePrecedence::GeminiFirst);
+        assert_eq!(
+            status_of(&gemini, "src/api/GEMINI.md"),
+            Some(TaskContextStatus::Pending)
+        );
+        assert_eq!(
+            status_of(&gemini, "src/api/AGENTS.md"),
+            Some(TaskContextStatus::Skipped)
+        );
     }
 }

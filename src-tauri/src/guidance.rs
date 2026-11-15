@@ -102,13 +102,22 @@ pub fn resolve(
 
     let repository = boundary.unwrap_or_else(|| project.clone());
     for (folder, scope) in folders {
-        for name in folder_files(&folder, precedence) {
+        let is_repository_root = folder == repository;
+        let mut files = root_choices(precedence, is_repository_root, |name| {
+            std::fs::symlink_metadata(folder.join(name)).is_ok()
+        });
+        files.push(("CLAUDE.md", RootChoice::Read));
+        for (name, choice) in files {
             let path = folder.join(name);
             let Ok(metadata) = std::fs::symlink_metadata(&path) else {
                 continue;
             };
             let label = display_path(&repository, &path);
-            match read_guidance(&path, &metadata) {
+            let text = match choice.skip_reason() {
+                Some(reason) => Err(reason),
+                None => read_guidance(&path, &metadata),
+            };
+            match text {
                 Ok(text) => {
                     let bytes = text.len() as u64;
                     if budget + bytes > MAX_TASK_GUIDANCE_BYTES {
@@ -167,19 +176,84 @@ pub fn resolve(
     Ok(resolved)
 }
 
-/// The guidance files one folder contributes. Under `AgentsOverride` a folder's
-/// AGENTS.override.md takes the place of its AGENTS.md; CLAUDE.md is always read.
-fn folder_files(folder: &Path, precedence: GuidancePrecedence) -> [&'static str; 2] {
-    let overridden = precedence == GuidancePrecedence::AgentsOverride
-        && std::fs::symlink_metadata(folder.join("AGENTS.override.md")).is_ok();
-    [
-        if overridden {
-            "AGENTS.override.md"
-        } else {
-            "AGENTS.md"
-        },
-        "CLAUDE.md",
-    ]
+/// The Copilot instructions live only at the repository root, so other folders
+/// never read them.
+const COPILOT_INSTRUCTIONS: &str = ".github/copilot-instructions.md";
+
+/// How the current precedence treats one root guidance file a folder has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootChoice {
+    Read,
+    /// Another file in the same folder takes precedence.
+    Superseded(&'static str),
+    /// The precedence does not read this kind of file.
+    NotSelected,
+}
+
+impl RootChoice {
+    /// Why the file is not read, or `None` when it is read.
+    pub(crate) fn skip_reason(self) -> Option<String> {
+        match self {
+            Self::Read => None,
+            Self::Superseded(winner) => Some(format!(
+                "Not used: {winner} takes precedence in this folder."
+            )),
+            Self::NotSelected => Some("Not read under the current root guidance setting.".into()),
+        }
+    }
+}
+
+/// The files a precedence may read as a folder's root guidance, most preferred first.
+fn preferred_files(
+    precedence: GuidancePrecedence,
+    repository_root: bool,
+) -> &'static [&'static str] {
+    match (precedence, repository_root) {
+        (GuidancePrecedence::Default, _) => &["AGENTS.md"],
+        (GuidancePrecedence::AgentsOverride, _) => &["AGENTS.override.md", "AGENTS.md"],
+        (GuidancePrecedence::GeminiFirst, _) => &["GEMINI.md", "AGENTS.md"],
+        (GuidancePrecedence::CopilotFirst, true) => &[COPILOT_INSTRUCTIONS, "AGENTS.md"],
+        (GuidancePrecedence::CopilotFirst, false) => &["AGENTS.md"],
+    }
+}
+
+/// Every root guidance file a folder can have, so each one that is present is reported.
+fn known_files(repository_root: bool) -> &'static [&'static str] {
+    if repository_root {
+        &[
+            "AGENTS.override.md",
+            "AGENTS.md",
+            "GEMINI.md",
+            COPILOT_INSTRUCTIONS,
+        ]
+    } else {
+        &["AGENTS.override.md", "AGENTS.md", "GEMINI.md"]
+    }
+}
+
+/// How each root guidance file a folder has is treated. The first preferred file
+/// that exists is read, and every other file the folder has is reported with its
+/// reason. Nothing is merged silently. CLAUDE.md is read separately, as always.
+pub(crate) fn root_choices(
+    precedence: GuidancePrecedence,
+    repository_root: bool,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<(&'static str, RootChoice)> {
+    let preferred = preferred_files(precedence, repository_root);
+    let winner = preferred.iter().copied().find(|name| exists(name));
+    known_files(repository_root)
+        .iter()
+        .copied()
+        .filter(|name| exists(name))
+        .map(|name| {
+            let choice = match winner {
+                Some(winner) if winner == name => RootChoice::Read,
+                Some(winner) if preferred.contains(&name) => RootChoice::Superseded(winner),
+                _ => RootChoice::NotSelected,
+            };
+            (name, choice)
+        })
+        .collect()
 }
 
 /// The folder resolved paths are shown relative to: the repository root when it
@@ -841,6 +915,76 @@ mod tests {
             texts(&overridden),
             ["repository", "packages", "override app", "app claude"]
         );
+    }
+
+    #[test]
+    fn gemini_first_reads_gemini_md_and_lists_agents_md_as_not_used() {
+        let repo = monorepo();
+        write(repo.path(), "GEMINI.md", b"gemini repository");
+        let app = repo.path().join("packages/app");
+
+        let resolved =
+            resolve(&app, Some(repo.path()), "", GuidancePrecedence::GeminiFirst).unwrap();
+
+        assert!(included_paths(&resolved).contains(&"GEMINI.md"));
+        assert!(!included_paths(&resolved).contains(&"AGENTS.md"));
+        let superseded = reported(&resolved, "AGENTS.md");
+        assert_eq!(superseded.status, TaskContextStatus::Skipped);
+        assert_eq!(
+            superseded.summary,
+            "Not used: GEMINI.md takes precedence in this folder."
+        );
+        // A folder without GEMINI.md still falls back to its AGENTS.md.
+        assert!(included_paths(&resolved).contains(&"packages/app/AGENTS.md"));
+    }
+
+    #[test]
+    fn default_lists_gemini_md_as_not_read() {
+        let repo = monorepo();
+        write(repo.path(), "GEMINI.md", b"gemini repository");
+        let app = repo.path().join("packages/app");
+
+        let resolved = resolve(&app, Some(repo.path()), "", GuidancePrecedence::Default).unwrap();
+
+        assert!(!included_paths(&resolved).contains(&"GEMINI.md"));
+        let unread = reported(&resolved, "GEMINI.md");
+        assert_eq!(unread.status, TaskContextStatus::Skipped);
+        assert!(unread.summary.starts_with("Not read"));
+    }
+
+    #[test]
+    fn copilot_first_reads_repository_instructions_at_the_root_only() {
+        let repo = monorepo();
+        write(
+            repo.path(),
+            ".github/copilot-instructions.md",
+            b"copilot repository",
+        );
+        write(
+            repo.path(),
+            "packages/app/.github/copilot-instructions.md",
+            b"not read below the repository root",
+        );
+        let app = repo.path().join("packages/app");
+
+        let resolved = resolve(
+            &app,
+            Some(repo.path()),
+            "",
+            GuidancePrecedence::CopilotFirst,
+        )
+        .unwrap();
+
+        assert!(included_paths(&resolved).contains(&".github/copilot-instructions.md"));
+        assert_eq!(
+            reported(&resolved, "AGENTS.md").status,
+            TaskContextStatus::Skipped
+        );
+        assert!(included_paths(&resolved).contains(&"packages/app/AGENTS.md"));
+        assert!(resolved
+            .sources
+            .iter()
+            .all(|source| source.path != "packages/app/.github/copilot-instructions.md"));
     }
 
     #[test]

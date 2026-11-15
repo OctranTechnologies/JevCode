@@ -201,7 +201,7 @@ export interface ProjectProfilePreview {
   instructionsChanged: boolean;
   preferredModel: string | null;
   modelChanged: boolean;
-  guidancePrecedence: 'default' | 'agents_override';
+  guidancePrecedence: 'default' | 'agents_override' | 'gemini_first' | 'copilot_first';
   precedenceChanged: boolean;
 }
 /** A plan from a read-only Plan task. Editing it keeps earlier versions; it grants no permissions. */
@@ -340,7 +340,7 @@ export interface Project {
   projectInstructions: string;
   preferredModel: string | null;
   permissions: PermissionPolicy;
-  guidancePrecedence: 'default' | 'agents_override';
+  guidancePrecedence: 'default' | 'agents_override' | 'gemini_first' | 'copilot_first';
   isRecent: boolean;
   createdAt: string;
 }

@@ -345,14 +345,20 @@ pub struct TaskContextSource {
     pub globs: Vec<String>,
 }
 
-/// `Default` reads AGENTS.md and CLAUDE.md in each folder. `AgentsOverride` reads
-/// AGENTS.override.md in place of AGENTS.md where a folder has one, as Codex does.
+/// Which root guidance file a folder contributes. CLAUDE.md is always read. Of the
+/// other files a folder has, the policy reads one and lists the rest as not used,
+/// so conflicting guidance is never merged silently. `Default` reads AGENTS.md.
+/// `AgentsOverride` reads AGENTS.override.md in place of AGENTS.md, as Codex does.
+/// `GeminiFirst` and `CopilotFirst` prefer GEMINI.md or the repository's Copilot
+/// instructions, and fall back to AGENTS.md.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GuidancePrecedence {
     #[default]
     Default,
     AgentsOverride,
+    GeminiFirst,
+    CopilotFirst,
 }
 
 /// The effective-context view. A task compares its recorded sources with the

@@ -304,4 +304,22 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(&target.permissions).unwrap(), before);
     }
+
+    #[test]
+    fn profiles_carry_every_root_guidance_setting() {
+        for (name, expected) in [
+            ("default", GuidancePrecedence::Default),
+            ("agents_override", GuidancePrecedence::AgentsOverride),
+            ("gemini_first", GuidancePrecedence::GeminiFirst),
+            ("copilot_first", GuidancePrecedence::CopilotFirst),
+        ] {
+            let text = profile_text("").replace(
+                "\"guidancePrecedence\":\"agents_override\"",
+                &format!("\"guidancePrecedence\":\"{name}\""),
+            );
+            let profile = parse(text.as_bytes()).unwrap();
+
+            assert_eq!(profile.guidance_precedence, expected);
+        }
+    }
 }
