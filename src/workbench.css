@@ -1895,6 +1895,10 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .composer-skill-choice em { flex: 0 0 auto; padding: 0 4px; color: var(--wb-muted); border: 1px solid var(--wb-border); font-size: 11px; font-style: normal; }
 .composer-skill-choice small { overflow: hidden; color: var(--wb-muted); text-overflow: ellipsis; white-space: nowrap; }
 .composer-skill-empty { margin: 4px 8px; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
+.composer-skill-search { display: flex; align-items: center; gap: 6px; min-height: 31px; margin: 0 0 4px; padding: 0 8px; color: var(--wb-muted); background: var(--wb-surface-quiet); border: 1px solid var(--wb-border); }
+.composer-skill-search:focus-within { border-color: var(--wb-accent-line); }
+.composer-skill-search input { flex: 1; min-width: 0; height: 29px; padding: 0; color: var(--wb-ink); background: transparent; border: 0; outline: 0; font: inherit; font-size: 11px; }
+.composer-skill-search input::placeholder { color: var(--wb-muted); }
 
 .project-profile-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
 .project-profile-row > button { min-height: 29px; padding: 0 9px; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 1px solid var(--wb-border-strong); border-radius: 0; }

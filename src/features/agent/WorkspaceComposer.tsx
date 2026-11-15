@@ -1,8 +1,9 @@
-import { ArrowUp, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { ArrowUp, ChevronDown, FilePlus2, Paperclip, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import type { ModelPreferences, ModelReference, Provider, SkillSummary, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 import { DisclosureMenu } from '../../components/DisclosureMenu';
+import { filterSkills } from '../../lib/skills';
 
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
@@ -53,6 +54,9 @@ export function WorkspaceComposer({
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
   const unavailable = !desktopAllowed || !hasProject || !providerConnected || workspaceUnavailable;
   const availableSkills = skills.filter(skill => skill.valid && !selectedSkills.includes(skill.id));
+  const [skillQuery, setSkillQuery] = useState('');
+  const searchableSkills = availableSkills.length > 5;
+  const shownSkills = searchableSkills ? filterSkills(availableSkills, skillQuery) : availableSkills;
   return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {mode === 'plan' && <p role="status" className="composer-footnote">Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.</p>}
     {approval}
@@ -66,8 +70,10 @@ export function WorkspaceComposer({
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
           {skills.some(skill => skill.valid) && <DisclosureMenu className="composer-skill-menu" closeOnChoice summary={<><Sparkles size={14} /><span>Skill</span><ChevronDown size={12} /></>} summaryTitle="Invoke a project or user skill for this task">
             <div className="composer-skill-popover" role="group" aria-label="Skills you can add to this task">
-              {availableSkills.map(skill => <button type="button" className="composer-skill-choice" key={skill.id} disabled={busy} onClick={() => onSkillSelect(skill.id)}><span><strong>{skill.name}</strong><em>{skill.scope === 'project' ? 'Project' : 'User'}</em></span>{skill.description && <small>{skill.description}</small>}</button>)}
+              {searchableSkills && <div className="composer-skill-search"><Search size={13} /><input type="search" value={skillQuery} onChange={event => setSkillQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Search skills" aria-label="Search skills" /></div>}
+              {shownSkills.map(skill => <button type="button" className="composer-skill-choice" key={skill.id} disabled={busy} onClick={() => { setSkillQuery(''); onSkillSelect(skill.id); }}><span><strong>{skill.name}</strong><em>{skill.scope === 'project' ? 'Project' : 'User'}</em></span>{skill.description && <small>{skill.description}</small>}</button>)}
               {availableSkills.length === 0 && <p className="composer-skill-empty">Every available skill is already attached.</p>}
+              {availableSkills.length > 0 && shownSkills.length === 0 && <p className="composer-skill-empty">No skills match “{skillQuery.trim()}”.</p>}
             </div>
           </DisclosureMenu>}
           <DisclosureMenu className="composer-options-menu" summary={<><SlidersHorizontal size={14} /><span>Options</span>{mode === 'plan' && <span className="task-option-badge">Plan · read-only</span>}{!includeProject && <span className="task-option-badge">No project context</span>}<ChevronDown size={12} /></>}>
