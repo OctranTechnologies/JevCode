@@ -1,6 +1,6 @@
-import { ArrowUp, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizontal, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, FilePlus2, Paperclip, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { ModelPreferences, ModelReference, Provider, WorkspaceMode } from '../../types/domain';
+import type { ModelPreferences, ModelReference, Provider, SkillSummary, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 import { DisclosureMenu } from '../../components/DisclosureMenu';
 
@@ -8,7 +8,7 @@ export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, baseBranch, branches, canIsolate, modelPickerOpenRequest,
   onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
-  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false,
+  sessionLocked, desktopAllowed, providerConnected, authRouteLabel, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false, skills, selectedSkills, onSkillSelect, onSkillRemove,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -44,6 +44,10 @@ export function WorkspaceComposer({
   approval?: ReactNode;
   lastPrompt: string;
   dropActive?: boolean;
+  skills: SkillSummary[];
+  selectedSkills: string[];
+  onSkillSelect: (id: string) => void;
+  onSkillRemove: (id: string) => void;
 }) {
   const provider = providers.find(item => item.id === providerId);
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
@@ -52,12 +56,14 @@ export function WorkspaceComposer({
     {mode === 'plan' && <p role="status" className="composer-footnote">Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.</p>}
     {approval}
     <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); }}>
+      {selectedSkills.length > 0 && <div className="attached-files" aria-label="Skills for this task">{selectedSkills.map(id => { const skill = skills.find(item => item.id === id); const label = skill?.name ?? id; return <span className="attached-file" key={id}><Sparkles size={12} /><span>Skill: {label}</span><button type="button" onClick={() => onSkillRemove(id)} aria-label={`Remove skill ${label}`}><X size={12} /></button></span>; })}</div>}
       {attachments.length > 0 && <div className="attached-files" aria-label="Files selected as task context">{attachments.map(path => <span className="attached-file" key={path}><FilePlus2 size={12} /><span>{path}</span><button type="button" onClick={() => onRemoveAttachment(path)} aria-label={`Remove ${path}`}><X size={12} /></button></span>)}</div>}
       <label className="sr-only" htmlFor="workspace-prompt">Describe a task for JevCode</label>
       <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={!hasProject ? 'Open a project to start a task…' : busy ? 'JevCode is working. Draft your next message here…' : 'Ask JevCode to explore, explain, or change something…'} rows={3} onKeyDown={event => { if (event.key === 'ArrowUp' && !draft && lastPrompt) { event.preventDefault(); setDraft(lastPrompt); } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); } }} />
       <div className="composer-toolbar">
         <div className="composer-tool-actions">
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
+          {skills.some(skill => skill.valid) && <select className="composer-skill-select" aria-label="Add a skill to this task" value="" disabled={busy} onChange={event => { if (event.target.value) onSkillSelect(event.target.value); }} title="Invoke a project or user skill for this task"><option value="">Skill</option>{skills.filter(skill => skill.valid && !selectedSkills.includes(skill.id)).map(skill => <option key={skill.id} value={skill.id}>{skill.name} · {skill.scope === 'project' ? 'project' : 'user'}</option>)}</select>}
           <DisclosureMenu className="composer-options-menu" summary={<><SlidersHorizontal size={14} /><span>Options</span>{mode === 'plan' && <span className="task-option-badge">Plan · read-only</span>}{!includeProject && <span className="task-option-badge">No project context</span>}<ChevronDown size={12} /></>}>
             <div className="composer-options-popover">
               <label className="composer-option-row"><span><strong>Task approach</strong><small>Plan tasks stay read-only. Implementation requires a new Agent task.</small></span><select value={mode} disabled={sessionLocked || sending || busy} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task approach"><option value="agent">Agent</option><option value="plan">Plan · read-only</option></select></label>

@@ -10,6 +10,7 @@ const scopeLabel: Record<EffectiveContextSource['scope'], string> = {
   folder: 'This folder',
   nested: 'Folder guidance',
   scoped: 'Path rule',
+  skill: 'Skill',
 };
 
 const statusLabel: Record<EffectiveContextSource['status'], string> = {

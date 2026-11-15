@@ -1886,3 +1886,5 @@ details.activity-result[open]::details-content, details.simple-activity-summary[
 .effective-context-empty, .effective-context-error { margin: 0; color: var(--wb-muted); font-size: 11px; line-height: 1.5; }
 .effective-context-error { color: var(--wb-danger); }
 .effective-context-source.is-pending .effective-context-status { color: var(--wb-muted-strong); }
+.composer-skill-select { height: 29px; max-width: 150px; padding: 0 22px 0 8px; color: var(--wb-muted-strong); font-size: 11px; background: transparent; border: 1px solid transparent; border-radius: 0; }
+.composer-skill-select:hover:not(:disabled), .composer-skill-select:focus-visible { color: var(--wb-ink); border-color: var(--wb-border); }

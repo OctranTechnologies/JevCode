@@ -411,6 +411,16 @@ pub fn scan_project_context(
     )
 }
 
+/// Skills a user can invoke in a project: project skills, then user skills.
+#[tauri::command]
+pub fn list_skills(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<Vec<crate::skills::SkillSummary>> {
+    let project = state.database.project(&project_id)?;
+    Ok(crate::skills::discover(Path::new(&project.path)))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveContextInput {
@@ -1471,10 +1481,18 @@ fn stricter_permission(
 pub fn send_message(
     session_id: String,
     content: String,
+    skill_ids: Option<Vec<String>>,
     app: AppHandle,
     state: State<'_, SharedState>,
 ) -> AppResult<AgentSession> {
     let content = content.trim();
+    let skill_ids = skill_ids.unwrap_or_default();
+    if skill_ids.len() > 8 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Choose at most 8 skills for one message.",
+        ));
+    }
     if content.is_empty() || content.len() > 32768 {
         return Err(AppError::new(
             "invalid_input",
@@ -1507,6 +1525,12 @@ pub fn send_message(
             .protected_instructions
             .push(content.to_owned());
         session.working_context.outstanding_tasks = vec![content.to_owned()];
+        if !skill_ids.is_empty() {
+            let project = state.database.project(&session.project_id)?;
+            for skill_id in &skill_ids {
+                crate::skills::attach(&mut session, Path::new(&project.path), skill_id, &now())?;
+            }
+        }
         let answering_question = session.status == SessionStatus::WaitingForUser;
         if answering_question {
             agent::accept_user_input(&mut session, content)?;

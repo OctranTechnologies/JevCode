@@ -182,13 +182,27 @@ export interface AgentSession {
 /** Guidance resolved when the task started. Text is in the task's first system message, not here. */
 export interface TaskContextSource {
   path: string;
-  scope: 'settings' | 'ancestor' | 'folder' | 'nested' | 'scoped';
+  scope: 'settings' | 'ancestor' | 'folder' | 'nested' | 'scoped' | 'skill';
   status: 'included' | 'skipped' | 'pending';
   summary: string;
   bytes: number;
   secretLines: number[];
   fingerprint: string | null;
   globs: string[];
+}
+/** A skill a user can invoke. Only valid skills can be invoked; the body is read when a task uses it. */
+export interface SkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  scope: 'project' | 'user';
+  source: string;
+  version: string | null;
+  fingerprint: string;
+  bytes: number;
+  allowedTools: string[];
+  valid: boolean;
+  warnings: string[];
 }
 export interface EffectiveContextSource extends TaskContextSource {
   change: 'unchanged' | 'changed' | 'removed' | 'added' | null;

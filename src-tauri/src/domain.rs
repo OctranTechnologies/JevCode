@@ -302,6 +302,8 @@ pub enum TaskContextScope {
     Nested,
     /// A file-scoped rule, applying to the paths its frontmatter names.
     Scoped,
+    /// A skill the user invoked for this task.
+    Skill,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

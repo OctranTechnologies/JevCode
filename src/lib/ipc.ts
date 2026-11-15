@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, EffectiveContext, AgentStreamChunk, AppDiagnostics, Bootstrap, DecisionAvailability, DecisionEvaluationRecord, DecisionPreferences, DecisionUsageRecord, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProjectContextScan, ProjectMemoryCategory, ProjectMemoryView, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
-import { effectiveContextSchema, agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, decisionAvailabilitySchema, decisionEvaluationRecordSchema, decisionPreferencesSchema, decisionUsageRecordSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectContextScanSchema, projectFileSchema, projectMemorySchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
+import type { AgentSession, EffectiveContext, SkillSummary, AgentStreamChunk, AppDiagnostics, Bootstrap, DecisionAvailability, DecisionEvaluationRecord, DecisionPreferences, DecisionUsageRecord, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProjectContextScan, ProjectMemoryCategory, ProjectMemoryView, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
+import { effectiveContextSchema, skillSummarySchema, agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, decisionAvailabilitySchema, decisionEvaluationRecordSchema, decisionPreferencesSchema, decisionUsageRecordSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectContextScanSchema, projectFileSchema, projectMemorySchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export { openAIAuthAttemptEventSchema };
@@ -41,7 +41,8 @@ interface Commands {
   update_session_model: { args: { input: { sessionId: string; providerId: string; modelId: string } }; result: AgentSession };
   set_default_model: { args: { selection: ModelReference | null }; result: ModelPreferences };
   toggle_model_favorite: { args: { selection: ModelReference }; result: ModelPreferences };
-  send_message: { args: { sessionId: string; content: string }; result: AgentSession };
+  send_message: { args: { sessionId: string; content: string; skillIds?: string[] }; result: AgentSession };
+  list_skills: { args: { projectId: string }; result: SkillSummary[] };
   rename_session: { args: { input: { sessionId: string; title: string } }; result: AgentSession };
   archive_session: { args: { sessionId: string; archived: boolean }; result: AgentSession };
   resume_session: { args: { sessionId: string }; result: AgentSession };
@@ -101,7 +102,7 @@ interface Commands {
 }
 const responses = {
   bootstrap: bootstrapSchema, get_app_diagnostics: appDiagnosticsSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
-  scan_project_context: projectContextScanSchema, import_project_context: projectSchema, effective_context: effectiveContextSchema,
+  scan_project_context: projectContextScanSchema, import_project_context: projectSchema, effective_context: effectiveContextSchema, list_skills: z.array(skillSummarySchema),
   list_project_memories: z.array(projectMemorySchema), save_project_memory: projectMemorySchema, refresh_project_memory_source: projectMemorySchema, delete_project_memory: z.null(),
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
