@@ -30,7 +30,6 @@ import { UpdateNotice } from '../features/settings/UpdateNotice';
 import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
-import { Brand } from '../components/Brand';
 import type { AgentSession, InterfaceMode, Model, ModelReference, PermissionResolution, Project, SkillSummary, TaskPlan, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
 import type { View } from '../features/workspaces/Sidebar';
 import { latestRestorableSession } from './restore';
@@ -759,7 +758,7 @@ function ResizeDivider({ label, width, min, max, reverse = false, onResize }: { 
 }
 
 function WorkspaceSkeleton() {
-  return <div className="workbench-loading" role="status" aria-label="Opening workspace"><aside><div className="skeleton-brand"><Brand /><span /></div><div className="skeleton-action" /><div className="skeleton-label" /><div className="skeleton-row" /><div className="skeleton-row short" /><div className="skeleton-label lower" /><div className="skeleton-row" /><div className="skeleton-row short" /></aside><main><div className="skeleton-toolbar"><span /><span /><span /></div><div className="skeleton-loading-copy"><span /><span /><span /></div><div className="skeleton-composer" /><small>Opening your local workspace…</small></main></div>;
+  return <div className="workbench-loading" role="status" aria-label="Opening workspace"><aside><div className="skeleton-header"><span /></div><div className="skeleton-action" /><div className="skeleton-label" /><div className="skeleton-row" /><div className="skeleton-row short" /><div className="skeleton-label lower" /><div className="skeleton-row" /><div className="skeleton-row short" /></aside><main><div className="skeleton-toolbar"><span /><span /><span /></div><div className="skeleton-loading-copy"><span /><span /><span /></div><div className="skeleton-composer" /><small>Opening your local workspace…</small></main></div>;
 }
 
 function ProjectEmpty({ opening, onOpen, onCreate }: { opening: boolean; onOpen: () => void; onCreate: () => void }) {

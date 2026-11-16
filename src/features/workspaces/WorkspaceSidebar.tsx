@@ -1,9 +1,8 @@
 import {
-  Archive, BarChart3, ChevronDown, ChevronsLeft, Copy, ExternalLink, Folder, FolderPlus, GitBranch,
+  Archive, BarChart3, ChevronDown, ChevronsLeft, ChevronsRight, Copy, ExternalLink, Folder, FolderPlus, GitBranch,
   GitFork, Layers3, MessageSquare, MoreHorizontal, Pencil, Plus, Puzzle, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Brand } from '../../components/Brand';
 import { displayPath } from '../../lib/paths';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
 import type { AgentSession, InterfaceMode, Project, Provider } from '../../types/domain';
@@ -68,10 +67,9 @@ export function WorkspaceSidebar({
     </div>;
   };
   return <aside className={`workbench-sidebar${collapsed ? ' is-collapsed' : ''}`} aria-label="Workspace navigation">
-    <div className="sidebar-brand-row">
-      <div className="sidebar-brand"><Brand /><span>JevCode</span></div>
+    <div className="sidebar-header">
       <button className="quiet-icon-button collapse-sidebar" onClick={onCollapse} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        <ChevronsLeft size={17} />
+        {collapsed ? <ChevronsRight size={17} /> : <ChevronsLeft size={17} />}
       </button>
     </div>
 

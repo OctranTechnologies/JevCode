@@ -141,9 +141,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus
 body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; user-select: none !important; }
 body.is-resizing-pane .workbench { transition: none; }
 
-.sidebar-brand-row { display: flex; align-items: center; justify-content: space-between; min-height: 33px; margin: 0 2px 14px; }
-.sidebar-brand { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 14px; font-weight: 680; letter-spacing: -.025em; }
-.sidebar-brand .brand-mark { width: 28px; height: 29px; font-size: 20px; }
+.sidebar-header { display: flex; align-items: center; min-height: 33px; margin: 0 2px 14px; }
 .quiet-icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 29px; min-height: 29px; padding: 5px; color: var(--wb-muted-strong); background: transparent; border: 1px solid transparent; border-radius: 0; }
 .quiet-icon-button:hover { color: var(--wb-ink); background: var(--wb-surface); border-color: var(--wb-border); }
 .collapse-sidebar { opacity: .65; }
@@ -193,9 +191,8 @@ body.is-resizing-pane .workbench { transition: none; }
 .account-copy small { color: var(--wb-muted); font-size: 11px; }
 .provider-connection { width: 7px; height: 7px; background: #a5aaa5; border-radius: 50%; }
 .provider-connection.is-connected { background: var(--wb-success); }
-.is-collapsed .sidebar-brand-row { justify-content: center; margin-inline: 0; }
-.is-collapsed .sidebar-brand { gap: 0; }
-.is-collapsed .sidebar-brand > span:not(.brand-mark), .is-collapsed .collapse-sidebar, .is-collapsed .new-task-button > span, .is-collapsed .new-task-button kbd, .is-collapsed .sidebar-search > span, .is-collapsed .sidebar-search kbd, .is-collapsed .sidebar-section-heading, .is-collapsed .sidebar-row > span:not(.task-state):not(.row-presence):not(.sidebar-update-dot), .is-collapsed .sidebar-empty, .is-collapsed .account-copy, .is-collapsed .provider-connection { display: none; }
+.is-collapsed .sidebar-header { justify-content: center; margin-inline: 0; }
+.is-collapsed .new-task-button > span, .is-collapsed .new-task-button kbd, .is-collapsed .sidebar-search > span, .is-collapsed .sidebar-search kbd, .is-collapsed .sidebar-section-heading, .is-collapsed .sidebar-row > span:not(.task-state):not(.row-presence):not(.sidebar-update-dot), .is-collapsed .sidebar-empty, .is-collapsed .account-copy, .is-collapsed .provider-connection { display: none; }
 .is-collapsed .new-task-button, .is-collapsed .sidebar-search, .is-collapsed .sidebar-row, .is-collapsed .utility-row { justify-content: center; padding-inline: 0; }
 .is-collapsed .project-row-menu-toggle, .is-collapsed .row-presence { display: none; }
 .is-collapsed .sidebar-section { padding-top: 12px; }
@@ -719,9 +716,8 @@ body.is-resizing-pane .workbench { transition: none; }
 .workbench-loading { display: grid; grid-template-columns: 252px minmax(0, 1fr); width: 100%; height: calc(100dvh - var(--titlebar-height)); overflow: hidden; background: var(--wb-canvas); }
 .workbench-loading > aside { display: flex; flex-direction: column; padding: 15px; background: var(--wb-sidebar); border-right: 1px solid var(--wb-border); }
 .workbench-loading > main { position: relative; display: flex; flex-direction: column; min-width: 0; }
-.skeleton-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 18px; }
-.skeleton-brand .brand-mark { width: 24px; height: 25px; font-size: 18px; }
-.skeleton-brand > span { width: 78px; height: 10px; background: var(--wb-border-strong); border-radius: 0; }
+.skeleton-header { display: flex; align-items: center; margin-bottom: 18px; }
+.skeleton-header > span { width: 29px; height: 29px; background: var(--wb-border-strong); border-radius: 0; }
 .skeleton-action, .skeleton-row, .skeleton-label, .skeleton-toolbar > span, .skeleton-loading-copy > span, .skeleton-composer { background: color-mix(in srgb, var(--wb-border-strong) 57%, transparent); border-radius: 0; animation: skeleton-shimmer 1.45s ease-in-out infinite alternate; }
 .skeleton-action { height: 34px; margin-bottom: 17px; }
 .skeleton-label { width: 74px; height: 7px; margin: 4px 0 10px 3px; }
@@ -1080,8 +1076,8 @@ body.is-resizing-pane .workbench { transition: none; }
   .workbench-sidebar { position: fixed; z-index: 22; top: var(--titlebar-height); bottom: 0; left: 0; width: min(282px, calc(100vw - 42px)); visibility: hidden; transform: translateX(calc(-100% - 2px)); box-shadow: none; pointer-events: none; transition: transform 170ms ease-out, visibility 0s linear 170ms; }
   .mobile-sidebar-is-open .workbench-sidebar { visibility: visible; transform: translateX(0); box-shadow: var(--wb-shadow); pointer-events: auto; transition-delay: 0s; }
   .workbench-sidebar.is-collapsed { width: min(282px, calc(100vw - 42px)); }
-  .workbench-sidebar.is-collapsed .sidebar-brand-row { justify-content: space-between; }
-  .workbench-sidebar.is-collapsed .sidebar-brand > span:not(.brand-mark), .workbench-sidebar.is-collapsed .collapse-sidebar, .workbench-sidebar.is-collapsed .new-task-button > span, .workbench-sidebar.is-collapsed .new-task-button kbd, .workbench-sidebar.is-collapsed .sidebar-search > span, .workbench-sidebar.is-collapsed .sidebar-search kbd, .workbench-sidebar.is-collapsed .sidebar-section-heading, .workbench-sidebar.is-collapsed .sidebar-row > span:not(.task-state):not(.row-presence):not(.sidebar-update-dot), .workbench-sidebar.is-collapsed .sidebar-empty, .workbench-sidebar.is-collapsed .account-copy, .workbench-sidebar.is-collapsed .provider-connection { display: initial; }
+  .workbench-sidebar.is-collapsed .sidebar-header { justify-content: flex-start; }
+  .workbench-sidebar.is-collapsed .new-task-button > span, .workbench-sidebar.is-collapsed .new-task-button kbd, .workbench-sidebar.is-collapsed .sidebar-search > span, .workbench-sidebar.is-collapsed .sidebar-search kbd, .workbench-sidebar.is-collapsed .sidebar-section-heading, .workbench-sidebar.is-collapsed .sidebar-row > span:not(.task-state):not(.row-presence):not(.sidebar-update-dot), .workbench-sidebar.is-collapsed .sidebar-empty, .workbench-sidebar.is-collapsed .account-copy, .workbench-sidebar.is-collapsed .provider-connection { display: initial; }
   .workbench-sidebar.is-collapsed .project-row-menu-toggle { display: grid; }
   .workbench-sidebar.is-collapsed .row-presence { display: block; }
   .workbench-sidebar.is-collapsed .sidebar-section-heading { display: flex; }
