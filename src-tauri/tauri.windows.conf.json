@@ -1,0 +1,5 @@
+{
+  "app": {
+    "windows": [{ "label": "main", "title": "JevCode", "width": 1280, "height": 850, "minWidth": 900, "minHeight": 640, "decorations": false, "shadow": true }]
+  }
+}

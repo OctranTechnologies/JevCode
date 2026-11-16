@@ -160,7 +160,7 @@ th, td { padding: 12px 10px; border-bottom: 1px solid var(--line); font-variant-
 .empty-usage { padding: 36px 0; }
 .empty-usage h2 { font-size: 16px; font-weight: 550; }
 .empty-usage p { font-size: 12px; color: var(--color-muted); margin-top: 8px; }
-.fatal-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100dvh; padding: 32px; text-align: center; gap: 16px; }
+.fatal-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100dvh - var(--titlebar-height)); padding: 32px; text-align: center; gap: 16px; }
 .fatal-state h1 { font-size: 24px; font-weight: 600; }
 .fatal-state p { max-width: 60ch; color: var(--color-muted); line-height: 1.8; }
 @media (min-width: 1400px) {

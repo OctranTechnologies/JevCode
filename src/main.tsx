@@ -4,5 +4,9 @@ import './styles.css';
 import './workbench.css';
 import App from './app/App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { WindowTitleBar } from './components/WindowTitleBar';
+import { customTitleBar } from './lib/windowChrome';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>);
+if (customTitleBar) document.documentElement.dataset.titlebar = 'custom';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><WindowTitleBar /><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>);

@@ -120,6 +120,10 @@ Application controls and panels use square corners. Borders are 1px except for t
 
 Sidebar groups and settings sections use open rows and divider rules. The active project or task receives a muted orange surface and a clear label. Keep project names and paths truncatable without hiding their action controls. Toolbar controls align on one baseline and retain accessible labels.
 
+### Window title bar
+
+On Windows the app draws its own 32px title bar. It holds the app name, the drag region, and the minimize, maximize or restore, and close buttons. The buttons are 46px wide to match the system caption buttons, so the 32px height is the one exception to the 44px control height. The focus outline is inset by 2px because the bar sits at the window edge, where a 4px offset would be clipped. macOS and Linux keep the native frame.
+
 ### Conversation and composer
 
 Conversation messages use a comfortable reading width and whitespace rather than chat bubbles. Markdown headings, lists, and code blocks keep their semantic hierarchy. The composer is a bordered work surface with an obvious focus state. Attach, context, mode, model, send, and stop controls remain distinct and keyboard accessible.
