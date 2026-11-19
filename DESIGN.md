@@ -98,6 +98,10 @@ Keep body text and controls at least 4.5:1 contrast, large text at least 3:1, an
 
 Inter Variable is the interface and conversation face. Use 24–28px regular-weight page headings, 14px conversation text, and 12–13px control labels. Keep prose around 65–72 characters per line. Mono is for code, paths, commands, token values, and compact technical labels; use JetBrains Mono when available, followed by Cascadia Code, Consolas, and system monospace. Use tabular numerals for counts, durations, and usage.
 
+Tabs and toggles show selection with color and the 2px indicator, not a weight change, so neighbors never shift. A control that must change weight reserves the bold width with a hidden copy of its label (`data-text`) on a label span. Underlined links use `text-underline-offset: .2em`. Interface copy uses curly quotes and apostrophes (’ “ ”); code, identifiers, paths, and agent or tool output keep their literal characters. File names shrink the folder first, then the base name, and never the extension. Titles that can wrap inside cards clamp to two lines with the full text in `title`; list rows stay on one truncated line. Narrow prose columns may hyphenate under `lang="en"`, but paths and code never do. Footnote superscripts do not add line height.
+
+Headings keep the fixed sizes above. The window cannot be narrower than 900px, so a fluid `clamp()` headline adds nothing and would exceed the 24–28px range. Small caps and `text-box-trim` are not used: the bundled Inter and JetBrains Mono carry no small-cap glyphs, font synthesis is off, and both fonts already center caps in the line box. Uppercase labels stay short, tracked, and mono.
+
 ## Layout
 
 The application is a Tauri desktop window. At wide sizes, project navigation, work area, and optional task inspector form distinct panes. The sidebar and inspector remain resizable. Below the existing responsive breakpoints, the sidebar and inspector become overlays; keep the composer and primary navigation usable.

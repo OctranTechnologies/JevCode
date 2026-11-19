@@ -27,7 +27,7 @@ function HarnessSetup() {
       {desktopAvailable && <button type="button" className="harness-refresh" onClick={() => void detect()}>Check again</button>}
     </div>
     <p><strong>JevCode providers</strong> are connected below. JevCode signs in to them and calls them directly. Keys and accounts stay on this device.</p>
-    <p><strong>External tools</strong> such as Codex CLI or Claude Code keep their own sign-in. JevCode only checks whether a tool's command is on this computer's PATH. It does not start the tool, read its sign-in, or copy it. An IDE or desktop app with the same name is not checked.</p>
+    <p><strong>External tools</strong> such as Codex CLI or Claude Code keep their own sign-in. JevCode only checks whether a tool’s command is on this computer’s PATH. It does not start the tool, read its sign-in, or copy it. An IDE or desktop app with the same name is not checked.</p>
     {!desktopAvailable && <p className="harness-empty">Tool detection is available in the desktop application.</p>}
     {harnesses && <ul className="harness-list" aria-label="External coding-agent tools">{harnesses.map(harness => <li key={harness.id} className={`harness-item is-${harness.installed ? 'installed' : 'missing'}`}>
       <span className="harness-name">{harness.name}</span>
@@ -179,7 +179,7 @@ export function ProviderSettings({
         const available = await providerAuthAdapter('gemini').getAvailableModels();
         setModels(current => ({ ...current, gemini: available.map(model => model.displayName) }));
         onModels('gemini', available);
-        setNotice(`Google Cloud project saved. ${available.length} Gemini API models loaded using this project's quota and billing.`);
+        setNotice(`Google Cloud project saved. ${available.length} Gemini API models loaded using this project’s quota and billing.`);
       } else {
         setNotice('Google Cloud project saved with this account. Select “Use Google Account + Gemini API” to load models through the project. Requests use that project’s quota and billing.');
       }
@@ -774,7 +774,7 @@ export function ProviderSettings({
             {googleStatusLoading && <div className="openai-status-loading" role="status"><LoaderCircle size={14} className="spin" />Loading Google Gemini account status…</div>}
             {googleStatusError && <div className="openai-auth-feedback error" role="alert"><CircleAlert size={14} /><span>{googleStatusError}</span><button className="account-button quiet" onClick={() => void refreshGoogleStatus()} disabled={googleStatusLoading}>Retry</button></div>}
             {!googleStatusError && googleStatus?.oauthAvailable === false && <div className="openai-auth-feedback info" role="status"><CircleAlert size={14} /><span>{googleAuthStartErrorMessage('google_oauth_not_configured')}</span></div>}
-            {!googleStatusError && <div className="openai-auth-feedback info google-code-assist-note" role="status"><CircleAlert size={14} /><span>Google Account OAuth uses the documented Gemini Developer API with a Cloud project. Requests use that project's quota and billing; they do not use Gemini Code Assist or Google AI Pro/Ultra subscription quota.</span></div>}
+            {!googleStatusError && <div className="openai-auth-feedback info google-code-assist-note" role="status"><CircleAlert size={14} /><span>Google Account OAuth uses the documented Gemini Developer API with a Cloud project. Requests use that project’s quota and billing; they do not use Gemini Code Assist or Google AI Pro/Ultra subscription quota.</span></div>}
 
             {googleFlow.feedback && googleFlow.phase === 'idle' && <div className={`openai-auth-feedback ${googleFlow.feedback.tone}`} role={googleFlow.feedback.tone === 'error' ? 'alert' : 'status'}>
               {googleFlow.feedback.tone === 'success' ? <CircleCheck size={14} /> : googleFlow.feedback.tone === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}
@@ -835,7 +835,7 @@ export function ProviderSettings({
                 <div className="openai-method-status"><span>Google Account · Gemini API</span><strong className={`account-status ${selectedMethod === 'google_oauth' && googleApiOAuthReady ? 'connected' : ''}`}>
                   {selectedMethod === 'google_oauth' && googleApiOAuthReady ? <><CircleCheck size={13} />Selected</> : !googleAccount ? 'Not connected' : !googleApiScopesReady ? 'Reconnect to grant API access' : !googleAccount.cloudProjectId ? 'Cloud project required' : 'Not selected'}
                 </strong></div>
-                <div className="openai-method-account"><span>Uses the selected Google account's Gemini API permission and Cloud project. Google AI subscription quota is not used.</span></div>
+                <div className="openai-method-account"><span>Uses the selected Google account’s Gemini API permission and Cloud project. Google AI subscription quota is not used.</span></div>
                 <div className="openai-method-actions">
                   {googleAccount && !googleApiScopesReady && <button className="account-button connect" onClick={() => void connectGoogleAccount(googleAccount.id)} disabled={!desktopAvailable || googleFlowActive}>Grant Gemini API access</button>}
                   {googleAccount && googleApiScopesReady && selectedMethod !== 'google_oauth' && <button className="account-button quiet" onClick={() => void selectGoogleMethod('google_oauth')} disabled={!desktopAvailable || busy || !googleAccount.cloudProjectId}>Use Google Account</button>}

@@ -124,13 +124,13 @@ export function ProjectMemoryPanel({ projectId, desktopAllowed }: Props) {
       </button>
     </div>
 
-    <div className="project-memory-notice"><AlertTriangle size={14} /><p><strong>Local only in this stage.</strong> Notes are not sent to Jev or coding providers yet. Pinning keeps a note at the top of this list; it does not add it to task context. “Source unchanged” means only that the file matches its saved fingerprint; it does not verify the note's accuracy. Changed or missing sources are marked for review. Avoid secrets, credentials, raw tool output, and large code blocks.</p></div>
+    <div className="project-memory-notice"><AlertTriangle size={14} /><p><strong>Local only in this stage.</strong> Notes are not sent to Jev or coding providers yet. Pinning keeps a note at the top of this list; it does not add it to task context. “Source unchanged” means only that the file matches its saved fingerprint; it does not verify the note’s accuracy. Changed or missing sources are marked for review. Avoid secrets, credentials, raw tool output, and large code blocks.</p></div>
 
     {!desktopAllowed ? <p className="project-memory-empty">Memory management is available in the desktop application.</p>
       : loading ? <p className="project-memory-empty"><LoaderCircle size={13} className="spin" />Checking saved notes…</p>
         : memories.length ? <div className="project-memory-list">{memories.map(memory => <article className="project-memory-card" key={memory.id}>
           <div className="project-memory-card-heading">
-            <div className="project-memory-title"><FileText size={14} /><div><h3>{memory.title}</h3><span>{categories.find(item => item.value === memory.category)?.label ?? 'Other'}{memory.pinned ? ' · Pinned locally' : ''}</span></div></div>
+            <div className="project-memory-title"><FileText size={14} /><div><h3 title={memory.title}>{memory.title}</h3><span>{categories.find(item => item.value === memory.category)?.label ?? 'Other'}{memory.pinned ? ' · Pinned locally' : ''}</span></div></div>
             <span className={`project-memory-status is-${memory.sourceStatus}`}>{statusLabel[memory.sourceStatus]}</span>
           </div>
           <p className="project-memory-content">{memory.content}</p>

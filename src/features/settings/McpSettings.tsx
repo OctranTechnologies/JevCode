@@ -121,7 +121,7 @@ export function McpSettings({ project, onError }: { project?: Project; onError: 
       <button className="mcp-quiet-action" onClick={() => void reload(true)} disabled={refreshing} title="Refresh MCP status">{refreshing ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}Refresh</button>
     </div>
 
-    <div className="mcp-security-note"><ShieldAlert size={15} /><span>MCP tools run outside JevCode's built-in tool sandbox. Calls still require the active task's permission checks and appear in its timeline. Server output is treated as untrusted.</span></div>
+    <div className="mcp-security-note"><ShieldAlert size={15} /><span>MCP tools run outside JevCode’s built-in tool sandbox. Calls still require the active task’s permission checks and appear in its timeline. Server output is treated as untrusted.</span></div>
 
     <section className="mcp-server-section" aria-labelledby="mcp-server-heading">
       <div className="mcp-section-title"><div><h2 id="mcp-server-heading">Servers</h2><p>User configuration is private to this app. Project configuration lives in <code>.jevcode/mcp.json</code>.</p></div>
@@ -219,7 +219,7 @@ function ProjectImport({ project, onImported, onError }: { project: Project; onI
       <button className="mcp-add-button" onClick={() => void scan()} disabled={busy}>{busy && !sources ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}Scan project</button>
     </div>
     {sources === null ? <p className="mcp-import-hint">Scanning reads the files only. It does not start any server.</p>
-      : !sources.length ? <p className="mcp-import-hint">No MCP servers were found in this project's files.</p>
+      : !sources.length ? <p className="mcp-import-hint">No MCP servers were found in this project’s files.</p>
         : <>
           {sources.map(source => <div className="mcp-import-source" key={source.path}>
             <code>{source.path}</code>

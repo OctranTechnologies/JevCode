@@ -7,9 +7,9 @@ export function ReleaseNotes({ version, body, publishedAt, className = '' }: {
   className?: string;
 }) {
   const notes = body?.trim();
-  return <section className={`release-notes ${className}`.trim()} aria-label={`What's New in v${version}`}>
+  return <section className={`release-notes ${className}`.trim()} aria-label={`What’s New in v${version}`}>
     <header className="release-notes-heading">
-      <h3>What's New in v{version}</h3>
+      <h3>What’s New in v{version}</h3>
       {publishedAt && <time dateTime={publishedAt}>{formatReleaseDate(publishedAt)}</time>}
     </header>
     <div className="release-notes-body">

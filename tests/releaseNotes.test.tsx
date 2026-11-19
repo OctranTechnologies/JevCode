@@ -10,7 +10,7 @@ describe('release notes', () => {
       body={'## Improvements\n\n- **Faster search** across large projects\n- Run `npm test`\n\n<script>alert(1)</script> [unsafe](javascript:alert(1))'}
     />);
 
-    expect(html).toContain('<h3>What&#x27;s New in v0.2.0</h3>');
+    expect(html).toContain('<h3>What’s New in v0.2.0</h3>');
     expect(html).toContain('<strong>Faster search</strong>');
     expect(html).toContain('<code>npm test</code>');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');

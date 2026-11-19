@@ -13,6 +13,7 @@ import { TaskWorktreesPanel } from './TaskWorktreesPanel';
 import { ProjectMemoryPanel } from './ProjectMemoryPanel';
 import { CustomCommandsPanel } from './CustomCommandsPanel';
 import { ProjectContextPanel } from './ProjectContextPanel';
+import { FileName } from '../../components/FileName';
 import type {
   AgentSession, ChangedFile, PermissionDecision, PermissionPolicy, Project,
   ProjectFileEntry, ProjectOverview as ProjectOverviewData, ProjectProfilePreview, Provider, TerminalResult,
@@ -336,7 +337,7 @@ function ProjectExplorer({ projectId, desktopAllowed }: { projectId: string; des
       <button className={`project-file-row is-${entry.kind}`} style={{ paddingInlineStart: `${8 + depth * 15}px` }} onClick={() => void toggle(entry)} aria-expanded={entry.kind === 'directory' ? expanded.has(entry.path) : undefined}>
         {entry.kind === 'directory' ? expanded.has(entry.path) ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : <span className="tree-chevron-spacer" />}
         {entry.kind === 'directory' ? expanded.has(entry.path) ? <FolderOpen size={14} /> : <Folder size={14} /> : extensionIcon(entry.name)}
-        <span className="project-file-name">{entry.name}{entry.isSymlink && <small>link</small>}</span>
+        <span className="project-file-name"><FileName path={entry.name} directory={entry.kind === 'directory'} />{entry.isSymlink && <small>link</small>}</span>
         {entry.kind === 'file' && entry.sizeBytes > 0 && <small className="file-size">{formatBytes(entry.sizeBytes)}</small>}
         {loading.has(entry.path) && <LoaderCircle size={12} className="spin" />}
       </button>
@@ -356,7 +357,7 @@ function mockEntry(parent: string, name: string, kind: ProjectFileEntry['kind'])
 
 function ChangedFileRow({ file }: { file: ChangedFile }) {
   const status = file.status.trim();
-  return <li><FileCode2 size={13} /><span title={file.path}>{file.path}</span><small className={`change-status is-${status.toLowerCase().replace(/[^a-z]/g, '') || 'modified'}`}>{status || 'M'}</small></li>;
+  return <li><FileCode2 size={13} /><FileName path={file.path} /><small className={`change-status is-${status.toLowerCase().replace(/[^a-z]/g, '') || 'modified'}`}>{status || 'M'}</small></li>;
 }
 
 function ProjectTerminal({ projectId, desktopAllowed, onClose, onRunComplete, onError }: { projectId: string; desktopAllowed: boolean; onClose: () => void; onRunComplete: () => Promise<void>; onError: (message: string | null) => void }) {

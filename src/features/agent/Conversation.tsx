@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { Brand } from '../../components/Brand';
 import { DisclosureMenu } from '../../components/DisclosureMenu';
+import { FileName } from '../../components/FileName';
 import { MarkdownMessage } from './MarkdownMessage';
 import { scrollBehavior } from '../../lib/motion';
 import type { AgentSession, AgentMessage, InterfaceMode, PermissionResolution, SessionChanges } from '../../types/domain';
@@ -148,7 +149,7 @@ function CompletionReviewCard({ review, animate, onReviewFile, onViewTest }: { r
     {review.omittedRequirementCount > 0 && <p className="completion-review-note">{review.omittedRequirementCount} additional request items were not individually listed.</p>}
     <div className="completion-evidence" id="completion-evidence">
       <strong>Task evidence</strong>
-      <div className="completion-evidence-row"><span>Files changed</span>{review.changedFiles.length ? <div>{review.changedFiles.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={11} /></button>)}</div> : <small>No task-scoped file changes recorded.</small>}</div>
+      <div className="completion-evidence-row"><span>Files changed</span>{review.changedFiles.length ? <div>{review.changedFiles.map(path => <button key={path} onClick={() => onReviewFile(path)}><FileName path={path} /><ArrowUpRight size={11} /></button>)}</div> : <small>No task-scoped file changes recorded.</small>}</div>
       <div className="completion-evidence-row"><span>Test runs</span>{review.testRuns.length ? <div>{review.testRuns.map(run => <button className={`test-evidence is-${run.status}`} key={run.toolCallId} onClick={() => onViewTest(run.toolCallId)}>{run.label}: {testStatusLabel(run.status)}{run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}<ArrowUpRight size={11} /></button>)}</div> : <small>No test run was recorded.</small>}</div>
     </div>
     <p className="completion-review-disclaimer">{review.jevShadowAssessed ? 'Jev’s shadow labels are suggestions, not verification. Review the recorded evidence before relying on them.' : 'No Jev assessment was recorded. The checklist does not infer that a requirement or test passed.'}</p>
@@ -190,7 +191,7 @@ function TimelineMessage({ message, completedCalls, toolOutput, interfaceMode, o
     return <details id={message.toolResult ? `tool-result-${message.toolResult.toolCallId}` : undefined} className={`activity-result${message.toolResult?.isError ? ' is-error' : ''}`}>
     <summary><span className="activity-result-icon">{message.toolResult?.isError ? <AlertCircle size={14} /> : <Check size={14} />}</span><span className="activity-result-name">{message.toolResult?.name ?? 'Tool activity'}</span><span className="activity-result-state">{message.toolResult?.isError ? 'Needs attention' : 'Completed'}</span><span className="activity-result-duration">{formatDuration(message.toolResult?.durationMs ?? 0)}</span><ChevronDown size={13} className="activity-chevron" /></summary>
     <pre>{message.content}</pre>
-    {changedPaths.length > 0 && !message.toolResult?.isError && <div className="timeline-file-changes"><span><FileCode2 size={12} />File change</span>{changedPaths.map(path => <button key={path} onClick={() => onReviewFile(path)}>{path}<ArrowUpRight size={12} /></button>)}</div>}
+    {changedPaths.length > 0 && !message.toolResult?.isError && <div className="timeline-file-changes"><span><FileCode2 size={12} />File change</span>{changedPaths.map(path => <button key={path} onClick={() => onReviewFile(path)}><FileName path={path} /><ArrowUpRight size={12} /></button>)}</div>}
   </details>;
   }
 

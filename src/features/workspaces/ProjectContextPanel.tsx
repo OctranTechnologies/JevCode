@@ -120,7 +120,7 @@ export function ProjectContextPanel({ project, desktopAllowed, settingsDirty, on
       <button className="project-icon-action" onClick={() => void load()} disabled={!desktopAllowed || loading || importing} title="Scan again" aria-label="Scan project context again"><RefreshCw size={14} className={loading ? 'spin' : undefined} /></button>
     </div>
 
-    <p className="project-context-intro">JevCode loads the root <code>AGENTS.md</code> and <code>CLAUDE.md</code> and the project instructions below. Other files are only listed here. Adding one copies its text into JevCode's project instructions on this device; project files are never changed, and agent settings files are not read.</p>
+    <p className="project-context-intro">JevCode loads the root <code>AGENTS.md</code> and <code>CLAUDE.md</code> and the project instructions below. Other files are only listed here. Adding one copies its text into JevCode’s project instructions on this device; project files are never changed, and agent settings files are not read.</p>
 
     {!desktopAllowed ? <p className="project-memory-empty">Context scanning is available in the desktop application.</p>
       : loading && !scan ? <p className="project-memory-empty"><LoaderCircle size={13} className="spin" />Looking for instruction files…</p>
@@ -147,7 +147,7 @@ export function ProjectContextPanel({ project, desktopAllowed, settingsDirty, on
     {confirming && <div className="project-context-confirm" role="group" aria-label="Confirm adding context">
       <div className="project-memory-editor-heading"><strong>Add {selectedItems.length} {selectedItems.length === 1 ? 'item' : 'items'} to project instructions?</strong><button type="button" className="project-icon-action" onClick={() => setConfirming(false)} aria-label="Cancel"><X size={14} /></button></div>
       <ul>{selectedItems.map(item => <li key={item.id}><code>{item.path}</code>{item.status === 'imported_stale' ? ' · replaces the earlier copy' : ''}</li>)}</ul>
-      <p>JevCode copies the current text into this project's instructions, stored on this device, and sends it with every new task. Project files stay unchanged.{scopedSelections ? ` ${scopedSelections} selected ${scopedSelections === 1 ? 'rule is' : 'rules are'} scoped in its original tool and will apply to every task here.` : ''}</p>
+      <p>JevCode copies the current text into this project’s instructions, stored on this device, and sends it with every new task. Project files stay unchanged.{scopedSelections ? ` ${scopedSelections} selected ${scopedSelections === 1 ? 'rule is' : 'rules are'} scoped in its original tool and will apply to every task here.` : ''}</p>
       <div className="project-memory-editor-actions"><button type="button" className="project-secondary-action" onClick={() => setConfirming(false)} disabled={importing}>Cancel</button><button className="project-save-button" onClick={() => void addSelected()} disabled={importing || settingsDirty || !selectedItems.length}>{importing ? <LoaderCircle size={13} className="spin" /> : <Plus size={13} />}{importing ? 'Adding…' : 'Add to instructions'}</button></div>
     </div>}
 

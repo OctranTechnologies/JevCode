@@ -111,7 +111,7 @@ export function CustomCommandsPanel({ project, desktopAllowed }: Props) {
     try {
       const target = await command('convert_custom_command', { projectId: project.id, id: preview.command.id, confirmed: acknowledged });
       closePreview();
-      setNotice(`Created ${target}. It is listed with the project's skills.`);
+      setNotice(`Created ${target}. It is listed with the project’s skills.`);
       await load();
     } catch (cause) { setError(normalizeError(cause).message); }
     finally { setBusy(false); }
