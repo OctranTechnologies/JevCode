@@ -2,6 +2,7 @@ mod agent;
 mod auth;
 mod commands;
 mod config;
+mod containment;
 mod context_migration;
 mod credentials;
 mod custom_commands;
