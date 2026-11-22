@@ -2,6 +2,7 @@
 //! are created only after an explicit trust action; secrets never enter config
 //! files, SQLite, tool descriptions, or logs.
 use crate::{
+    containment::{command_for, ProfileKind},
     credentials::CredentialStore,
     domain::{
         McpConnectionStatus, McpScope, McpServerConfig, McpServerView, McpTransport, Tool,
@@ -769,6 +770,61 @@ impl HttpClient {
     }
 }
 
+fn stdio_command(
+    config: &McpServerConfig,
+    command: &str,
+    args: &[String],
+    secrets: &BTreeMap<String, String>,
+    project_root: Option<&Path>,
+) -> AppResult<Command> {
+    let mut process = command_for(ProfileKind::Inspect, command);
+    process
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .env_clear();
+    if config.scope == McpScope::Project {
+        process.current_dir(project_root.ok_or_else(|| {
+            AppError::new(
+                "project_required",
+                "Select a project before starting its MCP process.",
+            )
+        })?);
+    }
+    for key in [
+        "PATH",
+        "HOME",
+        "LANG",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "SYSTEMROOT",
+        "WINDIR",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            process.env(key, value);
+        }
+    }
+    for name in &config.env_names {
+        let secret = secrets.get(name).ok_or_else(|| {
+            AppError::new(
+                "mcp_secret_missing",
+                format!(
+                    "Add the missing '{}' value in the MCP server settings.",
+                    name
+                ),
+            )
+        })?;
+        process.env(name, secret);
+    }
+    Ok(process)
+}
+
 async fn connect_server(
     config: McpServerConfig,
     secrets: BTreeMap<String, String>,
@@ -777,51 +833,7 @@ async fn connect_server(
     let secret_values: Vec<_> = secrets.values().cloned().collect();
     let mut connection = match &config.transport {
         McpTransport::Stdio { command, args } => {
-            let mut process = Command::new(command);
-            process
-                .args(args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .kill_on_drop(true)
-                .env_clear();
-            if config.scope == McpScope::Project {
-                process.current_dir(project_root.ok_or_else(|| {
-                    AppError::new(
-                        "project_required",
-                        "Select a project before starting its MCP process.",
-                    )
-                })?);
-            }
-            for key in [
-                "PATH",
-                "HOME",
-                "LANG",
-                "TMPDIR",
-                "TEMP",
-                "TMP",
-                "USERPROFILE",
-                "APPDATA",
-                "LOCALAPPDATA",
-                "SYSTEMROOT",
-                "WINDIR",
-            ] {
-                if let Some(value) = std::env::var_os(key) {
-                    process.env(key, value);
-                }
-            }
-            for name in &config.env_names {
-                let secret = secrets.get(name).ok_or_else(|| {
-                    AppError::new(
-                        "mcp_secret_missing",
-                        format!(
-                            "Add the missing '{}' value in the MCP server settings.",
-                            name
-                        ),
-                    )
-                })?;
-                process.env(name, secret);
-            }
+            let mut process = stdio_command(&config, command, args, &secrets, project_root)?;
             let mut child = process.spawn().map_err(|_| AppError::new("mcp_process_start", "Could not start the configured MCP process. Check the program path and arguments."))?;
             let stdin = child.stdin.take().ok_or_else(|| {
                 AppError::new("mcp_process_start", "Could not open MCP process input.")
@@ -1536,6 +1548,56 @@ mod tests {
             has_auth_token: false,
             enabled: false,
         }
+    }
+
+    #[test]
+    fn stdio_command_matches_direct_construction() {
+        let root = Path::new("project-root");
+        let mut config = stdio(McpScope::Project, "server");
+        config.transport = McpTransport::Stdio {
+            command: "mcp-server".into(),
+            args: vec!["--stdio".into(), "value with spaces".into()],
+        };
+        let args = vec!["--stdio".to_owned(), "value with spaces".to_owned()];
+        let secrets = BTreeMap::from([("TOKEN".to_owned(), "secret-value".to_owned())]);
+        let routed = stdio_command(&config, "mcp-server", &args, &secrets, Some(root)).unwrap();
+        let routed = routed.as_std();
+        let mut direct = std::process::Command::new("mcp-server");
+        direct
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .env_clear()
+            .current_dir(root);
+        for key in [
+            "PATH",
+            "HOME",
+            "LANG",
+            "TMPDIR",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "SYSTEMROOT",
+            "WINDIR",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                direct.env(key, value);
+            }
+        }
+        direct.env("TOKEN", "secret-value");
+        assert_eq!(routed.get_program(), direct.get_program());
+        assert_eq!(
+            routed.get_args().collect::<Vec<_>>(),
+            direct.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
+        assert_eq!(
+            routed.get_envs().collect::<Vec<_>>(),
+            direct.get_envs().collect::<Vec<_>>()
+        );
     }
 
     #[test]

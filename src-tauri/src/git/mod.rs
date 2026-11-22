@@ -1,3 +1,4 @@
+use crate::containment::{command_for, ProfileKind};
 use crate::domain::ChangedFile;
 use crate::error::{AppError, AppResult};
 use std::collections::BTreeMap;
@@ -6,8 +7,8 @@ use tokio::process::Command;
 
 pub mod worktree;
 
-async fn output(root: &Path, args: &[String], timeout: Duration) -> AppResult<Output> {
-    let mut command = Command::new("git");
+fn output_command(kind: ProfileKind, root: &Path, args: &[String]) -> Command {
+    let mut command = command_for(kind, "git");
     command
         .arg("--no-optional-locks")
         .args(args)
@@ -15,6 +16,16 @@ async fn output(root: &Path, args: &[String], timeout: Duration) -> AppResult<Ou
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
+    command
+}
+
+async fn output(
+    kind: ProfileKind,
+    root: &Path,
+    args: &[String],
+    timeout: Duration,
+) -> AppResult<Output> {
+    let mut command = output_command(kind, root, args);
     tokio::time::timeout(timeout, command.output())
         .await
         .map_err(|_| AppError::new("timeout", "Git took too long to respond."))?
@@ -41,6 +52,7 @@ pub struct ReviewRepoState {
 /// agent edit in a task. File contents are checkpointed lazily before edits.
 pub async fn review_state(root: &Path) -> AppResult<ReviewRepoState> {
     let head = output(
+        ProfileKind::Inspect,
         root,
         &git_args(&["rev-parse", "--verify", "HEAD"]),
         Duration::from_secs(5),
@@ -53,6 +65,7 @@ pub async fn review_state(root: &Path) -> AppResult<ReviewRepoState> {
         ));
     }
     let status = output(
+        ProfileKind::Inspect,
         root,
         &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
         Duration::from_secs(15),
@@ -106,9 +119,8 @@ pub fn review_path_key(path: &str) -> String {
     }
 }
 
-/// Fixed arguments only: no shell interpolation, optional locks or mutations.
-pub async fn status(root: &Path) -> AppResult<String> {
-    let mut command = Command::new("git");
+fn status_command(root: &Path) -> Command {
+    let mut command = command_for(ProfileKind::Inspect, "git");
     command
         .args([
             "--no-optional-locks",
@@ -125,6 +137,12 @@ pub async fn status(root: &Path) -> AppResult<String> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x08000000);
+    command
+}
+
+/// Fixed arguments only: no shell interpolation, optional locks or mutations.
+pub async fn status(root: &Path) -> AppResult<String> {
+    let mut command = status_command(root);
     let output = tokio::time::timeout(Duration::from_secs(10), command.output())
         .await
         .map_err(|_| AppError::new("timeout", "Git status timed out."))?
@@ -147,6 +165,7 @@ pub async fn status(root: &Path) -> AppResult<String> {
 /// Return the checked-out branch for toolbar context without mutating the repository.
 pub async fn branch(root: &Path) -> AppResult<Option<String>> {
     let output = match output(
+        ProfileKind::Inspect,
         root,
         &git_args(&["rev-parse", "--abbrev-ref", "HEAD"]),
         Duration::from_secs(3),
@@ -172,6 +191,7 @@ pub async fn branch(root: &Path) -> AppResult<Option<String>> {
 
 pub async fn branches(root: &Path) -> AppResult<Vec<String>> {
     let output = output(
+        ProfileKind::Inspect,
         root,
         &git_args(&["branch", "--format=%(refname:short)"]),
         Duration::from_secs(5),
@@ -208,7 +228,7 @@ pub async fn switch_branch(root: &Path, branch_name: &str) -> AppResult<Option<S
         "--".to_owned(),
         branch_name.to_owned(),
     ];
-    let output = output(root, &args, Duration::from_secs(20)).await?;
+    let output = output(ProfileKind::Edit, root, &args, Duration::from_secs(20)).await?;
     if !output.status.success() {
         return Err(AppError::new(
             "git_switch_failed",
@@ -220,6 +240,7 @@ pub async fn switch_branch(root: &Path, branch_name: &str) -> AppResult<Option<S
 
 pub async fn changed_files(root: &Path) -> AppResult<Vec<ChangedFile>> {
     let result = output(
+        ProfileKind::Inspect,
         root,
         &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
         Duration::from_secs(10),
@@ -260,6 +281,29 @@ pub async fn changed_files(root: &Path) -> AppResult<Vec<ChangedFile>> {
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn output_command_matches_direct_construction() {
+        let root = Path::new("workspace");
+        let args = vec!["status".into(), "--porcelain".into()];
+        let routed = output_command(ProfileKind::Inspect, root, &args);
+        let routed = routed.as_std();
+        let mut direct = Command::new("git");
+        direct
+            .arg("--no-optional-locks")
+            .args(&args)
+            .current_dir(root);
+        assert_eq!(routed.get_program(), direct.get_program());
+        assert_eq!(
+            routed.get_args().collect::<Vec<_>>(),
+            direct.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
+        assert_eq!(
+            routed.get_envs().collect::<Vec<_>>(),
+            direct.get_envs().collect::<Vec<_>>()
+        );
+    }
 
     fn run_git(root: &Path, args: &[&str]) -> String {
         let output = Command::new("git")

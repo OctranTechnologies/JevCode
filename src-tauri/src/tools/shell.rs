@@ -3,6 +3,7 @@ use super::{
     ToolOutput,
 };
 use crate::{
+    containment::ProfileKind,
     error::{AppError, AppResult},
     workspaces::scoped_path,
 };
@@ -61,6 +62,7 @@ pub async fn run_command(
         ));
     }
     let result = run_program_streaming(
+        ProfileKind::Edit,
         program,
         &command_args,
         &cwd,

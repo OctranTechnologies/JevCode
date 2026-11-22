@@ -1,4 +1,7 @@
-use crate::error::{AppError, AppResult};
+use crate::{
+    containment::{command_for, ProfileKind},
+    error::{AppError, AppResult},
+};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::{io::AsyncRead, process::Command};
 
@@ -60,16 +63,18 @@ async fn read_bounded<R: AsyncRead + Unpin>(
 }
 
 pub async fn run_program(
+    kind: ProfileKind,
     program: &str,
     args: &[String],
     cwd: &Path,
     timeout: Duration,
     output_limit: usize,
 ) -> AppResult<ProcessOutput> {
-    run_program_streaming(program, args, cwd, timeout, output_limit, None).await
+    run_program_streaming(kind, program, args, cwd, timeout, output_limit, None).await
 }
 
 pub async fn run_program_streaming(
+    kind: ProfileKind,
     program: &str,
     args: &[String],
     cwd: &Path,
@@ -77,20 +82,7 @@ pub async fn run_program_streaming(
     output_limit: usize,
     events: Option<tokio::sync::mpsc::UnboundedSender<ProcessOutputChunk>>,
 ) -> AppResult<ProcessOutput> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .kill_on_drop(true)
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (key, value) in filtered_environment() {
-        command.env(key, value);
-    }
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
+    let mut command = streaming_command(kind, program, args, cwd, &filtered_environment());
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AppError::new(
@@ -141,6 +133,30 @@ pub async fn run_program_streaming(
     })
 }
 
+fn streaming_command(
+    kind: ProfileKind,
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    environment: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Command {
+    let mut command = command_for(kind, program);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .kill_on_drop(true)
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in environment {
+        command.env(key, value);
+    }
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    command
+}
+
 /// Only standard execution variables are inherited by agent-launched programs.
 /// Provider credentials and other application secrets are never copied into a
 /// child process environment.
@@ -184,6 +200,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn streaming_command_matches_direct_construction() {
+        let root = std::env::temp_dir();
+        let args = vec!["--version".into(), "value with spaces".into()];
+        let environment = filtered_environment();
+        let routed = streaming_command(ProfileKind::Edit, "git", &args, &root, &environment);
+        let routed = routed.as_std();
+        let mut direct = std::process::Command::new("git");
+        direct.args(&args).current_dir(&root);
+        for (key, value) in &environment {
+            direct.env(key, value);
+        }
+        assert_eq!(routed.get_program(), direct.get_program());
+        assert_eq!(
+            routed.get_args().collect::<Vec<_>>(),
+            direct.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
+        assert_eq!(
+            routed.get_envs().collect::<Vec<_>>(),
+            direct.get_envs().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn child_environment_excludes_credentials_and_authentication_variables() {
         assert!(environment_key_is_allowed(std::ffi::OsStr::new("PATH")));
         for secret in [
@@ -210,6 +250,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let result = run_program_streaming(
+            ProfileKind::Inspect,
             "sh",
             &["-c".into(), "printf out; printf err >&2; exit 7".into()],
             root.path(),
@@ -249,6 +290,7 @@ mod tests {
         #[cfg(unix)]
         let (program, args) = ("sh", vec!["-c".into(), "sleep 2".into()]);
         let result = run_program_streaming(
+            ProfileKind::Inspect,
             program,
             &args,
             root.path(),

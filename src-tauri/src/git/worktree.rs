@@ -1,5 +1,6 @@
 use super::{branches, git_args, output};
 use crate::{
+    containment::ProfileKind,
     domain::{AgentSession, ChangedFile, TaskWorktree},
     error::{AppError, AppResult},
 };
@@ -28,6 +29,7 @@ fn parse_changed_paths(stdout: &[u8]) -> Vec<String> {
 
 async fn porcelain(root: &Path) -> AppResult<Vec<ChangedFile>> {
     let result = output(
+        ProfileKind::Inspect,
         root,
         &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
         Duration::from_secs(15),
@@ -75,6 +77,7 @@ fn conflicts(files: &[ChangedFile]) -> Vec<String> {
 
 async fn common_directory(path: &Path) -> AppResult<PathBuf> {
     let result = output(
+        ProfileKind::Inspect,
         path,
         &git_args(&["rev-parse", "--git-common-dir"]),
         Duration::from_secs(5),
@@ -122,6 +125,7 @@ pub async fn validate(repository_root: &Path, worktree_path: &Path) -> AppResult
         ));
     }
     let top = output(
+        ProfileKind::Inspect,
         &worktree_path,
         &git_args(&["rev-parse", "--show-toplevel"]),
         Duration::from_secs(5),
@@ -202,6 +206,7 @@ pub async fn create(
         ));
     }
     let check = output(
+        ProfileKind::Inspect,
         repository_root,
         &git_args(&["check-ref-format", "--branch", branch]),
         Duration::from_secs(5),
@@ -231,7 +236,7 @@ pub async fn create(
         destination.to_string_lossy().into_owned(),
         base_branch.to_owned(),
     ];
-    let result = output(repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         let _ = std::fs::remove_dir(destination);
         return Err(AppError::new("worktree_create_failed", "Git could not create an isolated workspace from that branch. Check that the project has no conflicting task branch."));
@@ -278,6 +283,7 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
         files_by_path.insert(file.path.clone(), file.status.clone());
     }
     let changed = output(
+        ProfileKind::Inspect,
         &path,
         &git_args(&["diff", "--name-only", "-z", base_branch]),
         Duration::from_secs(15),
@@ -293,6 +299,7 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
         .map(|(path, status)| ChangedFile { path, status })
         .collect::<Vec<_>>();
     let stat = output(
+        ProfileKind::Inspect,
         &path,
         &git_args(&["diff", "--numstat", base_branch]),
         Duration::from_secs(15),
@@ -317,6 +324,7 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
         }
     }
     let ahead = output(
+        ProfileKind::Inspect,
         &path,
         &git_args(&["rev-list", "--count", &format!("{base_branch}..HEAD")]),
         Duration::from_secs(10),
@@ -356,6 +364,7 @@ pub async fn diff(repository_root: &Path, session: &AgentSession) -> AppResult<S
     })?;
     let worktree_path = validate(repository_root, Path::new(worktree_path)).await?;
     let result = output(
+        ProfileKind::Inspect,
         &worktree_path,
         &git_args(&["diff", "--no-ext-diff", "--binary", &info.base_branch]),
         Duration::from_secs(20),
@@ -399,7 +408,7 @@ pub async fn diff(repository_root: &Path, session: &AgentSession) -> AppResult<S
             null_device.to_owned(),
             file.path.clone(),
         ];
-        let added = output(root, &args, Duration::from_secs(10)).await?;
+        let added = output(ProfileKind::Inspect, root, &args, Duration::from_secs(10)).await?;
         if added.status.code().is_some_and(|code| code > 1) {
             continue;
         }
@@ -443,7 +452,13 @@ pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult
         )
     })?;
     let path = validate(repository_root, Path::new(worktree_path)).await?;
-    let add = output(&path, &git_args(&["add", "--all"]), GIT_TIMEOUT).await?;
+    let add = output(
+        ProfileKind::Edit,
+        &path,
+        &git_args(&["add", "--all"]),
+        GIT_TIMEOUT,
+    )
+    .await?;
     if !add.status.success() {
         return Err(AppError::new(
             "git_stage_failed",
@@ -451,6 +466,7 @@ pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult
         ));
     }
     let staged = output(
+        ProfileKind::Inspect,
         &path,
         &git_args(&["diff", "--cached", "--quiet"]),
         Duration::from_secs(10),
@@ -472,7 +488,7 @@ pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult
             .collect::<String>()
     );
     let args = vec!["commit".to_owned(), "-m".to_owned(), message];
-    let result = output(&path, &args, GIT_TIMEOUT).await?;
+    let result = output(ProfileKind::Edit, &path, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         return Err(AppError::new("git_commit_failed", "Git could not commit the task changes. Check the repository's commit identity and hooks."));
     }
@@ -527,13 +543,14 @@ pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<
         "--no-ff".to_owned(),
         branch.to_owned(),
     ];
-    let result = output(repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
     if result.status.success() {
         return Ok(vec![]);
     }
     let unresolved = conflicts(&porcelain(repository_root).await?);
     if !unresolved.is_empty() {
         let aborted = output(
+            ProfileKind::Edit,
             repository_root,
             &git_args(&["merge", "--abort"]),
             GIT_TIMEOUT,
@@ -546,6 +563,7 @@ pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<
         return Ok(unresolved);
     }
     let _ = output(
+        ProfileKind::Edit,
         repository_root,
         &git_args(&["merge", "--abort"]),
         GIT_TIMEOUT,
@@ -580,7 +598,7 @@ pub async fn remove(repository_root: &Path, session: &AgentSession) -> AppResult
         "remove".to_owned(),
         worktree_path.to_string_lossy().into_owned(),
     ];
-    let result = output(repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         return Err(AppError::new(
             "worktree_remove_failed",
@@ -603,7 +621,7 @@ pub async fn remove_path(repository_root: &Path, path: &Path) -> AppResult<()> {
         "remove".to_owned(),
         validated.to_string_lossy().into_owned(),
     ];
-    let result = output(repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         return Err(AppError::new(
             "worktree_remove_failed",

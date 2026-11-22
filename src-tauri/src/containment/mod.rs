@@ -1,6 +1,6 @@
-// Slice 1 defines the containment contract ahead of routing any spawn through
-// it. The types, inventory and guard are consumed by later Phase 5 slices; no
-// current command path uses the module yet.
+// Phase 5 slice 2 routes production spawns through `command_for` and
+// `std_command_for`. The default backend passes the command through unchanged;
+// the types, inventory and guard remain the contract for later slices.
 #![allow(dead_code)]
 
 use std::{
@@ -128,6 +128,25 @@ impl ProfileKind {
             Self::ReducedSafety => vec![Capability::ProcessLimit],
         }
     }
+}
+
+/// Build the Tokio command for one production spawn.
+///
+/// Slice 2 ships a pass-through backend: the program is constructed exactly as
+/// the direct constructor did, so arguments, environment, working directory and
+/// stdio remain the caller's responsibility. Later slices replace the backend
+/// for `kind` with enforced containment.
+pub fn command_for(_kind: ProfileKind, program: &str) -> tokio::process::Command {
+    tokio::process::Command::new(program)
+}
+
+/// Build the std command for a synchronous production spawn.
+///
+/// This is the matching std constructor for callers that cannot use the Tokio
+/// command, such as the review diff helper. The pass-through contract is the
+/// same as [`command_for`].
+pub fn std_command_for(_kind: ProfileKind, program: &str) -> std::process::Command {
+    std::process::Command::new(program)
 }
 
 /// Default resource envelope for a contained task. Process count includes the
@@ -397,10 +416,10 @@ mod tests {
     /// `process::Command`. Keep this in sync with [`SPAWN_SITES`].
     const PRODUCTION_SPAWN_ALLOWLIST: &[(&str, usize)] = &[
         ("commands/mod.rs", 20),
-        ("git/mod.rs", 3),
-        ("mcp.rs", 1),
-        ("review.rs", 9),
-        ("tools/process.rs", 2),
+        ("containment/mod.rs", 4),
+        ("git/mod.rs", 1),
+        ("review.rs", 8),
+        ("tools/process.rs", 1),
     ];
 
     const ALL_CAPABILITIES: [Capability; 11] = [
@@ -493,6 +512,29 @@ mod tests {
                     && (line.contains("Command::new(") || line.contains("process::Command"))
             })
             .count()
+    }
+
+    #[test]
+    fn spawn_constructors_pass_the_program_through_unchanged() {
+        for kind in [
+            ProfileKind::Inspect,
+            ProfileKind::Edit,
+            ProfileKind::EditWithNetwork,
+            ProfileKind::ReducedSafety,
+        ] {
+            let routed = command_for(kind, "git");
+            let routed = routed.as_std();
+            assert_eq!(routed.get_program(), std::ffi::OsStr::new("git"));
+            assert!(routed.get_args().next().is_none());
+            assert!(routed.get_current_dir().is_none());
+            assert!(routed.get_envs().next().is_none());
+
+            let routed = std_command_for(kind, "rg");
+            assert_eq!(routed.get_program(), std::ffi::OsStr::new("rg"));
+            assert!(routed.get_args().next().is_none());
+            assert!(routed.get_current_dir().is_none());
+            assert!(routed.get_envs().next().is_none());
+        }
     }
 
     #[test]

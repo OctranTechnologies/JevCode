@@ -1,4 +1,5 @@
 use crate::{
+    containment::{command_for, std_command_for, ProfileKind},
     domain::{
         now, AgentSession, ChangeKind, ReviewAllAction, ReviewFileAction, SessionChange,
         SessionChanges, SessionFileDiff, ToolCall,
@@ -585,6 +586,18 @@ pub async fn apply_all_action(
     }
 }
 
+fn unstage_command(paths: &[&Path], repository: &Path) -> tokio::process::Command {
+    let mut command = command_for(ProfileKind::Edit, "git");
+    command.args(["restore", "--staged", "--"]);
+    for path in paths {
+        command.arg(path);
+    }
+    command.current_dir(repository).kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    command
+}
+
 async fn unstage_task_changes(
     checkpoints: &[&SessionFileCheckpoint],
     baseline: &SessionReviewBaseline,
@@ -615,14 +628,7 @@ async fn unstage_task_changes(
     if paths.is_empty() {
         return Ok(());
     }
-    let mut command = tokio::process::Command::new("git");
-    command.args(["restore", "--staged", "--"]);
-    for path in paths {
-        command.arg(path);
-    }
-    command.current_dir(repository).kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
+    let mut command = unstage_command(&paths, &repository);
     let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
         .await
         .map_err(|_| {
@@ -834,6 +840,27 @@ fn diff_counts(checkpoint: &SessionFileCheckpoint) -> (u64, u64) {
     (additions, deletions)
 }
 
+fn diff_command(before: &Path, after: &Path) -> std::process::Command {
+    let mut command = std_command_for(ProfileKind::Inspect, "git");
+    command
+        .args([
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--no-color",
+            "--unified=4",
+            "--",
+        ])
+        .arg(before)
+        .arg(after);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
+}
+
 fn unified_diff(checkpoint: &SessionFileCheckpoint) -> AppResult<(String, bool)> {
     let before = checkpoint.before_content.as_deref().unwrap_or_default();
     let after = checkpoint.agent_content.as_deref().unwrap_or_default();
@@ -850,23 +877,7 @@ fn unified_diff(checkpoint: &SessionFileCheckpoint) -> AppResult<(String, bool)>
     let mut after_file = tempfile::NamedTempFile::new().map_err(AppError::internal)?;
     before_file.write_all(before).map_err(AppError::internal)?;
     after_file.write_all(after).map_err(AppError::internal)?;
-    let mut command = Command::new("git");
-    command
-        .args([
-            "diff",
-            "--no-index",
-            "--no-ext-diff",
-            "--no-color",
-            "--unified=4",
-            "--",
-        ])
-        .arg(before_file.path())
-        .arg(after_file.path());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
+    let mut command = diff_command(before_file.path(), after_file.path());
     let output = command
         .output()
         .map_err(|_| AppError::new("git_unavailable", "Git is unavailable for diff formatting."))?;
@@ -1021,7 +1032,7 @@ async fn stage_checkpoint(
             "Only project files inside the Git repository can be staged.",
         ));
     }
-    let mut command = tokio::process::Command::new("git");
+    let mut command = command_for(ProfileKind::Edit, "git");
     command
         .args(["add", "--"])
         .arg(target)
@@ -1117,6 +1128,58 @@ mod tests {
         domain::{AgentMessage, MessageRole, Project, SessionStatus},
         persistence::Database,
     };
+
+    #[test]
+    fn review_unstage_command_matches_direct_construction() {
+        let repository = Path::new("workspace");
+        let paths = [Path::new("a.txt"), Path::new("dir/b.txt")];
+        let routed = unstage_command(&paths, repository);
+        let routed = routed.as_std();
+        let mut direct = std::process::Command::new("git");
+        direct
+            .args(["restore", "--staged", "--"])
+            .args(paths)
+            .current_dir(repository);
+        assert_eq!(routed.get_program(), direct.get_program());
+        assert_eq!(
+            routed.get_args().collect::<Vec<_>>(),
+            direct.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
+        assert_eq!(
+            routed.get_envs().collect::<Vec<_>>(),
+            direct.get_envs().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn review_diff_command_matches_direct_construction() {
+        let before = Path::new("before.txt");
+        let after = Path::new("after.txt");
+        let routed = diff_command(before, after);
+        let mut direct = std::process::Command::new("git");
+        direct
+            .args([
+                "diff",
+                "--no-index",
+                "--no-ext-diff",
+                "--no-color",
+                "--unified=4",
+                "--",
+            ])
+            .arg(before)
+            .arg(after);
+        assert_eq!(routed.get_program(), direct.get_program());
+        assert_eq!(
+            routed.get_args().collect::<Vec<_>>(),
+            direct.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
+        assert_eq!(
+            routed.get_envs().collect::<Vec<_>>(),
+            direct.get_envs().collect::<Vec<_>>()
+        );
+    }
 
     fn session(database: &Database, root: &Path) -> AgentSession {
         let project = Project {

@@ -1,5 +1,6 @@
 use super::{process::run_program, ToolOutput};
 use crate::{
+    containment::ProfileKind,
     error::{AppError, AppResult},
     git,
     workspaces::{is_ignored, scoped_path},
@@ -17,7 +18,15 @@ fn success(content: impl Into<String>, data: Value) -> AppResult<ToolOutput> {
 }
 
 async fn git_command(root: &Path, args: &[String]) -> AppResult<super::process::ProcessOutput> {
-    let output = run_program("git", args, root, Duration::from_secs(12), GIT_OUTPUT_LIMIT).await?;
+    let output = run_program(
+        ProfileKind::Inspect,
+        "git",
+        args,
+        root,
+        Duration::from_secs(12),
+        GIT_OUTPUT_LIMIT,
+    )
+    .await?;
     if output.exit_code != Some(0) {
         return Err(AppError::new(
             "git_error",

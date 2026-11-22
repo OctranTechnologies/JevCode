@@ -1,5 +1,6 @@
 use super::{process::run_program, ToolOutput};
 use crate::{
+    containment::ProfileKind,
     error::{AppError, AppResult},
     workspaces::{is_ignored, list_directory as list_workspace_directory, scoped_path},
 };
@@ -403,6 +404,7 @@ pub async fn search_files(
     ]);
     command_args.extend(["--glob".into(), glob, "--".into(), ".".into()]);
     let rg = run_program(
+        ProfileKind::Inspect,
         "rg",
         &command_args,
         &directory,
@@ -537,6 +539,7 @@ async fn search_text_query(
     ]);
     rg_args.extend(["--".into(), query.into(), ".".into()]);
     let rg = run_program(
+        ProfileKind::Inspect,
         "rg",
         &rg_args,
         &directory,
