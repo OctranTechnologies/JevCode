@@ -4,9 +4,17 @@
 #![allow(dead_code)]
 
 use std::{
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
     time::Duration,
 };
+
+#[cfg(windows)]
+mod windows;
+
+/// Reserved first argument that turns the app binary into the containment
+/// launcher instead of starting the desktop UI.
+pub const LAUNCHER_ARGUMENT: &str = "--jevcode-containment-launch";
 
 /// The capabilities a task can hold under a containment profile.
 ///
@@ -85,6 +93,14 @@ pub enum EnforcementState {
     Blocked { reason: BlockReason },
 }
 
+/// Host platform after the containment probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Windows,
+    Linux,
+    Other,
+}
+
 /// The four immutable task profiles. Reduced safety is opt-in and is never
 /// called contained: it carries only `process.limit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +144,68 @@ impl ProfileKind {
             Self::ReducedSafety => vec![Capability::ProcessLimit],
         }
     }
+}
+
+/// Resolve the enforcement state for one spawn.
+///
+/// Slice 3a implements only the Windows process-limit backend (D1 and D6). An
+/// opted-in Windows project gets `ReducedSafety`: `process.limit` is enforced,
+/// and every other capability in the kind's set is reported as unsupported.
+/// Without opt-in, and on Linux and other platforms where no backend exists in
+/// this slice, command execution is blocked rather than silently downgraded.
+///
+/// D7 and D8 use the same resolver when the Git and stdio MCP spawns are
+/// wired; no call site consumes the result in this slice.
+pub fn resolve_spawn(
+    platform: Platform,
+    project_opted_in: bool,
+    kind: ProfileKind,
+) -> EnforcementState {
+    match platform {
+        Platform::Windows if project_opted_in => EnforcementState::ReducedSafety {
+            unsupported: kind
+                .capabilities()
+                .into_iter()
+                .filter(|capability| *capability != Capability::ProcessLimit)
+                .collect(),
+        },
+        Platform::Windows | Platform::Linux | Platform::Other => EnforcementState::Blocked {
+            reason: BlockReason::ContainmentUnavailable,
+        },
+    }
+}
+
+/// Run the containment launcher when this process was started with the
+/// reserved launcher argument.
+///
+/// `main` calls this before Tauri starts. A normal launch returns `None`; a
+/// launcher returns the exit code it must exit with and never opens a window.
+pub fn run_launcher_if_requested() -> Option<i32> {
+    let arguments = launcher_arguments(std::env::args_os())?;
+    #[cfg(windows)]
+    {
+        Some(windows::run_launcher(arguments))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = arguments;
+        eprintln!("jevcode containment launcher is not implemented on this platform");
+        Some(1)
+    }
+}
+
+/// Strip the executable name and the reserved marker, returning the launcher
+/// payload when this process was started as a launcher.
+fn launcher_arguments(arguments: impl IntoIterator<Item = OsString>) -> Option<Vec<OsString>> {
+    let mut arguments = arguments.into_iter();
+    arguments.next()?;
+    if arguments
+        .next()
+        .is_none_or(|argument| argument != OsStr::new(LAUNCHER_ARGUMENT))
+    {
+        return None;
+    }
+    Some(arguments.collect())
 }
 
 /// Build the Tokio command for one production spawn.
@@ -417,6 +495,7 @@ mod tests {
     const PRODUCTION_SPAWN_ALLOWLIST: &[(&str, usize)] = &[
         ("commands/mod.rs", 20),
         ("containment/mod.rs", 4),
+        ("containment/windows.rs", 2),
         ("git/mod.rs", 1),
         ("review.rs", 8),
         ("tools/process.rs", 1),
@@ -650,6 +729,171 @@ mod tests {
             ProfileKind::ReducedSafety.capabilities(),
             vec![Capability::ProcessLimit]
         );
+    }
+
+    #[test]
+    fn launcher_argument_gate_only_accepts_the_reserved_first_argument() {
+        let arguments = |values: &[&str]| {
+            values
+                .iter()
+                .copied()
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            launcher_arguments(arguments(&["jevcode.exe"])),
+            None,
+            "a normal launch has no second argument"
+        );
+        assert_eq!(
+            launcher_arguments(arguments(&["jevcode.exe", "--not-the-launcher"])),
+            None
+        );
+        assert_eq!(
+            launcher_arguments(arguments(&["jevcode.exe", LAUNCHER_ARGUMENT])),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            launcher_arguments(arguments(&[
+                "jevcode.exe",
+                LAUNCHER_ARGUMENT,
+                "Local\\job",
+                "git",
+                "status",
+            ])),
+            Some(arguments(&["Local\\job", "git", "status"]))
+        );
+    }
+
+    #[test]
+    fn spawn_resolution_covers_every_platform_opt_in_and_kind() {
+        let platforms = [Platform::Windows, Platform::Linux, Platform::Other];
+        let kinds = [
+            ProfileKind::Inspect,
+            ProfileKind::Edit,
+            ProfileKind::EditWithNetwork,
+            ProfileKind::ReducedSafety,
+        ];
+        let mut covered = 0;
+
+        for platform in platforms {
+            for project_opted_in in [false, true] {
+                for kind in kinds {
+                    let resolved = resolve_spawn(platform, project_opted_in, kind);
+                    let expected = if platform == Platform::Windows && project_opted_in {
+                        EnforcementState::ReducedSafety {
+                            unsupported: kind
+                                .capabilities()
+                                .into_iter()
+                                .filter(|capability| *capability != Capability::ProcessLimit)
+                                .collect(),
+                        }
+                    } else {
+                        EnforcementState::Blocked {
+                            reason: BlockReason::ContainmentUnavailable,
+                        }
+                    };
+                    assert_eq!(
+                        resolved, expected,
+                        "{platform:?} opted_in={project_opted_in} kind={kind:?}"
+                    );
+                    covered += 1;
+                }
+            }
+        }
+
+        assert_eq!(covered, 3 * 2 * 4, "every combination must be covered");
+    }
+
+    #[test]
+    fn windows_reduced_safety_lists_every_unenforced_capability() {
+        assert_eq!(
+            resolve_spawn(Platform::Windows, false, ProfileKind::Inspect),
+            EnforcementState::Blocked {
+                reason: BlockReason::ContainmentUnavailable,
+            }
+        );
+        assert_eq!(
+            resolve_spawn(Platform::Windows, true, ProfileKind::Inspect),
+            EnforcementState::ReducedSafety {
+                unsupported: vec![
+                    Capability::WorkspaceRead,
+                    Capability::GitMetadata,
+                    Capability::ProcessSpawn,
+                ],
+            }
+        );
+        assert_eq!(
+            resolve_spawn(Platform::Windows, true, ProfileKind::Edit),
+            EnforcementState::ReducedSafety {
+                unsupported: vec![
+                    Capability::WorkspaceRead,
+                    Capability::WorkspaceWrite,
+                    Capability::TempWrite,
+                    Capability::GitMetadata,
+                    Capability::ProcessSpawn,
+                ],
+            }
+        );
+        assert_eq!(
+            resolve_spawn(Platform::Windows, true, ProfileKind::EditWithNetwork),
+            EnforcementState::ReducedSafety {
+                unsupported: vec![
+                    Capability::WorkspaceRead,
+                    Capability::WorkspaceWrite,
+                    Capability::TempWrite,
+                    Capability::GitMetadata,
+                    Capability::ProcessSpawn,
+                    Capability::Network,
+                ],
+            }
+        );
+        assert_eq!(
+            resolve_spawn(Platform::Windows, true, ProfileKind::ReducedSafety),
+            EnforcementState::ReducedSafety {
+                unsupported: Vec::new(),
+            }
+        );
+
+        for kind in [
+            ProfileKind::Inspect,
+            ProfileKind::Edit,
+            ProfileKind::EditWithNetwork,
+            ProfileKind::ReducedSafety,
+        ] {
+            let EnforcementState::ReducedSafety { unsupported } =
+                resolve_spawn(Platform::Windows, true, kind)
+            else {
+                panic!("an opted-in Windows project must resolve to reduced safety");
+            };
+            assert!(
+                !unsupported.contains(&Capability::ProcessLimit),
+                "{kind:?}: process.limit is enforced by the Windows job"
+            );
+        }
+    }
+
+    #[test]
+    fn linux_and_other_stay_blocked_even_when_opted_in() {
+        for platform in [Platform::Linux, Platform::Other] {
+            for project_opted_in in [false, true] {
+                for kind in [
+                    ProfileKind::Inspect,
+                    ProfileKind::Edit,
+                    ProfileKind::EditWithNetwork,
+                    ProfileKind::ReducedSafety,
+                ] {
+                    assert_eq!(
+                        resolve_spawn(platform, project_opted_in, kind),
+                        EnforcementState::Blocked {
+                            reason: BlockReason::ContainmentUnavailable,
+                        },
+                        "{platform:?} has no backend in this slice"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

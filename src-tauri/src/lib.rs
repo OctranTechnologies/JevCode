@@ -33,6 +33,15 @@ mod workspaces;
 use std::{path::Path, sync::Arc, time::SystemTime};
 use tauri::Manager;
 
+/// Handle the reserved containment-launcher argument before Tauri starts.
+///
+/// Returns `Some(exit_code)` when this process is the launcher; `main` exits
+/// with that code without creating a window or touching application state.
+/// Returns `None` for a normal desktop launch.
+pub fn run_containment_launcher_if_requested() -> Option<i32> {
+    containment::run_launcher_if_requested()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
