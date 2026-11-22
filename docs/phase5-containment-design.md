@@ -1,6 +1,6 @@
 # Phase 5 — command containment and task ownership
 
-**Decisions recorded: D1 per-project opt-in ReducedSafety on Windows fallback; D2 Isolated worktree default; D3 no allow-once overlap bypass; D4 network grant per task; D5 per-task env grants for Git signing and SSH; D6 64 processes and 2 GiB default. Spikes 0, 0b and 0c have run; results are in docs/phase5-spike-results.md. Slice 1 is committed as 7f04e19. Slice 2 is in progress. No enforcement is active.**
+**Decisions recorded: D1 per-project opt-in ReducedSafety on Windows fallback; D2 Isolated worktree default; D3 no allow-once overlap bypass; D4 network grant per task; D5 per-task env grants for Git signing and SSH; D6 64 processes and 2 GiB default; D7 on Windows, the block also covers the app's own Git features (review, changed files, task worktrees), so a new Isolated task cannot start until its project is opted in; D8 stdio MCP servers follow the same Windows rule. Spikes 0, 0b and 0c have run; results are in docs/phase5-spike-results.md. Slice 1 is committed as 7f04e19. Slice 2 is in progress. No enforcement is active.**
 
 Merges proposals A2 and B2; unresolved disagreements are in section 9.
 
