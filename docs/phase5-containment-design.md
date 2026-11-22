@@ -1,6 +1,6 @@
 # Phase 5 — command containment and task ownership
 
-**Decisions recorded: D1 per-project opt-in ReducedSafety on Windows fallback; D2 Isolated worktree default; D3 no allow-once overlap bypass; D4 network grant per task; D5 per-task env grants for Git signing and SSH; D6 64 processes and 2 GiB default. Nothing implemented. Slice 0 next.**
+**Decisions recorded: D1 per-project opt-in ReducedSafety on Windows fallback; D2 Isolated worktree default; D3 no allow-once overlap bypass; D4 network grant per task; D5 per-task env grants for Git signing and SSH; D6 64 processes and 2 GiB default. Spikes 0, 0b and 0c have run; results are in docs/phase5-spike-results.md. Slice 1 is committed as 7f04e19. Slice 2 is in progress. No enforcement is active.**
 
 Merges proposals A2 and B2; unresolved disagreements are in section 9.
 
@@ -70,22 +70,22 @@ Read allowlisting is enumerated. Deny `.ssh`, `.aws`, `.config/gh`, `.git-creden
 | Candidate | No admin? | Workspace | Stdio / descendants | Cannot stop |
 |---|---|---|---|---|
 | Job object (`KILL_ON_JOB_CLOSE`, `ActiveProcessLimit`, `JOB_OBJECT_LIMIT_JOB_MEMORY`) | Yes (Home unverified) | None | Launcher joins first; pipes inherited; descendants in job | Files, network, COM, services, WMI |
-| AppContainer/LowBox (no capability SIDs) | Unverified, unpackaged app | Package-SID ACEs on workspace/temp; toolchain ACEs unverified | Token inherited; no `internetClient` means no network | App-package reads, brokered COM, loopback |
+| AppContainer/LowBox (no capability SIDs) | Unverified, unpackaged app | Package-SID ACEs on workspace/temp; toolchain ACEs unverified | Token inherited; no `internetClient` means no network | App-package reads, brokered COM. Loopback is blocked by default (WSA 10060), so a local server needs a designed exemption, which is unverified |
 | Low-integrity restricted token | Unverified | ACEs plus low-IL label | Inherited | Allows reads; no network control; defense only |
 
-A `jevcode-containment` launcher sidecar holds the Windows code. The app creates the named job and limits, then starts the launcher, which joins the job, applies the AppContainer token through a `STARTUPINFOEX` attribute list, starts the target with inherited stdio and waits. If the attribute list fails on Home, the launcher self-assigns before spawning; the spike decides. The launcher hosts the `windows` crate, so the Tauri crate needs no new Win32 dependency (`src-tauri/Cargo.toml:20-55`). Kill-on-close covers cancel, exit and crash; breakaway is denied. COM/WMI/services remain a gap.
+A `jevcode-containment` launcher sidecar holds the Windows code. The app creates the named job and limits, then starts the launcher, which joins the job, applies the AppContainer token through a `STARTUPINFOEX` attribute list, starts the target with inherited stdio and waits. If the attribute list fails on Home, the launcher self-assigns before spawning; the attribute-list failure path is untested. The launcher hosts the `windows` crate, so the Tauri crate needs no new Win32 dependency (`src-tauri/Cargo.toml:20-55`). Kill-on-close covers cancel, exit and crash; breakaway is denied. COM/WMI/services remain a gap.
 
-Windows job limits cover wall clock, process count and memory. Total CPU time and handle caps are unverified and stay `Reduced`. Network enforcement depends on AppContainer, since per-process firewall rules need admin (unverified).
+Windows job limits verified so far: process count and job memory (slice 0). Wall clock is not a job limit; the app enforces it with a timer. CPU-time and handle caps are unverified and stay `Reduced`. Network enforcement depends on AppContainer, since per-process firewall rules need admin (unverified).
 
 ### Linux without root
 
 - **bubblewrap primary:** bind workspace rw, task temp rw, `/usr`, `/lib*`, `/bin`, `/etc` ro; `--unshare-all`, `--share-net` only with `network`, `--die-with-parent`, `--new-session`, `--cap-drop ALL`, `--proc`, `--dev`, `--clearenv` plus allowlisted `--setenv`. Stdio passes; descendants share namespaces. Needs unprivileged user namespaces and a permitting AppArmor policy (unverified). Cannot stop writes in rw binds or kernel bugs.
 - **Landlock fallback:** unprivileged `no_new_privs`; rules in `pre_exec`: workspace/temp rw, enumerated toolchains and `/proc` ro, else denied. Irreversible and inherited. ABI 1 is 5.13; network ABI 4 is 6.7 (unverified). Cannot restrict UDP, DNS, AF_UNIX, open fds or `/proc`; TCP rules are port-based.
 - **seccomp:** unprivileged with `no_new_privs`; inherited. When network is denied, deny `socket(AF_INET)`/`AF_INET6`, closing Landlock's UDP/DNS gap; also deny `ptrace`, `mount`, `unshare`, `bpf`, `io_uring_setup`, `keyctl`, `perf_event_open`. No path filtering; per-architecture.
-- **cgroups v2:** delegated subtree only (unverified); `cgroup.kill`. Without it, process count is `Reduced`. Never `RLIMIT_NPROC`, which counts the UID.
+- **cgroups v2:** the `user@1000.service` subtree is delegated on WSL2, but `cgroup.kill` was not writable there (slice 0c), so cgroup teardown is unverified. Without a working cgroup, process count is `Reduced`. Never `RLIMIT_NPROC`, which counts the UID.
 - **`setsid` + `PDEATHSIG` + `kill(-pgid)`:** reliability only, not a boundary.
 
-Order: bubblewrap, then Landlock + seccomp, else `Blocked`. `--die-with-parent` plus `PDEATHSIG` covers app crash.
+Order: bubblewrap, then Landlock + seccomp, else `Blocked`. `--die-with-parent` covers the sandbox's direct child on app crash. The parent-death signal does not reach grandchildren (slice 0c: a grandchild survived 2.02 s), and bubblewrap pid-namespace teardown of descendants is unverified.
 
 ### macOS
 
@@ -194,6 +194,8 @@ Slices 0 and 1 change no enforcement behavior. Slice 0 ships no product code.
 6. **Default resource limits.** (a) 64 processes / 2 GiB; (b) higher defaults. **Recommend (a)** with a task-level raise and a clear failure message. **Tradeoff:** large builds fail until raised; raising weakens the fork-bomb and memory-exhaustion guarantee.
 
 ## 10. Verified facts and unverified claims
+
+**Spike results:** [Phase 5 spike results](phase5-spike-results.md) records slices 0, 0b and 0c.
 
 **Verified in this checkout:**
 
