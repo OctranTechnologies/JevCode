@@ -9,6 +9,7 @@ import { EffectiveContextView } from './EffectiveContextView';
 import { TaskPlanPanel } from './TaskPlanPanel';
 import { TranscriptExport } from './TranscriptExport';
 import { TranscriptImport } from './TranscriptImport';
+import { UncontainedBadge } from '../workspaces/ContainmentBadge';
 import { FileName } from '../../components/FileName';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
@@ -169,7 +170,7 @@ function ContextList({ label, items }: { label: string; items: string[] }) {
 
 function TaskPanel({ session, demo, project, provider, review, usage }: { session?: AgentSession; demo: boolean; project?: Project; provider?: Provider; review: SessionChanges | null; usage: UsageRecord[] }) {
   if (!session) return <div className="inspector-empty"><Clock3 size={18} /><strong>No active task</strong><p>Start with a prompt to create a task in this project.</p></div>;
-  return <div className="task-detail-panel"><div className="task-detail-status"><span className={`task-status-mark status-${session.status}`} />{humanStatus(session.status)}{demo && <span className="task-demo-tag">Example</span>}</div>
+  return <div className="task-detail-panel"><div className="task-detail-status"><span className={`task-status-mark status-${session.status}`} />{humanStatus(session.status)}{demo && <span className="task-demo-tag">Example</span>}<UncontainedBadge project={project} /></div>
     <h3 title={session.title}>{session.title || 'New task'}</h3>
     <div className="task-detail-field"><span>Project</span><strong>{project?.name ?? 'Unknown project'}</strong></div>
     <div className="task-detail-field"><span>Model</span><strong>{provider?.models.find(model => model.id === session.modelId)?.displayName ?? `Unavailable · ${session.modelId}`}</strong></div>

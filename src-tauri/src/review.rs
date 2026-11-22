@@ -1,5 +1,5 @@
 use crate::{
-    containment::{command_for, std_command_for, ProfileKind},
+    containment::{prepare_command, PreparedCommand, SpawnPolicy},
     domain::{
         now, AgentSession, ChangeKind, ReviewAllAction, ReviewFileAction, SessionChange,
         SessionChanges, SessionFileDiff, ToolCall,
@@ -41,6 +41,7 @@ pub struct WorkspaceSnapshot {
 }
 
 pub async fn ensure_baseline(
+    policy: SpawnPolicy,
     database: &Database,
     session: &AgentSession,
     project_root: &Path,
@@ -60,15 +61,17 @@ pub async fn ensure_baseline(
     let mut status_available = false;
     let mut status_truncated = false;
     if let Some(repo_root) = repo_root {
-        match git::review_state(&repo_root).await {
+        match git::review_state(policy, &repo_root).await {
             Ok(snapshot) => {
                 head = Some(snapshot.head);
                 statuses = snapshot.statuses;
                 status_available = true;
                 status_truncated = snapshot.truncated;
             }
-            Err(error) if error.code == "git_unavailable" || error.code == "not_git_repository" => {
-            }
+            Err(error)
+                if error.code == "git_unavailable"
+                    || error.code == "not_git_repository"
+                    || error.code == "containment_unavailable" => {}
             Err(error) => return Err(error),
         }
     }
@@ -85,6 +88,7 @@ pub async fn ensure_baseline(
 }
 
 pub async fn checkpoint_before(
+    policy: SpawnPolicy,
     database: &Database,
     session_id: &str,
     project_root: &Path,
@@ -97,7 +101,7 @@ pub async fn checkpoint_before(
         )
     })?;
     let root = canonical_root(project_root, &baseline)?;
-    let (current_status, _, current_truncated) = status_snapshot(&root).await;
+    let (current_status, _, current_truncated) = status_snapshot(policy, &root).await;
     for (label, target) in change_targets(&root, call)? {
         if let Some(existing) = database.file_checkpoint(session_id, &label)? {
             if !live_matches(&existing)? {
@@ -174,6 +178,7 @@ pub fn checkpoint_after(
 /// Snapshot visible project files around an arbitrary command. Git status alone
 /// cannot reveal edits made by formatters, tests, or user scripts.
 pub async fn command_snapshot_before(
+    policy: SpawnPolicy,
     database: &Database,
     session_id: &str,
     project_root: &Path,
@@ -186,7 +191,7 @@ pub async fn command_snapshot_before(
     })?;
     let root = canonical_root(project_root, &baseline)?;
     let temp = tempfile::tempdir().map_err(AppError::internal)?;
-    let (statuses, status_available, status_truncated) = status_snapshot(&root).await;
+    let (statuses, status_available, status_truncated) = status_snapshot(policy, &root).await;
     let before = scan_workspace(&root, Some(temp.path()))?;
 
     // Persist the pre-command bytes of already-dirty files. If the app stops
@@ -327,11 +332,14 @@ fn live_matches_at_path(checkpoint: &SessionFileCheckpoint, file: &WorkspaceFile
     checkpoint.agent_exists && checkpoint.expected_hash.as_deref() == Some(file.hash.as_str())
 }
 
-async fn status_snapshot(root: &Path) -> (BTreeMap<String, String>, bool, bool) {
+async fn status_snapshot(
+    policy: SpawnPolicy,
+    root: &Path,
+) -> (BTreeMap<String, String>, bool, bool) {
     let Some(repository) = find_git_root(root) else {
         return (BTreeMap::new(), false, false);
     };
-    match git::review_state(&repository).await {
+    match git::review_state(policy, &repository).await {
         Ok(state) => (state.statuses, true, state.truncated),
         Err(_) => (BTreeMap::new(), false, false),
     }
@@ -411,6 +419,7 @@ fn display_path(root: &Path, target: &Path) -> String {
 }
 
 pub async fn list_changes(
+    policy: SpawnPolicy,
     database: &Database,
     session: &AgentSession,
 ) -> AppResult<SessionChanges> {
@@ -426,7 +435,7 @@ pub async fn list_changes(
             baseline_at: session.created_at.clone(),
         });
     };
-    let current_status = current_statuses(Path::new(&baseline.root)).await;
+    let current_status = current_statuses(policy, Path::new(&baseline.root)).await;
     let mut files = Vec::new();
     for checkpoint in database.file_checkpoints(&session.id)? {
         let before_exists = checkpoint.existed_before;
@@ -448,7 +457,7 @@ pub async fn list_changes(
                     .as_deref()
                     .unwrap_or(Path::new("")),
             );
-        let (additions, deletions) = diff_counts(&checkpoint);
+        let (additions, deletions) = diff_counts(policy, &checkpoint);
         files.push(SessionChange {
             path: checkpoint.path,
             kind: match (before_exists, after_exists) {
@@ -508,6 +517,7 @@ pub async fn list_changes(
 }
 
 pub fn file_diff(
+    policy: SpawnPolicy,
     database: &Database,
     session: &AgentSession,
     path: &str,
@@ -515,7 +525,7 @@ pub fn file_diff(
     let checkpoint = database
         .file_checkpoint(&session.id, path)?
         .ok_or_else(|| AppError::new("not_found", "This file is no longer in the task review."))?;
-    let (diff, binary) = unified_diff(&checkpoint)?;
+    let (diff, binary) = unified_diff(policy, &checkpoint)?;
     let conflicted = !live_state_matches(&checkpoint);
     Ok(SessionFileDiff {
         path: checkpoint.path,
@@ -526,6 +536,7 @@ pub fn file_diff(
 }
 
 pub async fn apply_file_action(
+    policy: SpawnPolicy,
     database: &Database,
     session: &AgentSession,
     project_root: &Path,
@@ -542,17 +553,18 @@ pub async fn apply_file_action(
     match action {
         ReviewFileAction::Accept => database.mark_file_checkpoint_reviewed(&session.id, path),
         ReviewFileAction::Revert => {
-            unstage_task_changes(&[&checkpoint], &baseline, &root).await?;
+            unstage_task_changes(policy, &[&checkpoint], &baseline, &root).await?;
             restore_checkpoint(&checkpoint, &root)?;
             database.remove_file_checkpoint(&session.id, path)?;
             database.clear_empty_review(&session.id)
         }
-        ReviewFileAction::Stage => stage_checkpoint(&checkpoint, &baseline, &root).await,
+        ReviewFileAction::Stage => stage_checkpoint(policy, &checkpoint, &baseline, &root).await,
         ReviewFileAction::Open => open_checkpoint(&checkpoint),
     }
 }
 
 pub async fn apply_all_action(
+    policy: SpawnPolicy,
     database: &Database,
     session: &AgentSession,
     project_root: &Path,
@@ -577,7 +589,13 @@ pub async fn apply_all_action(
                     ));
                 }
             }
-            unstage_task_changes(&checkpoints.iter().collect::<Vec<_>>(), &baseline, &root).await?;
+            unstage_task_changes(
+                policy,
+                &checkpoints.iter().collect::<Vec<_>>(),
+                &baseline,
+                &root,
+            )
+            .await?;
             for checkpoint in &checkpoints {
                 restore_checkpoint(checkpoint, &root)?;
             }
@@ -586,19 +604,22 @@ pub async fn apply_all_action(
     }
 }
 
-fn unstage_command(paths: &[&Path], repository: &Path) -> tokio::process::Command {
-    let mut command = command_for(ProfileKind::Edit, "git");
-    command.args(["restore", "--staged", "--"]);
+fn unstage_command(
+    policy: SpawnPolicy,
+    paths: &[&Path],
+    repository: &Path,
+) -> AppResult<PreparedCommand> {
+    let mut command = prepare_command(policy, "git")?
+        .args(["restore", "--staged", "--"])
+        .current_dir(repository);
     for path in paths {
-        command.arg(path);
+        command = command.arg(path);
     }
-    command.current_dir(repository).kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    command
+    Ok(command)
 }
 
 async fn unstage_task_changes(
+    policy: SpawnPolicy,
     checkpoints: &[&SessionFileCheckpoint],
     baseline: &SessionReviewBaseline,
     root: &Path,
@@ -612,7 +633,7 @@ async fn unstage_task_changes(
             "The task Git repository is unavailable.",
         )
     })?;
-    let state = git::review_state(&repository).await?;
+    let state = git::review_state(policy, &repository).await?;
     let paths = checkpoints
         .iter()
         .filter(|checkpoint| checkpoint.preexisting_status.is_none())
@@ -628,21 +649,32 @@ async fn unstage_task_changes(
     if paths.is_empty() {
         return Ok(());
     }
-    let mut command = unstage_command(&paths, &repository);
-    let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
-        .await
-        .map_err(|_| {
-            AppError::new(
-                "git_timeout",
-                "Git could not safely reset the task's staged paths in time.",
-            )
-        })?
-        .map_err(|_| {
+    let command = unstage_command(policy, &paths, &repository)?;
+    let process = command.spawn().map_err(|_| {
+        AppError::new(
+            "git_unavailable",
+            "Git is unavailable while reverting staged task changes.",
+        )
+    })?;
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        crate::containment::collect_output(process),
+    )
+    .await
+    {
+        Ok(result) => result.map_err(|_| {
             AppError::new(
                 "git_unavailable",
                 "Git is unavailable while reverting staged task changes.",
             )
-        })?;
+        })?,
+        Err(_) => {
+            return Err(AppError::new(
+                "git_timeout",
+                "Git could not safely reset the task's staged paths in time.",
+            ))
+        }
+    };
     if !output.status.success() {
         return Err(AppError::new(
             "git_unstage_failed",
@@ -810,9 +842,9 @@ fn live_state_matches(checkpoint: &SessionFileCheckpoint) -> bool {
     live_matches(checkpoint).unwrap_or(false)
 }
 
-async fn current_statuses(root: &Path) -> Option<BTreeMap<String, String>> {
+async fn current_statuses(policy: SpawnPolicy, root: &Path) -> Option<BTreeMap<String, String>> {
     let repo_root = find_git_root(root)?;
-    git::review_state(&repo_root)
+    git::review_state(policy, &repo_root)
         .await
         .ok()
         .map(|state| state.statuses)
@@ -822,8 +854,8 @@ fn find_git_root(root: &Path) -> Option<PathBuf> {
     workspaces::find_repository_root(root)
 }
 
-fn diff_counts(checkpoint: &SessionFileCheckpoint) -> (u64, u64) {
-    let Ok((diff, binary)) = unified_diff(checkpoint) else {
+fn diff_counts(policy: SpawnPolicy, checkpoint: &SessionFileCheckpoint) -> (u64, u64) {
+    let Ok((diff, binary)) = unified_diff(policy, checkpoint) else {
         return (0, 0);
     };
     if binary {
@@ -840,9 +872,8 @@ fn diff_counts(checkpoint: &SessionFileCheckpoint) -> (u64, u64) {
     (additions, deletions)
 }
 
-fn diff_command(before: &Path, after: &Path) -> std::process::Command {
-    let mut command = std_command_for(ProfileKind::Inspect, "git");
-    command
+fn diff_command(policy: SpawnPolicy, before: &Path, after: &Path) -> AppResult<PreparedCommand> {
+    let command = prepare_command(policy, "git")?
         .args([
             "diff",
             "--no-index",
@@ -853,15 +884,13 @@ fn diff_command(before: &Path, after: &Path) -> std::process::Command {
         ])
         .arg(before)
         .arg(after);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    command
+    Ok(command)
 }
 
-fn unified_diff(checkpoint: &SessionFileCheckpoint) -> AppResult<(String, bool)> {
+fn unified_diff(
+    policy: SpawnPolicy,
+    checkpoint: &SessionFileCheckpoint,
+) -> AppResult<(String, bool)> {
     let before = checkpoint.before_content.as_deref().unwrap_or_default();
     let after = checkpoint.agent_content.as_deref().unwrap_or_default();
     if before.len().max(after.len()) > MAX_DIFF_BYTES
@@ -877,9 +906,12 @@ fn unified_diff(checkpoint: &SessionFileCheckpoint) -> AppResult<(String, bool)>
     let mut after_file = tempfile::NamedTempFile::new().map_err(AppError::internal)?;
     before_file.write_all(before).map_err(AppError::internal)?;
     after_file.write_all(after).map_err(AppError::internal)?;
-    let mut command = diff_command(before_file.path(), after_file.path());
-    let output = command
-        .output()
+    let command = diff_command(policy, before_file.path(), after_file.path())?;
+    let process = command
+        .spawn()
+        .map_err(|_| AppError::new("git_unavailable", "Git is unavailable for diff formatting."))?;
+    let output = process
+        .wait_with_output()
         .map_err(|_| AppError::new("git_unavailable", "Git is unavailable for diff formatting."))?;
     if output.status.code().is_some_and(|code| code > 1) {
         return Err(AppError::new(
@@ -1007,6 +1039,7 @@ fn create_parent_within(root: &Path, parent: &Path) -> AppResult<()> {
 }
 
 async fn stage_checkpoint(
+    policy: SpawnPolicy,
     checkpoint: &SessionFileCheckpoint,
     baseline: &SessionReviewBaseline,
     root: &Path,
@@ -1032,18 +1065,23 @@ async fn stage_checkpoint(
             "Only project files inside the Git repository can be staged.",
         ));
     }
-    let mut command = command_for(ProfileKind::Edit, "git");
-    command
+    let command = prepare_command(policy, "git")?
         .args(["add", "--"])
         .arg(target)
-        .current_dir(repository)
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
-        .await
-        .map_err(|_| AppError::new("git_timeout", "Git staging took too long."))?
+        .current_dir(repository);
+    let process = command
+        .spawn()
         .map_err(|_| AppError::new("git_unavailable", "Git is unavailable for staging."))?;
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        crate::containment::collect_output(process),
+    )
+    .await
+    {
+        Ok(result) => result
+            .map_err(|_| AppError::new("git_unavailable", "Git is unavailable for staging."))?,
+        Err(_) => return Err(AppError::new("git_timeout", "Git staging took too long.")),
+    };
     if !output.status.success() {
         return Err(AppError::new(
             "git_stage_failed",
@@ -1129,56 +1167,31 @@ mod tests {
         persistence::Database,
     };
 
-    #[test]
-    fn review_unstage_command_matches_direct_construction() {
-        let repository = Path::new("workspace");
-        let paths = [Path::new("a.txt"), Path::new("dir/b.txt")];
-        let routed = unstage_command(&paths, repository);
-        let routed = routed.as_std();
-        let mut direct = std::process::Command::new("git");
-        direct
-            .args(["restore", "--staged", "--"])
-            .args(paths)
-            .current_dir(repository);
-        assert_eq!(routed.get_program(), direct.get_program());
-        assert_eq!(
-            routed.get_args().collect::<Vec<_>>(),
-            direct.get_args().collect::<Vec<_>>()
-        );
-        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
-        assert_eq!(
-            routed.get_envs().collect::<Vec<_>>(),
-            direct.get_envs().collect::<Vec<_>>()
-        );
+    fn test_policy() -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(crate::containment::ProfileKind::Inspect)
     }
 
     #[test]
-    fn review_diff_command_matches_direct_construction() {
-        let before = Path::new("before.txt");
-        let after = Path::new("after.txt");
-        let routed = diff_command(before, after);
-        let mut direct = std::process::Command::new("git");
-        direct
-            .args([
-                "diff",
-                "--no-index",
-                "--no-ext-diff",
-                "--no-color",
-                "--unified=4",
-                "--",
-            ])
-            .arg(before)
-            .arg(after);
-        assert_eq!(routed.get_program(), direct.get_program());
+    fn blocked_policy_never_builds_a_review_git_command() {
+        let repository = Path::new("workspace");
+        let paths = [Path::new("a.txt"), Path::new("dir/b.txt")];
+        let blocked = SpawnPolicy::new(crate::containment::ProfileKind::Edit, false, true);
         assert_eq!(
-            routed.get_args().collect::<Vec<_>>(),
-            direct.get_args().collect::<Vec<_>>()
+            unstage_command(blocked, &paths, repository)
+                .err()
+                .expect("a blocked policy must not build a git command")
+                .code,
+            "containment_unavailable"
         );
-        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
+        let blocked = SpawnPolicy::new(crate::containment::ProfileKind::Inspect, false, true);
         assert_eq!(
-            routed.get_envs().collect::<Vec<_>>(),
-            direct.get_envs().collect::<Vec<_>>()
+            diff_command(blocked, Path::new("before.txt"), Path::new("after.txt"))
+                .err()
+                .expect("a blocked policy must not build a git command")
+                .code,
+            "containment_unavailable"
         );
+        assert!(unstage_command(test_policy(), &paths, repository).is_ok());
     }
 
     fn session(database: &Database, root: &Path) -> AgentSession {
@@ -1194,6 +1207,7 @@ mod tests {
             preferred_model: None,
             permissions: Default::default(),
             is_recent: true,
+            reduced_safety_opt_in: false,
             guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         };
@@ -1266,8 +1280,13 @@ mod tests {
         let database_dir = tempfile::tempdir().unwrap();
         let database = Database::open(&database_dir.path().join("review.sqlite")).unwrap();
         let session = session(&database, root);
-        ensure_baseline(&database, &session, root).await.unwrap();
-        let preexisting = git::review_state(root).await.unwrap().statuses;
+        ensure_baseline(test_policy(), &database, &session, root)
+            .await
+            .unwrap();
+        let preexisting = git::review_state(test_policy(), root)
+            .await
+            .unwrap()
+            .statuses;
         assert!(preexisting.contains_key(&git::review_path_key(&path.to_string_lossy())));
 
         let call = ToolCall {
@@ -1275,22 +1294,30 @@ mod tests {
             name: "apply_patch".into(),
             arguments: serde_json::json!({"path":"src/lib.rs"}),
         };
-        checkpoint_before(&database, &session.id, root, &call)
+        checkpoint_before(test_policy(), &database, &session.id, root, &call)
             .await
             .unwrap();
         std::fs::write(&path, "committed\nuser edit\nagent edit\n").unwrap();
         checkpoint_after(&database, &session.id, root, &call).unwrap();
-        let changes = list_changes(&database, &session).await.unwrap();
+        let changes = list_changes(test_policy(), &database, &session)
+            .await
+            .unwrap();
         assert_eq!(changes.files.len(), 1);
         assert!(changes.files[0].preexisting_status.is_some());
         assert!(!changes.files[0].can_stage);
-        let diff = file_diff(&database, &session, "src/lib.rs").unwrap();
+        let diff = file_diff(test_policy(), &database, &session, "src/lib.rs").unwrap();
         assert!(diff.diff.contains("+agent edit"));
         assert!(!diff.diff.contains("-user edit"));
 
-        apply_all_action(&database, &session, root, ReviewAllAction::RevertAll)
-            .await
-            .unwrap();
+        apply_all_action(
+            test_policy(),
+            &database,
+            &session,
+            root,
+            ReviewAllAction::RevertAll,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
             "committed\nuser edit\n"
@@ -1307,7 +1334,7 @@ mod tests {
         let database_path = database_dir.path().join("review.sqlite");
         let database = Database::open(&database_path).unwrap();
         let session = session(&database, root.path());
-        ensure_baseline(&database, &session, root.path())
+        ensure_baseline(test_policy(), &database, &session, root.path())
             .await
             .unwrap();
         let call = ToolCall {
@@ -1315,13 +1342,14 @@ mod tests {
             name: "create_file".into(),
             arguments: serde_json::json!({"path":"new-file.ts"}),
         };
-        checkpoint_before(&database, &session.id, root.path(), &call)
+        checkpoint_before(test_policy(), &database, &session.id, root.path(), &call)
             .await
             .unwrap();
         std::fs::write(&path, "export const taskChange = true;\n").unwrap();
         checkpoint_after(&database, &session.id, root.path(), &call).unwrap();
 
         apply_file_action(
+            test_policy(),
             &database,
             &session,
             root.path(),
@@ -1330,7 +1358,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let accepted = list_changes(&database, &session).await.unwrap();
+        let accepted = list_changes(test_policy(), &database, &session)
+            .await
+            .unwrap();
         assert_eq!(
             accepted.files.len(),
             1,
@@ -1339,9 +1369,16 @@ mod tests {
         assert!(accepted.files[0].reviewed);
         drop(database);
         let database = Database::open(&database_path).unwrap();
-        assert!(list_changes(&database, &session).await.unwrap().files[0].reviewed);
+        assert!(
+            list_changes(test_policy(), &database, &session)
+                .await
+                .unwrap()
+                .files[0]
+                .reviewed
+        );
 
         apply_file_action(
+            test_policy(),
             &database,
             &session,
             root.path(),
@@ -1351,7 +1388,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!path.exists());
-        assert!(list_changes(&database, &session)
+        assert!(list_changes(test_policy(), &database, &session)
             .await
             .unwrap()
             .files
@@ -1389,8 +1426,10 @@ mod tests {
             tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
         let database = Database::open(&database_dir.path().join("review.sqlite")).unwrap();
         let session = session(&database, project);
-        ensure_baseline(&database, &session, project).await.unwrap();
-        let snapshot = command_snapshot_before(&database, &session.id, project)
+        ensure_baseline(test_policy(), &database, &session, project)
+            .await
+            .unwrap();
+        let snapshot = command_snapshot_before(test_policy(), &database, &session.id, project)
             .await
             .unwrap();
         std::fs::write(
@@ -1402,19 +1441,27 @@ mod tests {
         std::fs::write(project.join("created.ts"), "generated by command\n").unwrap();
         command_snapshot_after(&database, &session.id, snapshot).unwrap();
 
-        let changes = list_changes(&database, &session).await.unwrap();
+        let changes = list_changes(test_policy(), &database, &session)
+            .await
+            .unwrap();
         assert_eq!(changes.files.len(), 3);
         assert!(changes
             .files
             .iter()
             .any(|file| file.path == "source.ts" && file.preexisting_status.is_some()));
-        let diff = file_diff(&database, &session, "source.ts").unwrap();
+        let diff = file_diff(test_policy(), &database, &session, "source.ts").unwrap();
         assert!(diff.diff.contains("+formatter edit"));
         assert!(!diff.diff.contains("-user edit before task"));
 
-        apply_all_action(&database, &session, project, ReviewAllAction::RevertAll)
-            .await
-            .unwrap();
+        apply_all_action(
+            test_policy(),
+            &database,
+            &session,
+            project,
+            ReviewAllAction::RevertAll,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             std::fs::read_to_string(project.join("source.ts")).unwrap(),
             "user edit before task\n"
@@ -1433,7 +1480,7 @@ mod tests {
         let database_dir = tempfile::tempdir().unwrap();
         let database = Database::open(&database_dir.path().join("review.sqlite")).unwrap();
         let session = session(&database, root.path());
-        ensure_baseline(&database, &session, root.path())
+        ensure_baseline(test_policy(), &database, &session, root.path())
             .await
             .unwrap();
         let call = ToolCall {
@@ -1441,19 +1488,23 @@ mod tests {
             name: "apply_patch".into(),
             arguments: serde_json::json!({"path":"file.txt"}),
         };
-        checkpoint_before(&database, &session.id, root.path(), &call)
+        checkpoint_before(test_policy(), &database, &session.id, root.path(), &call)
             .await
             .unwrap();
         std::fs::write(root.path().join("file.txt"), "agent\n").unwrap();
         checkpoint_after(&database, &session.id, root.path(), &call).unwrap();
         std::fs::write(root.path().join("file.txt"), "user after edit\n").unwrap();
-        let diff = file_diff(&database, &session, "file.txt").unwrap();
+        let diff = file_diff(test_policy(), &database, &session, "file.txt").unwrap();
         assert!(diff.conflicted);
-        assert!(
-            apply_all_action(&database, &session, root.path(), ReviewAllAction::RevertAll)
-                .await
-                .is_err()
-        );
+        assert!(apply_all_action(
+            test_policy(),
+            &database,
+            &session,
+            root.path(),
+            ReviewAllAction::RevertAll
+        )
+        .await
+        .is_err());
         assert_eq!(
             std::fs::read_to_string(root.path().join("file.txt")).unwrap(),
             "user after edit\n"
@@ -1489,19 +1540,28 @@ mod tests {
             tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
         let database = Database::open(&database_dir.path().join("review.sqlite")).unwrap();
         let session = session(&database, project);
-        ensure_baseline(&database, &session, project).await.unwrap();
+        ensure_baseline(test_policy(), &database, &session, project)
+            .await
+            .unwrap();
         let call = ToolCall {
             id: "edit".into(),
             name: "apply_patch".into(),
             arguments: serde_json::json!({"path":"file.ts"}),
         };
-        checkpoint_before(&database, &session.id, project, &call)
+        checkpoint_before(test_policy(), &database, &session.id, project, &call)
             .await
             .unwrap();
         std::fs::write(&path, "after\n").unwrap();
         checkpoint_after(&database, &session.id, project, &call).unwrap();
-        assert!(list_changes(&database, &session).await.unwrap().files[0].can_stage);
+        assert!(
+            list_changes(test_policy(), &database, &session)
+                .await
+                .unwrap()
+                .files[0]
+                .can_stage
+        );
         apply_file_action(
+            test_policy(),
             &database,
             &session,
             project,
@@ -1510,8 +1570,15 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(list_changes(&database, &session).await.unwrap().files[0].staged);
+        assert!(
+            list_changes(test_policy(), &database, &session)
+                .await
+                .unwrap()
+                .files[0]
+                .staged
+        );
         apply_file_action(
+            test_policy(),
             &database,
             &session,
             project,
@@ -1521,7 +1588,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "before\n");
-        assert!(git::review_state(project)
+        assert!(git::review_state(test_policy(), project)
             .await
             .unwrap()
             .statuses

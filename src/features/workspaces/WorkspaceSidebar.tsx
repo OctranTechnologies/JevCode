@@ -7,6 +7,7 @@ import { displayPath } from '../../lib/paths';
 import { updateService, type UpdateSnapshot } from '../../services/updater';
 import type { AgentSession, InterfaceMode, Project, Provider } from '../../types/domain';
 import { primaryShortcutModifier } from '../../lib/shortcuts';
+import { UncontainedBadge } from './ContainmentBadge';
 import type { View } from './Sidebar';
 
 export function WorkspaceSidebar({
@@ -90,10 +91,11 @@ export function WorkspaceSidebar({
         {visibleTasks.length > 0 ? visibleTasks.map(session => {
           const active = sessionId === session.id && view === 'agent';
           const menuOpen = taskMenu === session.id;
+          const sessionProject = projects.find(project => project.id === session.projectId);
           return <div className="sidebar-task-wrap" key={session.id}>
             <div className="sidebar-task-row">
               <button className={`sidebar-row task-row${active ? ' is-active' : ''}`} onClick={() => onSession(session)} title={session.title} aria-current={active ? 'page' : undefined}>
-                <TaskState status={session.status} /><span>{session.title || 'New task'}</span>
+                <TaskState status={session.status} /><span>{session.title || 'New task'}</span><UncontainedBadge project={sessionProject} />
               </button>
               <button className="task-row-menu-toggle" onClick={() => setTaskMenu(menuOpen ? null : session.id)} title={`${session.title} actions`} aria-label={`${session.title} task actions`} aria-expanded={menuOpen}><MoreHorizontal size={15} /></button>
             </div>

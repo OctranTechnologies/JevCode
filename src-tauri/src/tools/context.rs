@@ -1,5 +1,6 @@
 use super::ToolOutput;
 use crate::{
+    containment::SpawnPolicy,
     error::AppResult,
     git,
     workspaces::{list_directory, scan_project},
@@ -7,11 +8,11 @@ use crate::{
 use serde_json::json;
 use std::path::Path;
 
-pub async fn inspect_project(root: &Path) -> AppResult<ToolOutput> {
+pub async fn inspect_project(root: &Path, policy: SpawnPolicy) -> AppResult<ToolOutput> {
     let scan = scan_project(root)?;
     let files = list_directory(root, ".")?;
-    let status = git::status(root).await.ok();
-    let branch = git::branch(root).await.ok().flatten();
+    let status = git::status(policy, root).await.ok();
+    let branch = git::branch(policy, root).await.ok().flatten();
     let project_name = root
         .file_name()
         .map(|name| name.to_string_lossy().to_string())

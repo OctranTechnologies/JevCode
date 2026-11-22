@@ -12,6 +12,7 @@ export const demoProject: Project = {
   preferredModel: null,
   permissions: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: 8 },
   isRecent: true,
+  reducedSafetyOptIn: false,
   guidancePrecedence: 'default',
   createdAt: '2026-10-08T14:15:00.000Z',
 };

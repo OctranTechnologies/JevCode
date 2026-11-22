@@ -1,4 +1,5 @@
 use crate::{
+    containment::{ProfileKind, SpawnPolicy},
     domain::*,
     error::{AppError, AppResult},
     permissions,
@@ -87,6 +88,7 @@ struct ShadowDecisionOutcome {
 struct ToolExecutionContext {
     task_mode: TaskMode,
     policy: PermissionPolicy,
+    containment: SpawnPolicy,
     timeout: Duration,
     session_id: String,
     project_id: String,
@@ -809,9 +811,19 @@ impl AgentRuntime {
 
         let mut command_snapshot = None;
         let mut preparation_error = None;
+        let containment = SpawnPolicy::new(
+            if session.task_mode == TaskMode::Plan {
+                ProfileKind::Inspect
+            } else {
+                ProfileKind::Edit
+            },
+            project.reduced_safety_opt_in,
+            state.database.reduced_safety_allowed()?,
+        );
         if let Some((call, _)) = batch.first() {
             let result = match call.name.as_str() {
                 "run_command" => review::command_snapshot_before(
+                    containment,
                     &state.database,
                     &session.id,
                     Path::new(&project.path),
@@ -820,6 +832,7 @@ impl AgentRuntime {
                 .map(|snapshot| command_snapshot = Some(snapshot)),
                 "apply_patch" | "create_file" | "delete_file" | "move_file" => {
                     review::checkpoint_before(
+                        containment,
                         &state.database,
                         &session.id,
                         Path::new(&project.path),
@@ -854,6 +867,7 @@ impl AgentRuntime {
                 ToolExecutionContext {
                     task_mode: session.task_mode,
                     policy: session.permission_policy.clone(),
+                    containment,
                     timeout: self.config.tool_timeout,
                     session_id: session.id.clone(),
                     project_id: project.id.clone(),
@@ -1092,7 +1106,13 @@ impl AgentRuntime {
         cancel: &mut watch::Receiver<bool>,
     ) -> AppResult<CompletionReview> {
         let (requirements, omitted_requirement_count) = completion_requirements(session);
-        let changes = match review::list_changes(&state.database, session).await {
+        let project = state.database.project(&session.project_id)?;
+        let policy = SpawnPolicy::new(
+            ProfileKind::Inspect,
+            project.reduced_safety_opt_in,
+            state.database.reduced_safety_allowed()?,
+        );
+        let changes = match review::list_changes(policy, &state.database, session).await {
             Ok(changes) => changes,
             Err(error) => {
                 tracing::warn!(session_id = %session.id, code = %error.code, "Could not collect completion review changes");
@@ -2217,7 +2237,7 @@ async fn execute(root: &Path, call: &ToolCall, context: &ToolExecutionContext) -
         if let Some(result) = context.extensions.execute(&context.project_id, call).await {
             result
         } else {
-            tools::execute(root, call, &context.policy, true).await
+            tools::execute(root, call, &context.policy, context.containment, true).await
         }
     };
     match tokio::time::timeout(context.timeout, operation).await {
@@ -2251,7 +2271,14 @@ async fn execute_one(
         };
     }
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-    let execute = tools::execute_with_output(root, call, &context.policy, true, sender);
+    let execute = tools::execute_with_output(
+        root,
+        call,
+        &context.policy,
+        context.containment,
+        true,
+        sender,
+    );
     tokio::pin!(execute);
     let mut stream_open = true;
     let run = async {
@@ -2744,6 +2771,11 @@ async fn drive(
     mut cancel: watch::Receiver<bool>,
 ) -> AppResult<()> {
     let mut project = state.database.project(&session.project_id)?;
+    let inspect_policy = SpawnPolicy::new(
+        ProfileKind::Inspect,
+        project.reduced_safety_opt_in,
+        state.database.reduced_safety_allowed()?,
+    );
     if session.workspace_mode == WorkspaceMode::Isolated {
         let worktree = session.worktree_path.as_deref().ok_or_else(|| {
             AppError::new(
@@ -2758,6 +2790,7 @@ async fn drive(
             )
         })?;
         project.path = crate::git::worktree::project_path(
+            inspect_policy,
             Path::new(repository_root),
             Path::new(&project.path),
             Path::new(worktree),
@@ -2767,7 +2800,13 @@ async fn drive(
         .into_owned();
     }
     if session.task_mode == TaskMode::Agent {
-        review::ensure_baseline(&state.database, session, Path::new(&project.path)).await?;
+        review::ensure_baseline(
+            inspect_policy,
+            &state.database,
+            session,
+            Path::new(&project.path),
+        )
+        .await?;
     }
     let provider_config = state.config.provider(&session.provider_id)?;
     let models = state

@@ -6,6 +6,7 @@
 //! followed, and unreadable or oversized files stay visible as skipped. The
 //! result is captured with the task, so later edits affect new tasks only.
 use crate::{
+    containment::SpawnPolicy,
     context_migration::{preview, secret_line_numbers},
     domain::{
         AgentSession, EffectiveContext, EffectiveContextBasis, EffectiveContextSource,
@@ -278,6 +279,7 @@ pub struct GuidanceLocation {
 /// An isolated task reads the opened folder inside its own workspace, so its
 /// guidance matches the files it edits. Other tasks read the opened folder.
 pub async fn location(
+    policy: SpawnPolicy,
     project_path: &Path,
     repository_root: Option<&Path>,
     workspace: Option<&Path>,
@@ -296,7 +298,8 @@ pub async fn location(
         )
     })?;
     let folder =
-        crate::git::worktree::project_path(repository_root, project_path, workspace).await?;
+        crate::git::worktree::project_path(policy, repository_root, project_path, workspace)
+            .await?;
     Ok(GuidanceLocation {
         folder,
         repository: workspace_base(workspace),
@@ -508,6 +511,10 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    fn test_policy() -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(crate::containment::ProfileKind::Inspect)
+    }
 
     fn write(root: &Path, relative: &str, bytes: &[u8]) {
         let path = relative
@@ -840,13 +847,24 @@ mod tests {
         // An uncommitted edit in the opened checkout must not reach the isolated task.
         write(&repo, "packages/app/AGENTS.md", b"uncommitted app guidance");
         let workspace = temp.path().join("task-workspace");
-        crate::git::worktree::create(&repo, &workspace, &base, "jevcode/guidance-test")
-            .await
-            .unwrap();
+        crate::git::worktree::create(
+            test_policy(),
+            &repo,
+            &workspace,
+            &base,
+            "jevcode/guidance-test",
+        )
+        .await
+        .unwrap();
 
-        let located = location(&repo.join("packages/app"), Some(&repo), Some(&workspace))
-            .await
-            .unwrap();
+        let located = location(
+            test_policy(),
+            &repo.join("packages/app"),
+            Some(&repo),
+            Some(&workspace),
+        )
+        .await
+        .unwrap();
         let resolved = resolve(
             &located.folder,
             Some(&located.repository),

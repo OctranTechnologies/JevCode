@@ -2,8 +2,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 import defaults from '../../src-tauri/src/providers/defaults.json';
-import type { AgentSession, CustomCommand, CustomCommandPreview, EffectiveContext, HarnessStatus, McpImportSource, ProjectProfilePreview, SkillSummary, TaskPlan, AgentStreamChunk, AppDiagnostics, Bootstrap, DecisionAvailability, DecisionEvaluationRecord, DecisionPreferences, DecisionUsageRecord, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProjectContextScan, ProjectMemoryCategory, ProjectMemoryView, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
-import { customCommandPreviewSchema, customCommandSchema, harnessStatusSchema, mcpImportSourceSchema, effectiveContextSchema, projectProfilePreviewSchema, skillSummarySchema, taskPlanSchema, agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, decisionAvailabilitySchema, decisionEvaluationRecordSchema, decisionPreferencesSchema, decisionUsageRecordSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectContextScanSchema, projectFileSchema, projectMemorySchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
+import type { AgentSession, CustomCommand, CustomCommandPreview, ContainmentMachineStatus, ContainmentStatus, EffectiveContext, HarnessStatus, McpImportSource, ProjectProfilePreview, SkillSummary, TaskPlan, AgentStreamChunk, AppDiagnostics, Bootstrap, DecisionAvailability, DecisionEvaluationRecord, DecisionPreferences, DecisionUsageRecord, GoogleAccount, GoogleAuthAttemptEvent, GoogleAuthStart, GoogleAuthStatus, GoogleAuthType, GoogleLogoutResult, McpScope, McpServerConfig, McpServerView, Model, ModelPreferences, ModelReference, OpenAIAccount, OpenAIAuthAttemptEvent, OpenAIAuthStart, OpenAIAuthStatus, OpenAILogoutResult, PermissionMode, PermissionPolicy, PermissionRule, Project, ProjectContextScan, ProjectMemoryCategory, ProjectMemoryView, ProviderAccount, ProviderAccountInfo, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, TaskWorktree, TaskWorktreeAction, ToolOutputChunk, UpdatePreferences, UsageRecord, WorkspaceMode } from '../types/domain';
+import { containmentMachineStatusSchema, containmentStatusSchema, customCommandPreviewSchema, customCommandSchema, harnessStatusSchema, mcpImportSourceSchema, effectiveContextSchema, projectProfilePreviewSchema, skillSummarySchema, taskPlanSchema, agentStreamChunkSchema, appDiagnosticsSchema, bootstrapSchema, decisionAvailabilitySchema, decisionEvaluationRecordSchema, decisionPreferencesSchema, decisionUsageRecordSchema, googleAccountSchema, googleAuthAttemptEventSchema, googleAuthStartSchema, googleAuthStatusSchema, googleLogoutResultSchema, mcpServerConfigSchema, mcpServerSchema, modelPreferencesSchema, modelSchema, openAIAccountSchema, openAIAuthAttemptEventSchema, openAIAuthStartSchema, openAIAuthStatusSchema, permissionModeSchema, permissionRuleSchema, projectContextScanSchema, projectFileSchema, projectMemorySchema, projectOverviewSchema, projectSchema, providerAccountInfoSchema, providerAccountSchema, sessionChangesSchema, sessionFileDiffSchema, sessionSchema, taskWorktreeActionSchema, taskWorktreeSchema, terminalResultSchema, toolOutputChunkSchema, updatePreferencesSchema, usageSchema } from './schemas';
 import { DesktopError, normalizeError } from './errors';
 
 export { openAIAuthAttemptEventSchema };
@@ -11,6 +11,9 @@ export { openAIAuthAttemptEventSchema };
 export const desktopAvailable = isTauri();
 interface Commands {
   bootstrap: { args: undefined; result: Bootstrap };
+  containment_status: { args: { projectId: string }; result: ContainmentStatus };
+  set_project_reduced_safety: { args: { projectId: string; enabled: boolean; confirmation: string }; result: ContainmentStatus };
+  set_reduced_safety_allowed: { args: { enabled: boolean }; result: ContainmentMachineStatus };
   get_app_diagnostics: { args: undefined; result: AppDiagnostics };
   open_latest_release: { args: undefined; result: null };
   reveal_application_logs: { args: undefined; result: null };
@@ -120,7 +123,7 @@ interface Commands {
   frontend_log: { args: { level: 'info' | 'error'; event: string }; result: null };
 }
 const responses = {
-  bootstrap: bootstrapSchema, get_app_diagnostics: appDiagnosticsSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
+  bootstrap: bootstrapSchema, containment_status: containmentStatusSchema, set_project_reduced_safety: containmentStatusSchema, set_reduced_safety_allowed: containmentMachineStatusSchema, get_app_diagnostics: appDiagnosticsSchema, open_latest_release: z.null(), reveal_application_logs: z.null(), open_project: projectSchema, create_project: projectSchema, remove_project_from_recents: projectSchema, update_project_settings: projectSchema,
   scan_project_context: projectContextScanSchema, import_project_context: projectSchema, effective_context: effectiveContextSchema, list_skills: z.array(skillSummarySchema), list_custom_commands: z.array(customCommandSchema), preview_custom_command: customCommandPreviewSchema, convert_custom_command: z.string(), scan_mcp_imports: z.array(mcpImportSourceSchema), import_mcp_servers: z.array(mcpServerConfigSchema), detect_harnesses: z.array(harnessStatusSchema), create_task_plan: taskPlanSchema, list_task_plans: z.array(taskPlanSchema), update_task_plan: taskPlanSchema, add_plan_comment: taskPlanSchema, set_plan_comment_resolved: taskPlanSchema, remove_plan_comment: taskPlanSchema, import_task_transcript: sessionSchema, export_task_plan: z.null(), export_task_transcript: z.null(), task_plan_handoff: z.string(),  export_project_profile: z.null(), preview_project_profile: projectProfilePreviewSchema, apply_project_profile: projectSchema,
   list_project_memories: z.array(projectMemorySchema), save_project_memory: projectMemorySchema, refresh_project_memory_source: projectMemorySchema, delete_project_memory: z.null(),
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
@@ -174,6 +177,21 @@ export async function loadBootstrap(): Promise<Bootstrap> {
   if (desktopAvailable) return command('bootstrap', undefined);
   // Browser preview displays configuration metadata only. Native actions stay disabled.
   return bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers.map(provider => ({ ...provider, connected: provider.protocol === 'preview' })), accounts: [], sessions: [], usage: [], tools: [], permissionPolicy: { mode: 'ask', readFiles: 'allow', git: 'allow', writeFiles: 'allow', shell: 'allow', externalFiles: 'ask', maxToolRounds: defaults.maxToolRounds }, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [{ method: 'api_key', label: 'OpenAI API key', available: true, unavailableReason: null }] }, chatgpt: { available: true, connectedAccounts: [], selectedAccountId: null, selectedAuthMethod: null, unavailableReason: null } }, updatePreferences: { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null } });
+}
+
+/** Resolve the containment state for every profile kind in one project. */
+export function getContainmentStatus(projectId: string): Promise<ContainmentStatus> {
+  return command('containment_status', { projectId });
+}
+
+/** Turn the per-project reduced-safety opt-in on or off; enabling needs the exact phrase. */
+export function setProjectReducedSafety(projectId: string, enabled: boolean, confirmation: string): Promise<ContainmentStatus> {
+  return command('set_project_reduced_safety', { projectId, enabled, confirmation });
+}
+
+/** Turn reduced safety on or off for every project on this machine. */
+export function setReducedSafetyAllowed(enabled: boolean): Promise<ContainmentMachineStatus> {
+  return command('set_reduced_safety_allowed', { enabled });
 }
 
 export interface ProviderAuthAdapter {

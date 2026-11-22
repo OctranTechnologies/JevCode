@@ -1,6 +1,6 @@
 use super::{branches, git_args, output};
 use crate::{
-    containment::ProfileKind,
+    containment::SpawnPolicy,
     domain::{AgentSession, ChangedFile, TaskWorktree},
     error::{AppError, AppResult},
 };
@@ -27,9 +27,9 @@ fn parse_changed_paths(stdout: &[u8]) -> Vec<String> {
         .collect()
 }
 
-async fn porcelain(root: &Path) -> AppResult<Vec<ChangedFile>> {
+async fn porcelain(policy: SpawnPolicy, root: &Path) -> AppResult<Vec<ChangedFile>> {
     let result = output(
-        ProfileKind::Inspect,
+        policy,
         root,
         &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
         Duration::from_secs(15),
@@ -75,9 +75,9 @@ fn conflicts(files: &[ChangedFile]) -> Vec<String> {
         .collect()
 }
 
-async fn common_directory(path: &Path) -> AppResult<PathBuf> {
+async fn common_directory(policy: SpawnPolicy, path: &Path) -> AppResult<PathBuf> {
     let result = output(
-        ProfileKind::Inspect,
+        policy,
         path,
         &git_args(&["rev-parse", "--git-common-dir"]),
         Duration::from_secs(5),
@@ -105,7 +105,11 @@ async fn common_directory(path: &Path) -> AppResult<PathBuf> {
 
 /// Validate the persisted path against Git's repository metadata before using
 /// it. A task cannot redirect filesystem tools to an unrelated directory.
-pub async fn validate(repository_root: &Path, worktree_path: &Path) -> AppResult<PathBuf> {
+pub async fn validate(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    worktree_path: &Path,
+) -> AppResult<PathBuf> {
     let repository_root = std::fs::canonicalize(repository_root).map_err(|_| {
         AppError::new(
             "project_unavailable",
@@ -125,7 +129,7 @@ pub async fn validate(repository_root: &Path, worktree_path: &Path) -> AppResult
         ));
     }
     let top = output(
-        ProfileKind::Inspect,
+        policy,
         &worktree_path,
         &git_args(&["rev-parse", "--show-toplevel"]),
         Duration::from_secs(5),
@@ -144,7 +148,8 @@ pub async fn validate(repository_root: &Path, worktree_path: &Path) -> AppResult
         )
     })?;
     if top != worktree_path
-        || common_directory(&repository_root).await? != common_directory(&worktree_path).await?
+        || common_directory(policy, &repository_root).await?
+            != common_directory(policy, &worktree_path).await?
     {
         return Err(AppError::new(
             "invalid_worktree",
@@ -155,6 +160,7 @@ pub async fn validate(repository_root: &Path, worktree_path: &Path) -> AppResult
 }
 
 pub async fn project_path(
+    policy: SpawnPolicy,
     repository_root: &Path,
     project_path: &Path,
     worktree_path: &Path,
@@ -167,7 +173,7 @@ pub async fn project_path(
     })?;
     let project_path = std::fs::canonicalize(project_path)
         .map_err(|_| AppError::new("project_unavailable", "The project folder is unavailable."))?;
-    let worktree = validate(&repository_root, worktree_path).await?;
+    let worktree = validate(policy, &repository_root, worktree_path).await?;
     let relative = project_path.strip_prefix(&repository_root).map_err(|_| {
         AppError::new(
             "invalid_project_root",
@@ -190,12 +196,13 @@ pub async fn project_path(
 }
 
 pub async fn create(
+    policy: SpawnPolicy,
     repository_root: &Path,
     destination: &Path,
     base_branch: &str,
     branch: &str,
 ) -> AppResult<()> {
-    if !branches(repository_root)
+    if !branches(policy, repository_root)
         .await?
         .iter()
         .any(|item| item == base_branch)
@@ -206,7 +213,7 @@ pub async fn create(
         ));
     }
     let check = output(
-        ProfileKind::Inspect,
+        policy,
         repository_root,
         &git_args(&["check-ref-format", "--branch", branch]),
         Duration::from_secs(5),
@@ -236,7 +243,7 @@ pub async fn create(
         destination.to_string_lossy().into_owned(),
         base_branch.to_owned(),
     ];
-    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(policy, repository_root, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         let _ = std::fs::remove_dir(destination);
         return Err(AppError::new("worktree_create_failed", "Git could not create an isolated workspace from that branch. Check that the project has no conflicting task branch."));
@@ -244,7 +251,11 @@ pub async fn create(
     Ok(())
 }
 
-pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResult<TaskWorktree> {
+pub async fn inspect(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+) -> AppResult<TaskWorktree> {
     let path = session.worktree_path.as_deref().ok_or_else(|| {
         AppError::new(
             "not_isolated",
@@ -257,7 +268,7 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
             "This task is missing its starting branch.",
         )
     })?;
-    let path = match validate(repository_root, Path::new(path)).await {
+    let path = match validate(policy, repository_root, Path::new(path)).await {
         Ok(path) => path,
         Err(error) if error.code == "worktree_unavailable" => {
             return Ok(TaskWorktree {
@@ -278,12 +289,12 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
         Err(error) => return Err(error),
     };
     let mut files_by_path = BTreeMap::<String, String>::new();
-    let uncommitted = porcelain(&path).await?;
+    let uncommitted = porcelain(policy, &path).await?;
     for file in &uncommitted {
         files_by_path.insert(file.path.clone(), file.status.clone());
     }
     let changed = output(
-        ProfileKind::Inspect,
+        policy,
         &path,
         &git_args(&["diff", "--name-only", "-z", base_branch]),
         Duration::from_secs(15),
@@ -299,7 +310,7 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
         .map(|(path, status)| ChangedFile { path, status })
         .collect::<Vec<_>>();
     let stat = output(
-        ProfileKind::Inspect,
+        policy,
         &path,
         &git_args(&["diff", "--numstat", base_branch]),
         Duration::from_secs(15),
@@ -324,7 +335,7 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
         }
     }
     let ahead = output(
-        ProfileKind::Inspect,
+        policy,
         &path,
         &git_args(&["rev-list", "--count", &format!("{base_branch}..HEAD")]),
         Duration::from_secs(10),
@@ -348,8 +359,12 @@ pub async fn inspect(repository_root: &Path, session: &AgentSession) -> AppResul
     })
 }
 
-pub async fn diff(repository_root: &Path, session: &AgentSession) -> AppResult<String> {
-    let info = inspect(repository_root, session).await?;
+pub async fn diff(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+) -> AppResult<String> {
+    let info = inspect(policy, repository_root, session).await?;
     if !info.available {
         return Err(AppError::new(
             "worktree_unavailable",
@@ -362,9 +377,9 @@ pub async fn diff(repository_root: &Path, session: &AgentSession) -> AppResult<S
             "This task uses the project folder directly.",
         )
     })?;
-    let worktree_path = validate(repository_root, Path::new(worktree_path)).await?;
+    let worktree_path = validate(policy, repository_root, Path::new(worktree_path)).await?;
     let result = output(
-        ProfileKind::Inspect,
+        policy,
         &worktree_path,
         &git_args(&["diff", "--no-ext-diff", "--binary", &info.base_branch]),
         Duration::from_secs(20),
@@ -408,7 +423,7 @@ pub async fn diff(repository_root: &Path, session: &AgentSession) -> AppResult<S
             null_device.to_owned(),
             file.path.clone(),
         ];
-        let added = output(ProfileKind::Inspect, root, &args, Duration::from_secs(10)).await?;
+        let added = output(policy, root, &args, Duration::from_secs(10)).await?;
         if added.status.code().is_some_and(|code| code > 1) {
             continue;
         }
@@ -425,8 +440,12 @@ pub async fn diff(repository_root: &Path, session: &AgentSession) -> AppResult<S
     Ok(diff)
 }
 
-pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult<()> {
-    let info = inspect(repository_root, session).await?;
+pub async fn commit(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+) -> AppResult<()> {
+    let info = inspect(policy, repository_root, session).await?;
     if !info.available {
         return Err(AppError::new(
             "worktree_unavailable",
@@ -451,14 +470,8 @@ pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult
             "This task uses the project folder directly.",
         )
     })?;
-    let path = validate(repository_root, Path::new(worktree_path)).await?;
-    let add = output(
-        ProfileKind::Edit,
-        &path,
-        &git_args(&["add", "--all"]),
-        GIT_TIMEOUT,
-    )
-    .await?;
+    let path = validate(policy, repository_root, Path::new(worktree_path)).await?;
+    let add = output(policy, &path, &git_args(&["add", "--all"]), GIT_TIMEOUT).await?;
     if !add.status.success() {
         return Err(AppError::new(
             "git_stage_failed",
@@ -466,7 +479,7 @@ pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult
         ));
     }
     let staged = output(
-        ProfileKind::Inspect,
+        policy,
         &path,
         &git_args(&["diff", "--cached", "--quiet"]),
         Duration::from_secs(10),
@@ -488,15 +501,19 @@ pub async fn commit(repository_root: &Path, session: &AgentSession) -> AppResult
             .collect::<String>()
     );
     let args = vec!["commit".to_owned(), "-m".to_owned(), message];
-    let result = output(ProfileKind::Edit, &path, &args, GIT_TIMEOUT).await?;
+    let result = output(policy, &path, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         return Err(AppError::new("git_commit_failed", "Git could not commit the task changes. Check the repository's commit identity and hooks."));
     }
     Ok(())
 }
 
-pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<Vec<String>> {
-    let info = inspect(repository_root, session).await?;
+pub async fn apply(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+) -> AppResult<Vec<String>> {
+    let info = inspect(policy, repository_root, session).await?;
     if !info.available {
         return Err(AppError::new(
             "worktree_unavailable",
@@ -521,16 +538,18 @@ pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<
             "This task has no committed changes to apply.",
         ));
     }
-    let project_status = porcelain(repository_root).await?;
+    let project_status = porcelain(policy, repository_root).await?;
     if !project_status.is_empty() {
         return Err(AppError::new("project_has_changes", "The project working tree has local changes. Commit or stash them before applying this task."));
     }
-    let current_branch = super::branch(repository_root).await?.ok_or_else(|| {
-        AppError::new(
-            "detached_head",
-            "Check out a project branch before applying task changes.",
-        )
-    })?;
+    let current_branch = super::branch(policy, repository_root)
+        .await?
+        .ok_or_else(|| {
+            AppError::new(
+                "detached_head",
+                "Check out a project branch before applying task changes.",
+            )
+        })?;
     let branch = session.git_branch.as_deref().ok_or_else(|| {
         AppError::new(
             "worktree_metadata_missing",
@@ -543,14 +562,14 @@ pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<
         "--no-ff".to_owned(),
         branch.to_owned(),
     ];
-    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(policy, repository_root, &args, GIT_TIMEOUT).await?;
     if result.status.success() {
         return Ok(vec![]);
     }
-    let unresolved = conflicts(&porcelain(repository_root).await?);
+    let unresolved = conflicts(&porcelain(policy, repository_root).await?);
     if !unresolved.is_empty() {
         let aborted = output(
-            ProfileKind::Edit,
+            policy,
             repository_root,
             &git_args(&["merge", "--abort"]),
             GIT_TIMEOUT,
@@ -563,7 +582,7 @@ pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<
         return Ok(unresolved);
     }
     let _ = output(
-        ProfileKind::Edit,
+        policy,
         repository_root,
         &git_args(&["merge", "--abort"]),
         GIT_TIMEOUT,
@@ -575,8 +594,12 @@ pub async fn apply(repository_root: &Path, session: &AgentSession) -> AppResult<
     ))
 }
 
-pub async fn remove(repository_root: &Path, session: &AgentSession) -> AppResult<()> {
-    let info = inspect(repository_root, session).await?;
+pub async fn remove(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+) -> AppResult<()> {
+    let info = inspect(policy, repository_root, session).await?;
     if !info.available {
         return Err(AppError::new(
             "worktree_unavailable",
@@ -592,13 +615,13 @@ pub async fn remove(repository_root: &Path, session: &AgentSession) -> AppResult
             "This task uses the project folder directly.",
         )
     })?;
-    let worktree_path = validate(repository_root, Path::new(worktree_path)).await?;
+    let worktree_path = validate(policy, repository_root, Path::new(worktree_path)).await?;
     let args = vec![
         "worktree".to_owned(),
         "remove".to_owned(),
         worktree_path.to_string_lossy().into_owned(),
     ];
-    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(policy, repository_root, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         return Err(AppError::new(
             "worktree_remove_failed",
@@ -608,9 +631,13 @@ pub async fn remove(repository_root: &Path, session: &AgentSession) -> AppResult
     Ok(())
 }
 
-pub async fn remove_path(repository_root: &Path, path: &Path) -> AppResult<()> {
-    let validated = validate(repository_root, path).await?;
-    if !porcelain(&validated).await?.is_empty() {
+pub async fn remove_path(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    path: &Path,
+) -> AppResult<()> {
+    let validated = validate(policy, repository_root, path).await?;
+    if !porcelain(policy, &validated).await?.is_empty() {
         return Err(AppError::new(
             "worktree_has_changes",
             "This task workspace contains uncommitted changes.",
@@ -621,7 +648,7 @@ pub async fn remove_path(repository_root: &Path, path: &Path) -> AppResult<()> {
         "remove".to_owned(),
         validated.to_string_lossy().into_owned(),
     ];
-    let result = output(ProfileKind::Edit, repository_root, &args, GIT_TIMEOUT).await?;
+    let result = output(policy, repository_root, &args, GIT_TIMEOUT).await?;
     if !result.status.success() {
         return Err(AppError::new(
             "worktree_remove_failed",
@@ -668,6 +695,10 @@ mod tests {
         (root, branch)
     }
 
+    fn test_policy() -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(crate::containment::ProfileKind::Inspect)
+    }
+
     fn session(path: &Path, base: &str, branch: &str) -> AgentSession {
         AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
@@ -711,15 +742,23 @@ mod tests {
         let (repository, base) = repository(&temp);
         let worktree = temp.path().join("isolated-task");
         let branch = "jevcode/add-feature-test";
-        create(&repository, &worktree, &base, branch).await.unwrap();
-        let parallel_worktree = temp.path().join("parallel-task");
-        let parallel_branch = "jevcode/parallel-task";
-        create(&repository, &parallel_worktree, &base, parallel_branch)
+        create(test_policy(), &repository, &worktree, &base, branch)
             .await
             .unwrap();
+        let parallel_worktree = temp.path().join("parallel-task");
+        let parallel_branch = "jevcode/parallel-task";
+        create(
+            test_policy(),
+            &repository,
+            &parallel_worktree,
+            &base,
+            parallel_branch,
+        )
+        .await
+        .unwrap();
         assert_ne!(worktree, parallel_worktree);
 
-        let scoped = project_path(&repository, &repository, &worktree)
+        let scoped = project_path(test_policy(), &repository, &repository, &worktree)
             .await
             .unwrap();
         assert_eq!(scoped, std::fs::canonicalize(&worktree).unwrap());
@@ -732,29 +771,36 @@ mod tests {
             "base"
         );
         let task = session(&worktree, &base, branch);
-        let info = inspect(&repository, &task).await.unwrap();
+        let info = inspect(test_policy(), &repository, &task).await.unwrap();
         assert!(info.dirty);
         assert!(info.changed_files.iter().any(|file| file.path == "src.txt"));
         assert!(info.changed_files.iter().any(|file| file.path == "new.txt"));
-        let task_diff = diff(&repository, &task).await.unwrap();
+        let task_diff = diff(test_policy(), &repository, &task).await.unwrap();
         assert!(task_diff.contains("task edit"));
         assert!(task_diff.contains("new task file"));
         assert_eq!(
-            remove(&repository, &task).await.unwrap_err().code,
+            remove(test_policy(), &repository, &task)
+                .await
+                .unwrap_err()
+                .code,
             "worktree_has_changes"
         );
 
-        commit(&repository, &task).await.unwrap();
-        let committed = inspect(&repository, &task).await.unwrap();
+        commit(test_policy(), &repository, &task).await.unwrap();
+        let committed = inspect(test_policy(), &repository, &task).await.unwrap();
         assert!(!committed.dirty);
         assert!(committed.has_committed_changes);
-        assert!(apply(&repository, &task).await.unwrap().is_empty());
+        assert!(apply(test_policy(), &repository, &task)
+            .await
+            .unwrap()
+            .is_empty());
         assert_eq!(git(&repository, &["show", "HEAD:src.txt"]), "task edit");
         assert_eq!(git(&repository, &["show", "HEAD:new.txt"]), "new task file");
-        remove(&repository, &task).await.unwrap();
+        remove(test_policy(), &repository, &task).await.unwrap();
         assert!(!worktree.exists());
         assert!(git(&repository, &["branch", "--list", branch]).contains(branch));
         remove(
+            test_policy(),
             &repository,
             &session(&parallel_worktree, &base, parallel_branch),
         )
@@ -768,7 +814,9 @@ mod tests {
         let (repository, base) = repository(&temp);
         let worktree = temp.path().join("conflicting-task");
         let branch = "jevcode/conflicting-task";
-        create(&repository, &worktree, &base, branch).await.unwrap();
+        create(test_policy(), &repository, &worktree, &base, branch)
+            .await
+            .unwrap();
         std::fs::write(worktree.join("src.txt"), "task version\n").unwrap();
         git(&worktree, &["add", "src.txt"]);
         git(&worktree, &["commit", "--quiet", "-m", "task edit"]);
@@ -777,7 +825,7 @@ mod tests {
         git(&repository, &["commit", "--quiet", "-m", "project edit"]);
 
         let task = session(&worktree, &base, branch);
-        let conflicts = apply(&repository, &task).await.unwrap();
+        let conflicts = apply(test_policy(), &repository, &task).await.unwrap();
         assert_eq!(conflicts, vec!["src.txt"]);
         assert_eq!(git(&repository, &["status", "--porcelain"]), "");
         assert_eq!(

@@ -1,40 +1,40 @@
-use crate::containment::{command_for, ProfileKind};
+use crate::containment::{prepare_command, PreparedCommand, SpawnPolicy};
 use crate::domain::ChangedFile;
 use crate::error::{AppError, AppResult};
 use std::collections::BTreeMap;
 use std::{path::Path, process::Output, time::Duration};
-use tokio::process::Command;
 
 pub mod worktree;
 
-fn output_command(kind: ProfileKind, root: &Path, args: &[String]) -> Command {
-    let mut command = command_for(kind, "git");
-    command
+fn output_command(policy: SpawnPolicy, root: &Path, args: &[String]) -> AppResult<PreparedCommand> {
+    let command = prepare_command(policy, "git")?
         .arg("--no-optional-locks")
         .args(args)
-        .current_dir(root)
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    command
+        .current_dir(root);
+    Ok(command)
 }
 
 async fn output(
-    kind: ProfileKind,
+    policy: SpawnPolicy,
     root: &Path,
     args: &[String],
     timeout: Duration,
 ) -> AppResult<Output> {
-    let mut command = output_command(kind, root, args);
-    tokio::time::timeout(timeout, command.output())
-        .await
-        .map_err(|_| AppError::new("timeout", "Git took too long to respond."))?
-        .map_err(|_| {
-            AppError::new(
-                "git_unavailable",
-                "Git is unavailable. Install Git and restart JevCode.",
-            )
-        })
+    let command = output_command(policy, root, args)?;
+    let process = command.spawn().map_err(|_| {
+        AppError::new(
+            "git_unavailable",
+            "Git is unavailable. Install Git and restart JevCode.",
+        )
+    })?;
+    match tokio::time::timeout(timeout, crate::containment::collect_output(process)).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(_)) => Err(AppError::new(
+            "git_unavailable",
+            "Git is unavailable. Install Git and restart JevCode.",
+        )),
+        Err(_) => Err(AppError::new("timeout", "Git took too long to respond.")),
+    }
 }
 
 fn git_args(args: &[&str]) -> Vec<String> {
@@ -50,9 +50,9 @@ pub struct ReviewRepoState {
 
 /// Capture the repository revision and exact dirty-path state before the first
 /// agent edit in a task. File contents are checkpointed lazily before edits.
-pub async fn review_state(root: &Path) -> AppResult<ReviewRepoState> {
+pub async fn review_state(policy: SpawnPolicy, root: &Path) -> AppResult<ReviewRepoState> {
     let head = output(
-        ProfileKind::Inspect,
+        policy,
         root,
         &git_args(&["rev-parse", "--verify", "HEAD"]),
         Duration::from_secs(5),
@@ -65,7 +65,7 @@ pub async fn review_state(root: &Path) -> AppResult<ReviewRepoState> {
         ));
     }
     let status = output(
-        ProfileKind::Inspect,
+        policy,
         root,
         &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
         Duration::from_secs(15),
@@ -119,9 +119,8 @@ pub fn review_path_key(path: &str) -> String {
     }
 }
 
-fn status_command(root: &Path) -> Command {
-    let mut command = command_for(ProfileKind::Inspect, "git");
-    command
+fn status_command(policy: SpawnPolicy, root: &Path) -> AppResult<PreparedCommand> {
+    let command = prepare_command(policy, "git")?
         .args([
             "--no-optional-locks",
             "-c",
@@ -133,25 +132,33 @@ fn status_command(root: &Path) -> Command {
             "--branch",
             "--untracked-files=no",
         ])
-        .current_dir(root)
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    command
+        .current_dir(root);
+    Ok(command)
 }
 
 /// Fixed arguments only: no shell interpolation, optional locks or mutations.
-pub async fn status(root: &Path) -> AppResult<String> {
-    let mut command = status_command(root);
-    let output = tokio::time::timeout(Duration::from_secs(10), command.output())
-        .await
-        .map_err(|_| AppError::new("timeout", "Git status timed out."))?
-        .map_err(|_| {
+pub async fn status(policy: SpawnPolicy, root: &Path) -> AppResult<String> {
+    let command = status_command(policy, root)?;
+    let process = command.spawn().map_err(|_| {
+        AppError::new(
+            "git_unavailable",
+            "Git is unavailable. Install Git and restart JevCode.",
+        )
+    })?;
+    let output = match tokio::time::timeout(
+        Duration::from_secs(10),
+        crate::containment::collect_output(process),
+    )
+    .await
+    {
+        Ok(result) => result.map_err(|_| {
             AppError::new(
                 "git_unavailable",
                 "Git is unavailable. Install Git and restart JevCode.",
             )
-        })?;
+        })?,
+        Err(_) => return Err(AppError::new("timeout", "Git status timed out.")),
+    };
     if !output.status.success() {
         return Err(AppError::new(
             "git_error",
@@ -163,9 +170,9 @@ pub async fn status(root: &Path) -> AppResult<String> {
 }
 
 /// Return the checked-out branch for toolbar context without mutating the repository.
-pub async fn branch(root: &Path) -> AppResult<Option<String>> {
+pub async fn branch(policy: SpawnPolicy, root: &Path) -> AppResult<Option<String>> {
     let output = match output(
-        ProfileKind::Inspect,
+        policy,
         root,
         &git_args(&["rev-parse", "--abbrev-ref", "HEAD"]),
         Duration::from_secs(3),
@@ -189,9 +196,9 @@ pub async fn branch(root: &Path) -> AppResult<Option<String>> {
     }
 }
 
-pub async fn branches(root: &Path) -> AppResult<Vec<String>> {
+pub async fn branches(policy: SpawnPolicy, root: &Path) -> AppResult<Vec<String>> {
     let output = output(
-        ProfileKind::Inspect,
+        policy,
         root,
         &git_args(&["branch", "--format=%(refname:short)"]),
         Duration::from_secs(5),
@@ -215,8 +222,17 @@ pub async fn branches(root: &Path) -> AppResult<Vec<String>> {
 
 /// Branch switches are limited to exact existing local names and use Git's
 /// normal safety checks, so changes that would be overwritten are preserved.
-pub async fn switch_branch(root: &Path, branch_name: &str) -> AppResult<Option<String>> {
-    if branch_name.len() > 240 || !branches(root).await?.iter().any(|name| name == branch_name) {
+pub async fn switch_branch(
+    policy: SpawnPolicy,
+    root: &Path,
+    branch_name: &str,
+) -> AppResult<Option<String>> {
+    if branch_name.len() > 240
+        || !branches(policy, root)
+            .await?
+            .iter()
+            .any(|name| name == branch_name)
+    {
         return Err(AppError::new(
             "unknown_branch",
             "Choose an existing local branch from this repository.",
@@ -228,19 +244,19 @@ pub async fn switch_branch(root: &Path, branch_name: &str) -> AppResult<Option<S
         "--".to_owned(),
         branch_name.to_owned(),
     ];
-    let output = output(ProfileKind::Edit, root, &args, Duration::from_secs(20)).await?;
+    let output = output(policy, root, &args, Duration::from_secs(20)).await?;
     if !output.status.success() {
         return Err(AppError::new(
             "git_switch_failed",
             "Git could not switch branches. Resolve any conflicting local changes and try again.",
         ));
     }
-    branch(root).await
+    branch(policy, root).await
 }
 
-pub async fn changed_files(root: &Path) -> AppResult<Vec<ChangedFile>> {
+pub async fn changed_files(policy: SpawnPolicy, root: &Path) -> AppResult<Vec<ChangedFile>> {
     let result = output(
-        ProfileKind::Inspect,
+        policy,
         root,
         &git_args(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
         Duration::from_secs(10),
@@ -282,27 +298,20 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    fn test_policy() -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(crate::containment::ProfileKind::Inspect)
+    }
+
     #[test]
-    fn output_command_matches_direct_construction() {
+    fn blocked_policy_does_not_build_a_git_command() {
         let root = Path::new("workspace");
         let args = vec!["status".into(), "--porcelain".into()];
-        let routed = output_command(ProfileKind::Inspect, root, &args);
-        let routed = routed.as_std();
-        let mut direct = Command::new("git");
-        direct
-            .arg("--no-optional-locks")
-            .args(&args)
-            .current_dir(root);
-        assert_eq!(routed.get_program(), direct.get_program());
-        assert_eq!(
-            routed.get_args().collect::<Vec<_>>(),
-            direct.get_args().collect::<Vec<_>>()
-        );
-        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
-        assert_eq!(
-            routed.get_envs().collect::<Vec<_>>(),
-            direct.get_envs().collect::<Vec<_>>()
-        );
+        let blocked = SpawnPolicy::new(crate::containment::ProfileKind::Inspect, false, true);
+        let error = output_command(blocked, root, &args)
+            .err()
+            .expect("a blocked policy must not build a git command");
+        assert_eq!(error.code, "containment_unavailable");
+        assert!(output_command(test_policy(), root, &args).is_ok());
     }
 
     fn run_git(root: &Path, args: &[&str]) -> String {
@@ -333,17 +342,25 @@ mod tests {
         let base = run_git(root, &["branch", "--show-current"]);
         run_git(root, &["switch", "--quiet", "-c", "work/feature"]);
 
-        assert_eq!(branch(root).await.unwrap().as_deref(), Some("work/feature"));
-        assert!(branches(root).await.unwrap().contains(&base));
         assert_eq!(
-            switch_branch(root, &base).await.unwrap().as_deref(),
+            branch(test_policy(), root).await.unwrap().as_deref(),
+            Some("work/feature")
+        );
+        assert!(branches(test_policy(), root).await.unwrap().contains(&base));
+        assert_eq!(
+            switch_branch(test_policy(), root, &base)
+                .await
+                .unwrap()
+                .as_deref(),
             Some(base.as_str())
         );
         std::fs::write(root.join("new.ts"), "export {};\n").unwrap();
-        let changes = changed_files(root).await.unwrap();
+        let changes = changed_files(test_policy(), root).await.unwrap();
         assert!(changes
             .iter()
             .any(|file| file.path == "new.ts" && file.status == "??"));
-        assert!(switch_branch(root, "work/does-not-exist").await.is_err());
+        assert!(switch_branch(test_policy(), root, "work/does-not-exist")
+            .await
+            .is_err());
     }
 }

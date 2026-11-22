@@ -1,6 +1,6 @@
 use crate::{
     agent::{self, EventSink},
-    auth, context_migration,
+    auth, containment, context_migration,
     domain::*,
     error::{AppError, AppResult},
     git,
@@ -136,6 +136,62 @@ fn account_status(state: &SharedState, provider: &Provider) -> AppResult<Provide
         &state.credentials,
         state.database.provider_account(&provider.id)?,
     )
+}
+
+fn spawn_policy(
+    state: &SharedState,
+    project: &Project,
+    kind: containment::ProfileKind,
+) -> AppResult<containment::SpawnPolicy> {
+    Ok(containment::SpawnPolicy::new(
+        kind,
+        project.reduced_safety_opt_in,
+        state.database.reduced_safety_allowed()?,
+    ))
+}
+
+#[tauri::command]
+pub fn containment_status(
+    project_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<containment::ContainmentStatus> {
+    let project = state.database.project(&project_id)?;
+    Ok(containment::status_for_project(
+        &project.id,
+        project.reduced_safety_opt_in,
+        state.database.reduced_safety_allowed()?,
+    ))
+}
+
+#[tauri::command]
+pub fn set_project_reduced_safety(
+    project_id: String,
+    enabled: bool,
+    confirmation: String,
+    state: State<'_, SharedState>,
+) -> AppResult<containment::ContainmentStatus> {
+    if enabled {
+        containment::confirm_reduced_safety(&confirmation)?;
+    }
+    let mut project = state.database.project(&project_id)?;
+    project.reduced_safety_opt_in = enabled;
+    state.database.save_project(&project)?;
+    Ok(containment::status_for_project(
+        &project.id,
+        project.reduced_safety_opt_in,
+        state.database.reduced_safety_allowed()?,
+    ))
+}
+
+#[tauri::command]
+pub fn set_reduced_safety_allowed(
+    enabled: bool,
+    state: State<'_, SharedState>,
+) -> AppResult<containment::ContainmentMachineStatus> {
+    state.database.set_reduced_safety_allowed(enabled)?;
+    Ok(containment::ContainmentMachineStatus {
+        machine_allowed: state.database.reduced_safety_allowed()?,
+    })
 }
 
 #[tauri::command]
@@ -748,11 +804,17 @@ pub async fn export_task_transcript(
             "This task is not in this project.",
         ));
     }
-    let changes = review::list_changes(&state.database, &session).await?;
+    let changes = review::list_changes(
+        spawn_policy(&state, &project, containment::ProfileKind::Inspect)?,
+        &state.database,
+        &session,
+    )
+    .await?;
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     let diffs: Vec<SessionFileDiff> = changes
         .files
         .iter()
-        .filter_map(|file| review::file_diff(&state.database, &session, &file.path).ok())
+        .filter_map(|file| review::file_diff(policy, &state.database, &session, &file.path).ok())
         .collect();
     let markdown = crate::transcript::export_markdown(&session, &project.name, &changes, &diffs);
     std::fs::write(&input.path, markdown).map_err(|_| {
@@ -823,9 +885,10 @@ pub async fn effective_context(
     state: State<'_, SharedState>,
 ) -> AppResult<crate::domain::EffectiveContext> {
     let project = state.database.project(&input.project_id)?;
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     match input.session_id {
         None => {
-            let (_, current) = start_guidance(&project, None).await?;
+            let (_, current) = start_guidance(&project, None, policy).await?;
             Ok(crate::guidance::preview_for_new_task(&current))
         }
         Some(session_id) => {
@@ -840,11 +903,11 @@ pub async fn effective_context(
             let current = match (session.context_root, session.worktree_path.as_deref()) {
                 (GuidanceRoot::TaskWorkspace, None) => None,
                 (GuidanceRoot::TaskWorkspace, Some(workspace)) => Some(
-                    start_guidance(&project, Some(Path::new(workspace)))
+                    start_guidance(&project, Some(Path::new(workspace)), policy)
                         .await?
                         .1,
                 ),
-                (GuidanceRoot::Project, _) => Some(start_guidance(&project, None).await?.1),
+                (GuidanceRoot::Project, _) => Some(start_guidance(&project, None, policy).await?.1),
             };
             Ok(crate::guidance::against_task(&session, current.as_ref()))
         }
@@ -1056,12 +1119,27 @@ pub async fn project_overview(
         ));
     }
     let repository_root = workspaces::find_repository_root(&project_path);
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     let (active_branch, changed_files, git_status_available) =
         if let Some(repository_root) = &repository_root {
-            let branch = git::branch(repository_root).await?;
-            match git::changed_files(repository_root).await {
+            let branch = match git::branch(policy, repository_root).await {
+                Ok(branch) => branch,
+                Err(error)
+                    if error.code == "git_unavailable"
+                        || error.code == "timeout"
+                        || error.code == "containment_unavailable" =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            match git::changed_files(policy, repository_root).await {
                 Ok(changes) => (branch, changes, true),
-                Err(error) if error.code == "git_unavailable" || error.code == "git_error" => {
+                Err(error)
+                    if error.code == "git_unavailable"
+                        || error.code == "git_error"
+                        || error.code == "containment_unavailable" =>
+                {
                     (branch, Vec::new(), false)
                 }
                 Err(error) => return Err(error),
@@ -1098,7 +1176,8 @@ pub async fn project_branches(
 ) -> AppResult<Vec<String>> {
     let project = state.database.project(&project_id)?;
     let root = project_repository_root(&project)?;
-    git::branches(&root).await
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    git::branches(policy, &root).await
 }
 
 #[tauri::command]
@@ -1109,7 +1188,8 @@ pub async fn switch_project_branch(
 ) -> AppResult<Project> {
     let mut project = state.database.project(&project_id)?;
     let root = project_repository_root(&project)?;
-    project.active_branch = git::switch_branch(&root, &branch).await?;
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    project.active_branch = git::switch_branch(policy, &root, &branch).await?;
     project.repository_root = Some(root.to_string_lossy().to_string());
     state.database.save_project(&project)?;
     Ok(project)
@@ -1388,7 +1468,8 @@ pub async fn project_branch(
     state: State<'_, SharedState>,
 ) -> AppResult<Option<String>> {
     let project = state.database.project(&project_id)?;
-    git::branch(Path::new(&project.path)).await
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    git::branch(policy, Path::new(&project.path)).await
 }
 
 fn task_repository_root(project: &Project) -> AppResult<PathBuf> {
@@ -1404,7 +1485,11 @@ fn task_repository_root(project: &Project) -> AppResult<PathBuf> {
         })
 }
 
-async fn task_project_path(project: &Project, session: &AgentSession) -> AppResult<PathBuf> {
+async fn task_project_path(
+    project: &Project,
+    session: &AgentSession,
+    policy: containment::SpawnPolicy,
+) -> AppResult<PathBuf> {
     if session.workspace_mode != WorkspaceMode::Isolated {
         return std::fs::canonicalize(&project.path).map_err(|_| {
             AppError::new(
@@ -1420,6 +1505,7 @@ async fn task_project_path(project: &Project, session: &AgentSession) -> AppResu
         )
     })?;
     git::worktree::project_path(
+        policy,
         &task_repository_root(project)?,
         Path::new(&project.path),
         Path::new(worktree),
@@ -1448,6 +1534,7 @@ pub async fn project_task_worktrees(
     state: State<'_, SharedState>,
 ) -> AppResult<Vec<TaskWorktree>> {
     let project = state.database.project(&project_id)?;
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     let Some(repository_root) = project.repository_root.as_deref() else {
         return Ok(vec![]);
     };
@@ -1457,7 +1544,7 @@ pub async fn project_task_worktrees(
             && session.workspace_mode == WorkspaceMode::Isolated
             && session.worktree_path.is_some()
     }) {
-        worktrees.push(git::worktree::inspect(Path::new(repository_root), &session).await?);
+        worktrees.push(git::worktree::inspect(policy, Path::new(repository_root), &session).await?);
     }
     Ok(worktrees)
 }
@@ -1469,7 +1556,8 @@ pub async fn task_worktree_diff(
 ) -> AppResult<String> {
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
-    git::worktree::diff(&task_repository_root(&project)?, &session).await
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    git::worktree::diff(policy, &task_repository_root(&project)?, &session).await
 }
 
 #[tauri::command]
@@ -1480,10 +1568,12 @@ pub async fn commit_task_worktree(
     ensure_task_idle(&state, &session_id)?;
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
+    let edit = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    let inspect = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     let repository_root = task_repository_root(&project)?;
-    git::worktree::commit(&repository_root, &session).await?;
+    git::worktree::commit(edit, &repository_root, &session).await?;
     Ok(TaskWorktreeAction {
-        worktree: Some(git::worktree::inspect(&repository_root, &session).await?),
+        worktree: Some(git::worktree::inspect(inspect, &repository_root, &session).await?),
         conflicts: vec![],
         message: "Task changes committed on the task branch. The project branch has not changed."
             .into(),
@@ -1498,10 +1588,12 @@ pub async fn apply_task_worktree(
     ensure_task_idle(&state, &session_id)?;
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
+    let edit = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    let inspect = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     let repository_root = task_repository_root(&project)?;
-    let conflicts = git::worktree::apply(&repository_root, &session).await?;
+    let conflicts = git::worktree::apply(edit, &repository_root, &session).await?;
     Ok(TaskWorktreeAction {
-        worktree: Some(git::worktree::inspect(&repository_root, &session).await?),
+        worktree: Some(git::worktree::inspect(inspect, &repository_root, &session).await?),
         message: if conflicts.is_empty() {
             "Task changes merged into the project's current branch.".into()
         } else {
@@ -1526,7 +1618,8 @@ pub async fn remove_task_worktree(
         ));
     }
     let project = state.database.project(&session.project_id)?;
-    git::worktree::remove(&task_repository_root(&project)?, &session).await?;
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    git::worktree::remove(policy, &task_repository_root(&project)?, &session).await?;
     session.worktree_path = None;
     session.updated_at = now();
     state.database.save_session(&session)?;
@@ -1554,11 +1647,13 @@ pub struct CreateSession {
 async fn start_guidance(
     project: &Project,
     workspace: Option<&Path>,
+    policy: containment::SpawnPolicy,
 ) -> AppResult<(
     crate::guidance::GuidanceLocation,
     crate::guidance::ResolvedGuidance,
 )> {
     let location = crate::guidance::location(
+        policy,
         Path::new(&project.path),
         project.repository_root.as_deref().map(Path::new),
         workspace,
@@ -1574,12 +1669,20 @@ async fn start_guidance(
 }
 
 /// Removes the workspace made for a task that did not start.
-async fn discard_task_workspace(project: &Project, worktree_path: Option<&str>) {
+async fn discard_task_workspace(
+    project: &Project,
+    worktree_path: Option<&str>,
+    policy: containment::SpawnPolicy,
+) {
     if let (Some(repository_root), Some(worktree_path)) =
         (project.repository_root.as_deref(), worktree_path)
     {
-        let _ =
-            git::worktree::remove_path(Path::new(repository_root), Path::new(worktree_path)).await;
+        let _ = git::worktree::remove_path(
+            policy,
+            Path::new(repository_root),
+            Path::new(worktree_path),
+        )
+        .await;
     }
 }
 
@@ -1590,6 +1693,8 @@ pub async fn create_session(
     state: State<'_, SharedState>,
 ) -> AppResult<AgentSession> {
     let project = state.database.project(&input.project_id)?;
+    let inspect_policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    let edit_policy = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
     let provider = state.config.provider(&input.provider_id)?;
     if !models_for_provider(&state, provider)?
         .iter()
@@ -1628,7 +1733,9 @@ pub async fn create_session(
     let session_id = id();
     let (branch, base_branch, worktree_path) = match input.workspace_mode {
         WorkspaceMode::Direct => (
-            git::branch(Path::new(&project.path)).await.unwrap_or(None),
+            git::branch(inspect_policy, Path::new(&project.path))
+                .await
+                .unwrap_or(None),
             None,
             None,
         ),
@@ -1642,7 +1749,7 @@ pub async fn create_session(
                     "The project's Git repository is unavailable.",
                 )
             })?;
-            let current_branch = git::branch(&repository_root).await?;
+            let current_branch = git::branch(inspect_policy, &repository_root).await?;
             let base_branch = input.base_branch.or(current_branch).ok_or_else(|| {
                 AppError::new(
                     "no_base_branch",
@@ -1657,7 +1764,14 @@ pub async fn create_session(
                 )
             })?;
             let worktree_path = app_data.join("task-workspaces").join(&session_id);
-            git::worktree::create(&repository_root, &worktree_path, &base_branch, &branch).await?;
+            git::worktree::create(
+                edit_policy,
+                &repository_root,
+                &worktree_path,
+                &base_branch,
+                &branch,
+            )
+            .await?;
             (
                 Some(branch),
                 Some(base_branch),
@@ -1666,14 +1780,19 @@ pub async fn create_session(
         }
     };
     // Guidance is read once the workspace exists, so an isolated task starts from the files it edits.
-    let (location, guidance) =
-        match start_guidance(&project, worktree_path.as_deref().map(Path::new)).await {
-            Ok(started) => started,
-            Err(error) => {
-                discard_task_workspace(&project, worktree_path.as_deref()).await;
-                return Err(error);
-            }
-        };
+    let (location, guidance) = match start_guidance(
+        &project,
+        worktree_path.as_deref().map(Path::new),
+        inspect_policy,
+    )
+    .await
+    {
+        Ok(started) => started,
+        Err(error) => {
+            discard_task_workspace(&project, worktree_path.as_deref(), edit_policy).await;
+            return Err(error);
+        }
+    };
     let instruction_files = guidance
         .sources
         .iter()
@@ -1718,7 +1837,7 @@ pub async fn create_session(
         context_root: location.root,
     };
     if let Err(error) = state.database.save_session(&session) {
-        discard_task_workspace(&project, session.worktree_path.as_deref()).await;
+        discard_task_workspace(&project, session.worktree_path.as_deref(), edit_policy).await;
         return Err(error);
     }
     state.database.record_model_used(&ModelReference {
@@ -2376,7 +2495,13 @@ pub async fn session_changes(
     state: State<'_, SharedState>,
 ) -> AppResult<SessionChanges> {
     let session = state.database.session(&session_id)?;
-    review::list_changes(&state.database, &session).await
+    let project = state.database.project(&session.project_id)?;
+    review::list_changes(
+        spawn_policy(&state, &project, containment::ProfileKind::Inspect)?,
+        &state.database,
+        &session,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2386,7 +2511,13 @@ pub fn session_file_diff(
     state: State<'_, SharedState>,
 ) -> AppResult<SessionFileDiff> {
     let session = state.database.session(&session_id)?;
-    review::file_diff(&state.database, &session, &path)
+    let project = state.database.project(&session.project_id)?;
+    review::file_diff(
+        spawn_policy(&state, &project, containment::ProfileKind::Inspect)?,
+        &state.database,
+        &session,
+        &path,
+    )
 }
 
 #[tauri::command]
@@ -2409,9 +2540,11 @@ pub async fn review_file_action(
     }
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
-    let task_root = task_project_path(&project, &session).await?;
-    review::apply_file_action(&state.database, &session, &task_root, &path, action).await?;
-    review::list_changes(&state.database, &session).await
+    let edit = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    let inspect = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    let task_root = task_project_path(&project, &session, inspect).await?;
+    review::apply_file_action(edit, &state.database, &session, &task_root, &path, action).await?;
+    review::list_changes(inspect, &state.database, &session).await
 }
 
 #[tauri::command]
@@ -2433,9 +2566,11 @@ pub async fn review_all_action(
     }
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
-    let task_root = task_project_path(&project, &session).await?;
-    review::apply_all_action(&state.database, &session, &task_root, action).await?;
-    review::list_changes(&state.database, &session).await
+    let edit = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    let inspect = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    let task_root = task_project_path(&project, &session, inspect).await?;
+    review::apply_all_action(edit, &state.database, &session, &task_root, action).await?;
+    review::list_changes(inspect, &state.database, &session).await
 }
 
 #[tauri::command]
@@ -4354,6 +4489,7 @@ mod task_lifecycle_tests {
                 preferred_model: None,
                 permissions: PermissionPolicy::default(),
                 is_recent: true,
+                reduced_safety_opt_in: false,
                 guidance_precedence: crate::domain::GuidancePrecedence::default(),
                 created_at: now(),
             })

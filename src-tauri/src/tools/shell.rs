@@ -3,7 +3,7 @@ use super::{
     ToolOutput,
 };
 use crate::{
-    containment::ProfileKind,
+    containment::SpawnPolicy,
     error::{AppError, AppResult},
     workspaces::scoped_path,
 };
@@ -15,6 +15,7 @@ pub async fn run_command(
     args: &Value,
     external_allowed: bool,
     events: Option<tokio::sync::mpsc::UnboundedSender<ProcessOutputChunk>>,
+    policy: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     let program = args["program"]
         .as_str()
@@ -62,7 +63,7 @@ pub async fn run_command(
         ));
     }
     let result = run_program_streaming(
-        ProfileKind::Edit,
+        policy,
         program,
         &command_args,
         &cwd,

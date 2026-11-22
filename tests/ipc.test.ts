@@ -28,6 +28,44 @@ describe('typed Tauri command boundary', () => {
     mockIPC(() => 'https://auth.openai.com/authorize?state=should-not-cross-ipc');
     await expect(copyOpenAIAuthLink('d8f8a8ef-4df0-4c58-b20d-61cda4482f60')).rejects.toMatchObject({ code: 'ipc_contract' });
   });
+  it('passes containment status and the typed confirmation through IPC', async () => {
+    const status = {
+      projectId: 'project-1',
+      platform: 'windows',
+      projectOptedIn: true,
+      machineAllowed: true,
+      profiles: [{ kind: 'inspect', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read'] } }],
+    };
+    mockIPC((name, args) => {
+      expect(name).toBe('containment_status');
+      expect(args).toEqual({ projectId: 'project-1' });
+      return status;
+    });
+    const { getContainmentStatus, setProjectReducedSafety } = await import('../src/lib/ipc');
+    await expect(getContainmentStatus('project-1')).resolves.toEqual(status);
+
+    mockIPC((name, args) => {
+      expect(name).toBe('set_project_reduced_safety');
+      expect(args).toEqual({ projectId: 'project-1', enabled: true, confirmation: 'reduced safety' });
+      return status;
+    });
+    await expect(setProjectReducedSafety('project-1', true, 'reduced safety')).resolves.toEqual(status);
+
+    mockIPC(() => ({ ...status, platform: 'solaris' }));
+    await expect(getContainmentStatus('project-1')).rejects.toMatchObject({ code: 'ipc_contract' });
+  });
+  it('sets the machine-level reduced-safety switch through IPC', async () => {
+    mockIPC((name, args) => {
+      expect(name).toBe('set_reduced_safety_allowed');
+      expect(args).toEqual({ enabled: false });
+      return { machineAllowed: false };
+    });
+    const { setReducedSafetyAllowed } = await import('../src/lib/ipc');
+    await expect(setReducedSafetyAllowed(false)).resolves.toEqual({ machineAllowed: false });
+
+    mockIPC(() => ({ allowed: false }));
+    await expect(setReducedSafetyAllowed(false)).rejects.toMatchObject({ code: 'ipc_contract' });
+  });
   it('rejects malformed results and preserves structured backend errors', async () => {
     mockIPC(() => ({ status: 'oops' }));
     const { command } = await import('../src/lib/ipc');

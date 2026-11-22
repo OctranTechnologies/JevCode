@@ -1,13 +1,18 @@
-// Phase 5 slice 2 routes production spawns through `command_for` and
-// `std_command_for`. The default backend passes the command through unchanged;
-// the types, inventory and guard remain the contract for later slices.
+// Phase 5 slice 3b-1 resolves every production spawn through
+// [`prepare_command`]. A blocked policy never yields a command; on Windows an
+// opted-in project receives the reduced-safety job launcher.
 #![allow(dead_code)]
 
+use crate::error::{AppError, AppResult};
+use serde::Serialize;
 use std::{
     ffi::{OsStr, OsString},
+    io,
     path::{Path, PathBuf},
+    process::{ExitStatus, Output, Stdio},
     time::Duration,
 };
+use tokio::io::AsyncReadExt;
 
 #[cfg(windows)]
 mod windows;
@@ -15,6 +20,9 @@ mod windows;
 /// Reserved first argument that turns the app binary into the containment
 /// launcher instead of starting the desktop UI.
 pub const LAUNCHER_ARGUMENT: &str = "--jevcode-containment-launch";
+
+/// Exact typed confirmation required to turn reduced safety on for a project.
+pub const REDUCED_SAFETY_CONFIRMATION: &str = "reduced safety";
 
 /// The capabilities a task can hold under a containment profile.
 ///
@@ -93,6 +101,85 @@ pub enum EnforcementState {
     Blocked { reason: BlockReason },
 }
 
+/// Wire form of one profile's enforcement state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ContainmentEnforcement {
+    Enforced,
+    ReducedSafety { unsupported: Vec<String> },
+    Blocked { reason: String },
+}
+
+impl From<&EnforcementState> for ContainmentEnforcement {
+    fn from(state: &EnforcementState) -> Self {
+        match state {
+            EnforcementState::Enforced => Self::Enforced,
+            EnforcementState::ReducedSafety { unsupported } => Self::ReducedSafety {
+                unsupported: unsupported
+                    .iter()
+                    .map(|capability| capability.name().into())
+                    .collect(),
+            },
+            EnforcementState::Blocked { reason } => Self::Blocked {
+                reason: reason.code().into(),
+            },
+        }
+    }
+}
+
+/// One profile kind's resolved state for a project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainmentProfileStatus {
+    pub kind: ProfileKind,
+    pub enforcement: ContainmentEnforcement,
+}
+
+/// The containment status the UI reads for one project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainmentStatus {
+    pub project_id: String,
+    pub platform: String,
+    pub project_opted_in: bool,
+    pub machine_allowed: bool,
+    pub profiles: Vec<ContainmentProfileStatus>,
+}
+
+/// The machine-level reduced-safety switch shared by every project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContainmentMachineStatus {
+    pub machine_allowed: bool,
+}
+
+/// Resolve every profile kind for one project.
+pub fn status_for_project(
+    project_id: &str,
+    project_opted_in: bool,
+    machine_allowed: bool,
+) -> ContainmentStatus {
+    let platform = Platform::current();
+    let profiles = ProfileKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let policy = SpawnPolicy::new(kind, project_opted_in, machine_allowed);
+            let enforcement = resolve_spawn(platform, policy);
+            ContainmentProfileStatus {
+                kind,
+                enforcement: ContainmentEnforcement::from(&enforcement),
+            }
+        })
+        .collect();
+    ContainmentStatus {
+        project_id: project_id.into(),
+        platform: platform.name().into(),
+        project_opted_in,
+        machine_allowed,
+        profiles,
+    }
+}
+
 /// Host platform after the containment probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -101,14 +188,62 @@ pub enum Platform {
     Other,
 }
 
+impl Platform {
+    /// The platform this process is running on.
+    pub fn current() -> Self {
+        #[cfg(windows)]
+        {
+            Self::Windows
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Self::Linux
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            Self::Other
+        }
+    }
+
+    /// Stable name used by the containment status command.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Linux => "linux",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// The four immutable task profiles. Reduced safety is opt-in and is never
 /// called contained: it carries only `process.limit`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProfileKind {
     Inspect,
     Edit,
     EditWithNetwork,
     ReducedSafety,
+}
+
+impl ProfileKind {
+    /// Every profile kind in table order, for status and diagnostics.
+    pub const ALL: [Self; 4] = [
+        Self::Inspect,
+        Self::Edit,
+        Self::EditWithNetwork,
+        Self::ReducedSafety,
+    ];
+
+    /// Stable name used by the containment status command.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Inspect => "inspect",
+            Self::Edit => "edit",
+            Self::EditWithNetwork => "edit_with_network",
+            Self::ReducedSafety => "reduced_safety",
+        }
+    }
 }
 
 impl ProfileKind {
@@ -146,33 +281,452 @@ impl ProfileKind {
     }
 }
 
+/// The policy one spawn is resolved under.
+///
+/// `kind` is the profile the spawn site needs. `project_opted_in` is the
+/// owning project's reduced-safety opt-in and `machine_allowed` is the
+/// machine-level kill switch: when it is false no project can run reduced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpawnPolicy {
+    pub kind: ProfileKind,
+    pub project_opted_in: bool,
+    pub machine_allowed: bool,
+    #[cfg(test)]
+    test_uncontained: bool,
+}
+
+impl SpawnPolicy {
+    pub const fn new(kind: ProfileKind, project_opted_in: bool, machine_allowed: bool) -> Self {
+        Self {
+            kind,
+            project_opted_in,
+            machine_allowed,
+            #[cfg(test)]
+            test_uncontained: false,
+        }
+    }
+
+    /// Resolve this policy on the host platform.
+    pub fn enforcement(self) -> EnforcementState {
+        resolve_spawn(Platform::current(), self)
+    }
+
+    /// Explicit pass-through for tests that exercise Git, review, MCP or shell
+    /// mechanics without a real launcher process. Production builds cannot
+    /// construct a policy that uses it.
+    #[cfg(test)]
+    pub const fn uncontained_for_tests(kind: ProfileKind) -> Self {
+        Self {
+            kind,
+            project_opted_in: true,
+            machine_allowed: true,
+            test_uncontained: true,
+        }
+    }
+}
+
 /// Resolve the enforcement state for one spawn.
 ///
-/// Slice 3a implements only the Windows process-limit backend (D1 and D6). An
-/// opted-in Windows project gets `ReducedSafety`: `process.limit` is enforced,
-/// and every other capability in the kind's set is reported as unsupported.
-/// Without opt-in, and on Linux and other platforms where no backend exists in
-/// this slice, command execution is blocked rather than silently downgraded.
+/// Slice 3b-1 implements only the Windows process-limit backend (D1 and D6). An
+/// opted-in Windows project gets `ReducedSafety` when the machine switch allows
+/// it: `process.limit` is enforced, and every other capability in the kind's
+/// set is reported as unsupported. Without opt-in, when the machine switch is
+/// off, and on Linux and every other platform, command execution is blocked
+/// rather than silently downgraded.
 ///
-/// D7 and D8 use the same resolver when the Git and stdio MCP spawns are
-/// wired; no call site consumes the result in this slice.
-pub fn resolve_spawn(
-    platform: Platform,
-    project_opted_in: bool,
-    kind: ProfileKind,
-) -> EnforcementState {
+/// D7 and D8 use the same resolver for Git, review and stdio MCP spawns.
+pub fn resolve_spawn(platform: Platform, policy: SpawnPolicy) -> EnforcementState {
     match platform {
-        Platform::Windows if project_opted_in => EnforcementState::ReducedSafety {
-            unsupported: kind
-                .capabilities()
-                .into_iter()
-                .filter(|capability| *capability != Capability::ProcessLimit)
-                .collect(),
-        },
+        Platform::Windows if policy.project_opted_in && policy.machine_allowed => {
+            EnforcementState::ReducedSafety {
+                unsupported: policy
+                    .kind
+                    .capabilities()
+                    .into_iter()
+                    .filter(|capability| *capability != Capability::ProcessLimit)
+                    .collect(),
+            }
+        }
         Platform::Windows | Platform::Linux | Platform::Other => EnforcementState::Blocked {
             reason: BlockReason::ContainmentUnavailable,
         },
     }
+}
+
+/// Verify the typed confirmation that turns reduced safety on.
+pub fn confirm_reduced_safety(confirmation: &str) -> AppResult<()> {
+    if confirmation == REDUCED_SAFETY_CONFIRMATION {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "containment_confirmation",
+            "Reduced safety can only be turned on by typing \"reduced safety\" exactly.",
+        ))
+    }
+}
+
+/// The single enforcement seam. A policy either produces a prepared command
+/// that the platform backend can spawn, or an error. It never returns an
+/// uncontained command for a blocked policy.
+pub fn prepare_command(
+    policy: SpawnPolicy,
+    program: impl Into<OsString>,
+) -> AppResult<PreparedCommand> {
+    #[cfg(test)]
+    if policy.test_uncontained {
+        return Ok(PreparedCommand::uncontained(program.into()));
+    }
+
+    let enforcement = policy.enforcement();
+    #[cfg(windows)]
+    {
+        match enforcement {
+            EnforcementState::ReducedSafety { .. } => {
+                Ok(PreparedCommand::contained(program.into()))
+            }
+            EnforcementState::Enforced | EnforcementState::Blocked { .. } => {
+                Err(blocked_error(BlockReason::ContainmentUnavailable))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (enforcement, program);
+        Err(blocked_error(BlockReason::ContainmentUnavailable))
+    }
+}
+
+fn blocked_error(reason: BlockReason) -> AppError {
+    AppError::new(
+        BlockReason::ContainmentUnavailable.code(),
+        format!(
+            "Command execution is unavailable: JevCode cannot enforce this task's containment profile on this system ({}). File edits still work.",
+            reason.code()
+        ),
+    )
+}
+
+enum PreparedCommandInner {
+    #[cfg(windows)]
+    Contained(windows::ContainedCommand),
+    #[cfg(test)]
+    Uncontained(test_support::UncontainedCommand),
+    #[cfg(not(any(windows, test)))]
+    Unavailable,
+}
+
+/// A command that has passed the containment seam.
+///
+/// Arguments, environment, working directory and stdio are carried until
+/// [`PreparedCommand::spawn`]. A blocked policy never constructs one.
+pub struct PreparedCommand {
+    inner: PreparedCommandInner,
+    stdin: Stdio,
+    stdout: Stdio,
+    stderr: Stdio,
+}
+
+impl PreparedCommand {
+    #[cfg(windows)]
+    fn contained(program: OsString) -> Self {
+        Self {
+            inner: PreparedCommandInner::Contained(windows::ContainedCommand::new(program)),
+            stdin: Stdio::null(),
+            stdout: Stdio::piped(),
+            stderr: Stdio::piped(),
+        }
+    }
+
+    #[cfg(test)]
+    fn uncontained(program: OsString) -> Self {
+        Self {
+            inner: PreparedCommandInner::Uncontained(test_support::UncontainedCommand::new(
+                program,
+            )),
+            stdin: Stdio::null(),
+            stdout: Stdio::piped(),
+            stderr: Stdio::piped(),
+        }
+    }
+
+    pub fn arg(mut self, argument: impl Into<OsString>) -> Self {
+        self.inner = match self.inner {
+            #[cfg(windows)]
+            PreparedCommandInner::Contained(command) => {
+                PreparedCommandInner::Contained(command.arg(argument))
+            }
+            #[cfg(test)]
+            PreparedCommandInner::Uncontained(command) => {
+                PreparedCommandInner::Uncontained(command.arg(argument))
+            }
+            #[cfg(not(any(windows, test)))]
+            PreparedCommandInner::Unavailable => PreparedCommandInner::Unavailable,
+        };
+        self
+    }
+
+    pub fn args<I, S>(mut self, arguments: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        for argument in arguments {
+            self = self.arg(argument);
+        }
+        self
+    }
+
+    pub fn current_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.inner = match self.inner {
+            #[cfg(windows)]
+            PreparedCommandInner::Contained(command) => {
+                PreparedCommandInner::Contained(command.current_dir(directory))
+            }
+            #[cfg(test)]
+            PreparedCommandInner::Uncontained(command) => {
+                PreparedCommandInner::Uncontained(command.current_dir(directory))
+            }
+            #[cfg(not(any(windows, test)))]
+            PreparedCommandInner::Unavailable => PreparedCommandInner::Unavailable,
+        };
+        self
+    }
+
+    pub fn env_clear(mut self) -> Self {
+        self.inner = match self.inner {
+            #[cfg(windows)]
+            PreparedCommandInner::Contained(command) => {
+                PreparedCommandInner::Contained(command.env_clear())
+            }
+            #[cfg(test)]
+            PreparedCommandInner::Uncontained(command) => {
+                PreparedCommandInner::Uncontained(command.env_clear())
+            }
+            #[cfg(not(any(windows, test)))]
+            PreparedCommandInner::Unavailable => PreparedCommandInner::Unavailable,
+        };
+        self
+    }
+
+    pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
+        self.inner = match self.inner {
+            #[cfg(windows)]
+            PreparedCommandInner::Contained(command) => {
+                PreparedCommandInner::Contained(command.env(key, value))
+            }
+            #[cfg(test)]
+            PreparedCommandInner::Uncontained(command) => {
+                PreparedCommandInner::Uncontained(command.env(key, value))
+            }
+            #[cfg(not(any(windows, test)))]
+            PreparedCommandInner::Unavailable => PreparedCommandInner::Unavailable,
+        };
+        self
+    }
+
+    pub fn stdin(mut self, stdio: Stdio) -> Self {
+        self.stdin = stdio;
+        self
+    }
+
+    pub fn stdout(mut self, stdio: Stdio) -> Self {
+        self.stdout = stdio;
+        self
+    }
+
+    pub fn stderr(mut self, stdio: Stdio) -> Self {
+        self.stderr = stdio;
+        self
+    }
+
+    /// Kept for call sites that hid the former direct child's console window.
+    /// The launcher and its target run without a console on Windows.
+    pub fn creation_flags(self, _flags: u32) -> Self {
+        self
+    }
+
+    pub fn spawn(self) -> io::Result<ContainedProcess> {
+        let PreparedCommand {
+            inner,
+            stdin,
+            stdout,
+            stderr,
+        } = self;
+        match inner {
+            #[cfg(windows)]
+            PreparedCommandInner::Contained(command) => {
+                let command = command.stdin(stdin).stdout(stdout).stderr(stderr);
+                Ok(ContainedProcess {
+                    inner: ContainedProcessInner::Contained(windows::spawn(command)?),
+                })
+            }
+            #[cfg(test)]
+            PreparedCommandInner::Uncontained(command) => Ok(ContainedProcess {
+                inner: ContainedProcessInner::Uncontained(command.spawn(stdin, stdout, stderr)?),
+            }),
+            #[cfg(not(any(windows, test)))]
+            PreparedCommandInner::Unavailable => Err(io::Error::other(
+                "containment is unavailable on this platform",
+            )),
+        }
+    }
+}
+
+enum ContainedProcessInner {
+    #[cfg(windows)]
+    Contained(windows::ContainedChild),
+    #[cfg(test)]
+    Uncontained(std::process::Child),
+    #[cfg(not(any(windows, test)))]
+    Unavailable,
+}
+
+/// The process tree started through [`PreparedCommand`].
+///
+/// Dropping a Windows process closes its job handle, which terminates the
+/// launcher, the target and every descendant.
+pub struct ContainedProcess {
+    inner: ContainedProcessInner,
+}
+
+impl ContainedProcess {
+    pub fn take_stdin(&mut self) -> Option<std::process::ChildStdin> {
+        match &mut self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.take_stdin(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.stdin.take(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => None,
+        }
+    }
+
+    pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        match &mut self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.take_stdout(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.stdout.take(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => None,
+        }
+    }
+
+    pub fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
+        match &mut self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.take_stderr(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.stderr.take(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => None,
+        }
+    }
+
+    pub fn id(&self) -> u32 {
+        match &self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.id(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.id(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => 0,
+        }
+    }
+
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        match &mut self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.try_wait(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.try_wait(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => Ok(None),
+        }
+    }
+
+    pub fn wait(&mut self) -> io::Result<ExitStatus> {
+        match &mut self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.wait(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.wait(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => Err(io::Error::other(
+                "containment is unavailable on this platform",
+            )),
+        }
+    }
+
+    /// Poll the process without blocking the async runtime.
+    pub async fn wait_async(&mut self) -> io::Result<ExitStatus> {
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Wait synchronously and collect both output streams.
+    pub fn wait_with_output(self) -> io::Result<Output> {
+        match self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.wait_with_output(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.wait_with_output(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => Err(io::Error::other(
+                "containment is unavailable on this platform",
+            )),
+        }
+    }
+
+    /// Terminate the whole process tree.
+    pub fn kill(&mut self) -> io::Result<()> {
+        match &mut self.inner {
+            #[cfg(windows)]
+            ContainedProcessInner::Contained(child) => child.kill(),
+            #[cfg(test)]
+            ContainedProcessInner::Uncontained(child) => child.kill(),
+            #[cfg(not(any(windows, test)))]
+            ContainedProcessInner::Unavailable => Ok(()),
+        }
+    }
+}
+
+/// Collect a prepared process's output asynchronously.
+///
+/// Dropping the future (for example on timeout) drops the process wrapper,
+/// which closes the Windows job and terminates the tree.
+pub async fn collect_output(mut process: ContainedProcess) -> io::Result<Output> {
+    let stdout = process
+        .take_stdout()
+        .map(tokio::process::ChildStdout::from_std)
+        .transpose()?;
+    let stderr = process
+        .take_stderr()
+        .map(tokio::process::ChildStderr::from_std)
+        .transpose()?;
+    let stdout_task = tokio::spawn(read_all(stdout));
+    let stderr_task = tokio::spawn(read_all(stderr));
+    let status = process.wait_async().await?;
+    let stdout = stdout_task.await.map_err(io::Error::other)??;
+    let stderr = stderr_task.await.map_err(io::Error::other)??;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn read_all<R: tokio::io::AsyncRead + Unpin>(mut stream: Option<R>) -> io::Result<Vec<u8>> {
+    let Some(stream) = stream.as_mut() else {
+        return Ok(Vec::new());
+    };
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).await?;
+    Ok(bytes)
 }
 
 /// Run the containment launcher when this process was started with the
@@ -206,25 +760,6 @@ fn launcher_arguments(arguments: impl IntoIterator<Item = OsString>) -> Option<V
         return None;
     }
     Some(arguments.collect())
-}
-
-/// Build the Tokio command for one production spawn.
-///
-/// Slice 2 ships a pass-through backend: the program is constructed exactly as
-/// the direct constructor did, so arguments, environment, working directory and
-/// stdio remain the caller's responsibility. Later slices replace the backend
-/// for `kind` with enforced containment.
-pub fn command_for(_kind: ProfileKind, program: &str) -> tokio::process::Command {
-    tokio::process::Command::new(program)
-}
-
-/// Build the std command for a synchronous production spawn.
-///
-/// This is the matching std constructor for callers that cannot use the Tokio
-/// command, such as the review diff helper. The pass-through contract is the
-/// same as [`command_for`].
-pub fn std_command_for(_kind: ProfileKind, program: &str) -> std::process::Command {
-    std::process::Command::new(program)
 }
 
 /// Default resource envelope for a contained task. Process count includes the
@@ -481,6 +1016,75 @@ pub const SPAWN_SITES: &[SpawnSite] = &[
 ];
 
 #[cfg(test)]
+mod test_support {
+    use std::{
+        ffi::OsString,
+        path::PathBuf,
+        process::{Child, Command, Stdio},
+    };
+
+    /// A direct std command used only by unit tests that exercise spawn
+    /// plumbing. A production build has no variant of `PreparedCommand` that
+    /// can reach this type.
+    pub struct UncontainedCommand {
+        program: OsString,
+        args: Vec<OsString>,
+        current_dir: Option<PathBuf>,
+        env_clear: bool,
+        envs: Vec<(OsString, OsString)>,
+    }
+
+    impl UncontainedCommand {
+        pub fn new(program: OsString) -> Self {
+            Self {
+                program,
+                args: Vec::new(),
+                current_dir: None,
+                env_clear: false,
+                envs: Vec::new(),
+            }
+        }
+
+        pub fn arg(mut self, argument: impl Into<OsString>) -> Self {
+            self.args.push(argument.into());
+            self
+        }
+
+        pub fn current_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+            self.current_dir = Some(directory.into());
+            self
+        }
+
+        pub fn env_clear(mut self) -> Self {
+            self.env_clear = true;
+            self
+        }
+
+        pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
+            self.envs.push((key.into(), value.into()));
+            self
+        }
+
+        pub fn spawn(self, stdin: Stdio, stdout: Stdio, stderr: Stdio) -> std::io::Result<Child> {
+            let mut command = Command::new(self.program);
+            command
+                .args(self.args)
+                .stdin(stdin)
+                .stdout(stdout)
+                .stderr(stderr);
+            if let Some(directory) = self.current_dir {
+                command.current_dir(directory);
+            }
+            if self.env_clear {
+                command.env_clear();
+            }
+            command.envs(self.envs);
+            command.spawn()
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::{
@@ -490,15 +1094,14 @@ mod tests {
     };
 
     /// Exact production-line counts for the two markers the guard scans.
-    /// A line counts once when it contains `Command::new(` or
-    /// `process::Command`. Keep this in sync with [`SPAWN_SITES`].
+    /// A line counts once when it constructs a `Command` (see
+    /// [`line_constructs_a_command`]); identifier suffixes such as
+    /// `ContainedCommand::new` do not count. Keep this in sync with
+    /// [`SPAWN_SITES`].
     const PRODUCTION_SPAWN_ALLOWLIST: &[(&str, usize)] = &[
         ("commands/mod.rs", 20),
-        ("containment/mod.rs", 4),
-        ("containment/windows.rs", 2),
-        ("git/mod.rs", 1),
-        ("review.rs", 8),
-        ("tools/process.rs", 1),
+        ("containment/windows.rs", 4),
+        ("review.rs", 5),
     ];
 
     const ALL_CAPABILITIES: [Capability; 11] = [
@@ -578,6 +1181,27 @@ mod tests {
         ranges
     }
 
+    /// True when a source line constructs a process command. Identifiers that
+    /// merely end in `Command` (such as `ContainedCommand::new`) are not spawn
+    /// constructors.
+    fn line_constructs_a_command(line: &str) -> bool {
+        if line.contains("process::Command") {
+            return true;
+        }
+        let mut rest = line;
+        while let Some(index) = rest.find("Command::new(") {
+            let preceded_by_identifier = rest[..index]
+                .chars()
+                .last()
+                .is_some_and(|character| character.is_alphanumeric() || character == '_');
+            if !preceded_by_identifier {
+                return true;
+            }
+            rest = &rest[index + "Command".len()..];
+        }
+        false
+    }
+
     fn production_spawn_lines(source: &str) -> usize {
         let lines: Vec<&str> = source.lines().collect();
         let ranges = test_module_ranges(&lines);
@@ -588,32 +1212,106 @@ mod tests {
                 !ranges
                     .iter()
                     .any(|(start, end)| index >= start && index <= end)
-                    && (line.contains("Command::new(") || line.contains("process::Command"))
+                    && line_constructs_a_command(line)
             })
             .count()
     }
 
     #[test]
-    fn spawn_constructors_pass_the_program_through_unchanged() {
-        for kind in [
-            ProfileKind::Inspect,
-            ProfileKind::Edit,
-            ProfileKind::EditWithNetwork,
-            ProfileKind::ReducedSafety,
-        ] {
-            let routed = command_for(kind, "git");
-            let routed = routed.as_std();
-            assert_eq!(routed.get_program(), std::ffi::OsStr::new("git"));
-            assert!(routed.get_args().next().is_none());
-            assert!(routed.get_current_dir().is_none());
-            assert!(routed.get_envs().next().is_none());
-
-            let routed = std_command_for(kind, "rg");
-            assert_eq!(routed.get_program(), std::ffi::OsStr::new("rg"));
-            assert!(routed.get_args().next().is_none());
-            assert!(routed.get_current_dir().is_none());
-            assert!(routed.get_envs().next().is_none());
+    fn blocked_policies_never_produce_a_command() {
+        let blocked = [
+            SpawnPolicy::new(ProfileKind::Inspect, false, true),
+            SpawnPolicy::new(ProfileKind::Edit, true, false),
+            SpawnPolicy::new(ProfileKind::ReducedSafety, false, false),
+        ];
+        for policy in blocked {
+            let error = prepare_command(policy, "git")
+                .err()
+                .expect("a blocked policy must not produce a prepared command");
+            assert_eq!(error.code, "containment_unavailable");
+            assert!(error.message.contains("Command execution is unavailable"));
+            assert!(error.message.contains("File edits still work"));
+            assert_eq!(
+                resolve_spawn(Platform::Windows, policy),
+                EnforcementState::Blocked {
+                    reason: BlockReason::ContainmentUnavailable,
+                }
+            );
         }
+    }
+
+    #[test]
+    fn windows_reduced_safety_produces_a_contained_command() {
+        let policy = SpawnPolicy::new(ProfileKind::Edit, true, true);
+        let prepared = prepare_command(policy, "git");
+        if Platform::current() == Platform::Windows {
+            assert!(
+                prepared.is_ok(),
+                "an opted-in Windows project must prepare a command"
+            );
+        } else {
+            assert_eq!(
+                prepared.err().expect("non-Windows has no backend").code,
+                "containment_unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn confirmation_requires_the_exact_typed_phrase() {
+        assert!(confirm_reduced_safety("reduced safety").is_ok());
+        for invalid in [
+            "",
+            "reduced",
+            "Reduced safety",
+            "REDUCED SAFETY",
+            " reduced safety",
+            "reduced safety ",
+            "reduced  safety",
+        ] {
+            assert_eq!(
+                confirm_reduced_safety(invalid).unwrap_err().code,
+                "containment_confirmation",
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn status_lists_every_profile_kind_with_resolved_enforcement() {
+        let status = status_for_project("project-1", true, true);
+        assert_eq!(status.project_id, "project-1");
+        assert_eq!(status.platform, Platform::current().name());
+        assert!(status.project_opted_in);
+        assert!(status.machine_allowed);
+        assert_eq!(status.profiles.len(), ProfileKind::ALL.len());
+        assert_eq!(
+            status
+                .profiles
+                .iter()
+                .map(|profile| profile.kind)
+                .collect::<Vec<_>>(),
+            ProfileKind::ALL.to_vec()
+        );
+        for profile in &status.profiles {
+            let expected = resolve_spawn(
+                Platform::current(),
+                SpawnPolicy::new(profile.kind, true, true),
+            );
+            assert_eq!(
+                profile.enforcement,
+                ContainmentEnforcement::from(&expected),
+                "{:?}",
+                profile.kind
+            );
+        }
+
+        let wire = serde_json::to_value(&status).unwrap();
+        assert_eq!(wire["projectId"], "project-1");
+        assert_eq!(wire["projectOptedIn"], true);
+        assert_eq!(wire["machineAllowed"], true);
+        assert_eq!(wire["profiles"][0]["kind"], "inspect");
+        assert_eq!(wire["profiles"][3]["kind"], "reduced_safety");
     }
 
     #[test]
@@ -767,55 +1465,60 @@ mod tests {
     }
 
     #[test]
-    fn spawn_resolution_covers_every_platform_opt_in_and_kind() {
+    fn spawn_resolution_covers_every_platform_opt_in_machine_switch_and_kind() {
         let platforms = [Platform::Windows, Platform::Linux, Platform::Other];
-        let kinds = [
-            ProfileKind::Inspect,
-            ProfileKind::Edit,
-            ProfileKind::EditWithNetwork,
-            ProfileKind::ReducedSafety,
-        ];
+        let kinds = ProfileKind::ALL;
         let mut covered = 0;
 
         for platform in platforms {
             for project_opted_in in [false, true] {
-                for kind in kinds {
-                    let resolved = resolve_spawn(platform, project_opted_in, kind);
-                    let expected = if platform == Platform::Windows && project_opted_in {
-                        EnforcementState::ReducedSafety {
-                            unsupported: kind
-                                .capabilities()
-                                .into_iter()
-                                .filter(|capability| *capability != Capability::ProcessLimit)
-                                .collect(),
-                        }
-                    } else {
-                        EnforcementState::Blocked {
-                            reason: BlockReason::ContainmentUnavailable,
-                        }
-                    };
-                    assert_eq!(
-                        resolved, expected,
-                        "{platform:?} opted_in={project_opted_in} kind={kind:?}"
-                    );
-                    covered += 1;
+                for machine_allowed in [false, true] {
+                    for kind in kinds {
+                        let policy = SpawnPolicy::new(kind, project_opted_in, machine_allowed);
+                        let resolved = resolve_spawn(platform, policy);
+                        let expected = if platform == Platform::Windows
+                            && project_opted_in
+                            && machine_allowed
+                        {
+                            EnforcementState::ReducedSafety {
+                                unsupported: kind
+                                    .capabilities()
+                                    .into_iter()
+                                    .filter(|capability| *capability != Capability::ProcessLimit)
+                                    .collect(),
+                            }
+                        } else {
+                            EnforcementState::Blocked {
+                                reason: BlockReason::ContainmentUnavailable,
+                            }
+                        };
+                        assert_eq!(
+                            resolved, expected,
+                            "{platform:?} opted_in={project_opted_in} machine_allowed={machine_allowed} kind={kind:?}"
+                        );
+                        covered += 1;
+                    }
                 }
             }
         }
 
-        assert_eq!(covered, 3 * 2 * 4, "every combination must be covered");
+        assert_eq!(covered, 3 * 2 * 2 * 4, "every combination must be covered");
     }
 
     #[test]
     fn windows_reduced_safety_lists_every_unenforced_capability() {
+        let policy = |kind| SpawnPolicy::new(kind, true, true);
         assert_eq!(
-            resolve_spawn(Platform::Windows, false, ProfileKind::Inspect),
+            resolve_spawn(
+                Platform::Windows,
+                SpawnPolicy::new(ProfileKind::Inspect, false, true)
+            ),
             EnforcementState::Blocked {
                 reason: BlockReason::ContainmentUnavailable,
             }
         );
         assert_eq!(
-            resolve_spawn(Platform::Windows, true, ProfileKind::Inspect),
+            resolve_spawn(Platform::Windows, policy(ProfileKind::Inspect)),
             EnforcementState::ReducedSafety {
                 unsupported: vec![
                     Capability::WorkspaceRead,
@@ -825,7 +1528,7 @@ mod tests {
             }
         );
         assert_eq!(
-            resolve_spawn(Platform::Windows, true, ProfileKind::Edit),
+            resolve_spawn(Platform::Windows, policy(ProfileKind::Edit)),
             EnforcementState::ReducedSafety {
                 unsupported: vec![
                     Capability::WorkspaceRead,
@@ -837,7 +1540,7 @@ mod tests {
             }
         );
         assert_eq!(
-            resolve_spawn(Platform::Windows, true, ProfileKind::EditWithNetwork),
+            resolve_spawn(Platform::Windows, policy(ProfileKind::EditWithNetwork)),
             EnforcementState::ReducedSafety {
                 unsupported: vec![
                     Capability::WorkspaceRead,
@@ -850,20 +1553,15 @@ mod tests {
             }
         );
         assert_eq!(
-            resolve_spawn(Platform::Windows, true, ProfileKind::ReducedSafety),
+            resolve_spawn(Platform::Windows, policy(ProfileKind::ReducedSafety)),
             EnforcementState::ReducedSafety {
                 unsupported: Vec::new(),
             }
         );
 
-        for kind in [
-            ProfileKind::Inspect,
-            ProfileKind::Edit,
-            ProfileKind::EditWithNetwork,
-            ProfileKind::ReducedSafety,
-        ] {
+        for kind in ProfileKind::ALL {
             let EnforcementState::ReducedSafety { unsupported } =
-                resolve_spawn(Platform::Windows, true, kind)
+                resolve_spawn(Platform::Windows, policy(kind))
             else {
                 panic!("an opted-in Windows project must resolve to reduced safety");
             };
@@ -875,22 +1573,35 @@ mod tests {
     }
 
     #[test]
+    fn the_machine_kill_switch_blocks_every_kind() {
+        for kind in ProfileKind::ALL {
+            assert_eq!(
+                resolve_spawn(Platform::Windows, SpawnPolicy::new(kind, true, false)),
+                EnforcementState::Blocked {
+                    reason: BlockReason::ContainmentUnavailable,
+                },
+                "the machine switch must disable reduced safety for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
     fn linux_and_other_stay_blocked_even_when_opted_in() {
         for platform in [Platform::Linux, Platform::Other] {
             for project_opted_in in [false, true] {
-                for kind in [
-                    ProfileKind::Inspect,
-                    ProfileKind::Edit,
-                    ProfileKind::EditWithNetwork,
-                    ProfileKind::ReducedSafety,
-                ] {
-                    assert_eq!(
-                        resolve_spawn(platform, project_opted_in, kind),
-                        EnforcementState::Blocked {
-                            reason: BlockReason::ContainmentUnavailable,
-                        },
-                        "{platform:?} has no backend in this slice"
-                    );
+                for machine_allowed in [false, true] {
+                    for kind in ProfileKind::ALL {
+                        assert_eq!(
+                            resolve_spawn(
+                                platform,
+                                SpawnPolicy::new(kind, project_opted_in, machine_allowed)
+                            ),
+                            EnforcementState::Blocked {
+                                reason: BlockReason::ContainmentUnavailable,
+                            },
+                            "{platform:?} has no backend in this slice"
+                        );
+                    }
                 }
             }
         }

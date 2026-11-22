@@ -1,9 +1,8 @@
 use crate::{
-    containment::{command_for, ProfileKind},
+    containment::{prepare_command, PreparedCommand, SpawnPolicy},
     error::{AppError, AppResult},
 };
 use std::{path::Path, process::Stdio, time::Duration};
-use tokio::{io::AsyncRead, process::Command};
 
 #[derive(Debug)]
 pub struct ProcessOutput {
@@ -20,7 +19,7 @@ pub struct ProcessOutputChunk {
     pub chunk: String,
 }
 
-async fn read_bounded<R: AsyncRead + Unpin>(
+async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(
     mut stream: R,
     limit: usize,
     stream_name: &'static str,
@@ -63,18 +62,18 @@ async fn read_bounded<R: AsyncRead + Unpin>(
 }
 
 pub async fn run_program(
-    kind: ProfileKind,
+    policy: SpawnPolicy,
     program: &str,
     args: &[String],
     cwd: &Path,
     timeout: Duration,
     output_limit: usize,
 ) -> AppResult<ProcessOutput> {
-    run_program_streaming(kind, program, args, cwd, timeout, output_limit, None).await
+    run_program_streaming(policy, program, args, cwd, timeout, output_limit, None).await
 }
 
 pub async fn run_program_streaming(
-    kind: ProfileKind,
+    policy: SpawnPolicy,
     program: &str,
     args: &[String],
     cwd: &Path,
@@ -82,7 +81,7 @@ pub async fn run_program_streaming(
     output_limit: usize,
     events: Option<tokio::sync::mpsc::UnboundedSender<ProcessOutputChunk>>,
 ) -> AppResult<ProcessOutput> {
-    let mut command = streaming_command(kind, program, args, cwd, &filtered_environment());
+    let command = streaming_command(policy, program, args, cwd, &filtered_environment())?;
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AppError::new(
@@ -97,21 +96,23 @@ pub async fn run_program_streaming(
         }
     })?;
     let stdout = child
-        .stdout
-        .take()
+        .take_stdout()
         .ok_or_else(|| AppError::new("process_output", "Could not capture program output."))?;
     let stderr = child
-        .stderr
-        .take()
+        .take_stderr()
         .ok_or_else(|| AppError::new("process_output", "Could not capture program errors."))?;
+    let stdout = tokio::process::ChildStdout::from_std(stdout)
+        .map_err(|_| AppError::new("process_output", "Could not capture program output."))?;
+    let stderr = tokio::process::ChildStderr::from_std(stderr)
+        .map_err(|_| AppError::new("process_output", "Could not capture program errors."))?;
     let stdout_task = tokio::spawn(read_bounded(stdout, output_limit, "stdout", events.clone()));
     let stderr_task = tokio::spawn(read_bounded(stderr, output_limit, "stderr", events));
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
+    let status = match tokio::time::timeout(timeout, child.wait_async()).await {
         Ok(result) => Some(result.map_err(|_| {
             AppError::new("process_wait", "Could not collect the program exit status.")
         })?),
         Err(_) => {
-            let _ = child.kill().await;
+            let _ = child.kill();
             None
         }
     };
@@ -134,27 +135,23 @@ pub async fn run_program_streaming(
 }
 
 fn streaming_command(
-    kind: ProfileKind,
+    policy: SpawnPolicy,
     program: &str,
     args: &[String],
     cwd: &Path,
     environment: &[(std::ffi::OsString, std::ffi::OsString)],
-) -> Command {
-    let mut command = command_for(kind, program);
-    command
+) -> AppResult<PreparedCommand> {
+    let mut command = prepare_command(policy, program)?
         .args(args)
         .current_dir(cwd)
-        .kill_on_drop(true)
         .env_clear()
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (key, value) in environment {
-        command.env(key, value);
+        command = command.env(key, value);
     }
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    command
+    Ok(command)
 }
 
 /// Only standard execution variables are inherited by agent-launched programs.
@@ -199,28 +196,28 @@ fn environment_key_is_allowed(key: &std::ffi::OsStr) -> bool {
 mod tests {
     use super::*;
 
+    fn test_policy(kind: crate::containment::ProfileKind) -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(kind)
+    }
+
     #[test]
-    fn streaming_command_matches_direct_construction() {
+    fn blocked_policy_stops_a_program_before_spawn() {
         let root = std::env::temp_dir();
         let args = vec!["--version".into(), "value with spaces".into()];
         let environment = filtered_environment();
-        let routed = streaming_command(ProfileKind::Edit, "git", &args, &root, &environment);
-        let routed = routed.as_std();
-        let mut direct = std::process::Command::new("git");
-        direct.args(&args).current_dir(&root);
-        for (key, value) in &environment {
-            direct.env(key, value);
-        }
-        assert_eq!(routed.get_program(), direct.get_program());
-        assert_eq!(
-            routed.get_args().collect::<Vec<_>>(),
-            direct.get_args().collect::<Vec<_>>()
-        );
-        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
-        assert_eq!(
-            routed.get_envs().collect::<Vec<_>>(),
-            direct.get_envs().collect::<Vec<_>>()
-        );
+        let blocked = SpawnPolicy::new(crate::containment::ProfileKind::Edit, false, true);
+        let error = streaming_command(blocked, "git", &args, &root, &environment)
+            .err()
+            .expect("a blocked policy must not prepare a program");
+        assert_eq!(error.code, "containment_unavailable");
+        assert!(streaming_command(
+            test_policy(crate::containment::ProfileKind::Edit),
+            "git",
+            &args,
+            &root,
+            &environment
+        )
+        .is_ok());
     }
 
     #[test]
@@ -250,7 +247,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let result = run_program_streaming(
-            ProfileKind::Inspect,
+            test_policy(crate::containment::ProfileKind::Inspect),
             "sh",
             &["-c".into(), "printf out; printf err >&2; exit 7".into()],
             root.path(),
@@ -290,7 +287,7 @@ mod tests {
         #[cfg(unix)]
         let (program, args) = ("sh", vec!["-c".into(), "sleep 2".into()]);
         let result = run_program_streaming(
-            ProfileKind::Inspect,
+            test_policy(crate::containment::ProfileKind::Inspect),
             program,
             &args,
             root.path(),

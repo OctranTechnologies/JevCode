@@ -1,6 +1,6 @@
 use super::{process::run_program, ToolOutput};
 use crate::{
-    containment::ProfileKind,
+    containment::SpawnPolicy,
     error::{AppError, AppResult},
     workspaces::{is_ignored, list_directory as list_workspace_directory, scoped_path},
 };
@@ -385,6 +385,7 @@ pub async fn search_files(
     root: &Path,
     args: &Value,
     external_allowed: bool,
+    policy: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     let query = args["query"].as_str().unwrap_or_default();
     let (directory, relative) = optional_root(root, args, external_allowed)?;
@@ -404,7 +405,7 @@ pub async fn search_files(
     ]);
     command_args.extend(["--glob".into(), glob, "--".into(), ".".into()]);
     let rg = run_program(
-        ProfileKind::Inspect,
+        policy,
         "rg",
         &command_args,
         &directory,
@@ -475,12 +476,14 @@ pub async fn search_text(
     root: &Path,
     args: &Value,
     external_allowed: bool,
+    policy: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     search_text_query(
         root,
         args["query"].as_str().unwrap_or_default(),
         args,
         external_allowed,
+        policy,
     )
     .await
 }
@@ -489,12 +492,14 @@ pub async fn find_symbol(
     root: &Path,
     args: &Value,
     external_allowed: bool,
+    policy: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     search_text_query(
         root,
         args["symbol"].as_str().unwrap_or_default(),
         args,
         external_allowed,
+        policy,
     )
     .await
 }
@@ -503,12 +508,14 @@ pub async fn find_references(
     root: &Path,
     args: &Value,
     external_allowed: bool,
+    policy: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     search_text_query(
         root,
         args["symbol"].as_str().unwrap_or_default(),
         args,
         external_allowed,
+        policy,
     )
     .await
 }
@@ -518,6 +525,7 @@ async fn search_text_query(
     query: &str,
     args: &Value,
     external_allowed: bool,
+    policy: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     let (directory, relative) = optional_root(root, args, external_allowed)?;
     let mut rg_args = vec![
@@ -539,7 +547,7 @@ async fn search_text_query(
     ]);
     rg_args.extend(["--".into(), query.into(), ".".into()]);
     let rg = run_program(
-        ProfileKind::Inspect,
+        policy,
         "rg",
         &rg_args,
         &directory,

@@ -812,6 +812,10 @@ pub struct Project {
     pub guidance_precedence: GuidancePrecedence,
     #[serde(default = "default_true")]
     pub is_recent: bool,
+    /// Per-project reduced-safety opt-in (D1). Off by default; the machine
+    /// switch can still block it.
+    #[serde(default)]
+    pub reduced_safety_opt_in: bool,
     pub created_at: String,
 }
 

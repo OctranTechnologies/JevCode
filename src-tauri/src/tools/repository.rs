@@ -1,6 +1,6 @@
 use super::{process::run_program, ToolOutput};
 use crate::{
-    containment::ProfileKind,
+    containment::SpawnPolicy,
     error::{AppError, AppResult},
     git,
     workspaces::{is_ignored, scoped_path},
@@ -17,9 +17,13 @@ fn success(content: impl Into<String>, data: Value) -> AppResult<ToolOutput> {
     })
 }
 
-async fn git_command(root: &Path, args: &[String]) -> AppResult<super::process::ProcessOutput> {
+async fn git_command(
+    root: &Path,
+    args: &[String],
+    policy: SpawnPolicy,
+) -> AppResult<super::process::ProcessOutput> {
     let output = run_program(
-        ProfileKind::Inspect,
+        policy,
         "git",
         args,
         root,
@@ -99,14 +103,19 @@ fn page(text: &str, args: &Value) -> (String, usize, usize, bool) {
     (result, offset, limit, has_more)
 }
 
-pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOutput> {
+pub async fn execute(
+    root: &Path,
+    name: &str,
+    args: &Value,
+    policy: SpawnPolicy,
+) -> AppResult<ToolOutput> {
     match name {
         "git_status" => {
-            let text = git::status(root).await?;
+            let text = git::status(policy, root).await?;
             success(text.clone(), json!({"status":text}))
         }
         "git_branch" => {
-            let current = git::branch(root).await?;
+            let current = git::branch(policy, root).await?;
             let branch_output = git_command(
                 root,
                 &[
@@ -116,6 +125,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
                     "branch".into(),
                     "--format=%(refname:short)".into(),
                 ],
+                policy,
             )
             .await?;
             let mut branches = branch_output
@@ -147,7 +157,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
             }
             let path = path_arg(root, &args["path"])?;
             add_safe_pathspecs(&mut command, path);
-            let response = git_command(root, &command).await?;
+            let response = git_command(root, &command, policy).await?;
             let (diff, offset, limit, has_more) = page(&response.stdout, args);
             success(
                 diff.clone(),
@@ -169,7 +179,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
                 command.push("--".into());
                 command.push(path);
             }
-            let response = git_command(root, &command).await?;
+            let response = git_command(root, &command, policy).await?;
             success(
                 response.stdout.clone(),
                 json!({"commits":response.stdout.lines().collect::<Vec<_>>(),"truncated":response.truncated}),
@@ -185,6 +195,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
                     "--end-of-options".into(),
                     format!("{revision}^{{commit}}"),
                 ],
+                policy,
             )
             .await?;
             let commit = verified.stdout.trim();
@@ -210,7 +221,7 @@ pub async fn execute(root: &Path, name: &str, args: &Value) -> AppResult<ToolOut
                 commit.into(),
             ];
             add_safe_pathspecs(&mut command, None);
-            let response = git_command(root, &command).await?;
+            let response = git_command(root, &command, policy).await?;
             let (show, offset, limit, has_more) = page(&response.stdout, args);
             success(
                 show.clone(),

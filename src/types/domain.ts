@@ -390,8 +390,24 @@ export interface Project {
   permissions: PermissionPolicy;
   guidancePrecedence: 'default' | 'agents_override' | 'gemini_first' | 'copilot_first';
   isRecent: boolean;
+  reducedSafetyOptIn: boolean;
   createdAt: string;
 }
+export type ContainmentProfileKind = 'inspect' | 'edit' | 'edit_with_network' | 'reduced_safety';
+export type ContainmentBlockReason = 'containment_unavailable' | 'containment_profile_unsupported' | 'containment_probe_failed' | 'capability_denied';
+export type ContainmentEnforcement =
+  | { state: 'enforced' }
+  | { state: 'reduced_safety'; unsupported: string[] }
+  | { state: 'blocked'; reason: ContainmentBlockReason };
+export interface ContainmentProfileStatus { kind: ContainmentProfileKind; enforcement: ContainmentEnforcement }
+export interface ContainmentStatus {
+  projectId: string;
+  platform: 'windows' | 'linux' | 'other';
+  projectOptedIn: boolean;
+  machineAllowed: boolean;
+  profiles: ContainmentProfileStatus[];
+}
+export interface ContainmentMachineStatus { machineAllowed: boolean }
 export type ProjectMemoryCategory = 'convention' | 'architecture' | 'workflow' | 'testing' | 'decision' | 'other';
 export type ProjectMemorySourceStatus = 'current' | 'stale' | 'missing' | 'unverified' | 'unavailable';
 export interface ProjectMemoryView {

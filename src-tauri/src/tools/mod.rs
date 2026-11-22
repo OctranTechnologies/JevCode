@@ -8,6 +8,7 @@ mod repository;
 mod shell;
 
 use crate::{
+    containment::SpawnPolicy,
     domain::*,
     error::{AppError, AppResult},
 };
@@ -101,6 +102,7 @@ pub trait ToolExecutor: Send + Sync {
         root: &Path,
         call: &ToolCall,
         policy: &PermissionPolicy,
+        containment: SpawnPolicy,
         approved: bool,
     ) -> ToolResult;
 }
@@ -114,6 +116,7 @@ impl ToolRegistry {
         root: &Path,
         call: &ToolCall,
         policy: &PermissionPolicy,
+        containment: SpawnPolicy,
         approved: bool,
         events: Option<tokio::sync::mpsc::UnboundedSender<process::ProcessOutputChunk>>,
     ) -> ToolResult {
@@ -168,6 +171,7 @@ impl ToolRegistry {
                 call,
                 external && (approved || policy.external_files == PermissionDecision::Allow),
                 events,
+                containment,
             ),
         )
         .await;
@@ -209,9 +213,10 @@ impl ToolExecutor for ToolRegistry {
         root: &Path,
         call: &ToolCall,
         policy: &PermissionPolicy,
+        containment: SpawnPolicy,
         approved: bool,
     ) -> ToolResult {
-        self.execute_with_output(root, call, policy, approved, None)
+        self.execute_with_output(root, call, policy, containment, approved, None)
             .await
     }
 }
@@ -413,20 +418,24 @@ pub async fn execute(
     root: &Path,
     call: &ToolCall,
     policy: &PermissionPolicy,
+    containment: SpawnPolicy,
     approved: bool,
 ) -> ToolResult {
-    ToolRegistry.execute(root, call, policy, approved).await
+    ToolRegistry
+        .execute(root, call, policy, containment, approved)
+        .await
 }
 
 pub async fn execute_with_output(
     root: &Path,
     call: &ToolCall,
     policy: &PermissionPolicy,
+    containment: SpawnPolicy,
     approved: bool,
     events: tokio::sync::mpsc::UnboundedSender<process::ProcessOutputChunk>,
 ) -> ToolResult {
     ToolRegistry
-        .execute_with_output(root, call, policy, approved, Some(events))
+        .execute_with_output(root, call, policy, containment, approved, Some(events))
         .await
 }
 
@@ -446,6 +455,7 @@ async fn dispatch(
     call: &ToolCall,
     external_allowed: bool,
     events: Option<tokio::sync::mpsc::UnboundedSender<process::ProcessOutputChunk>>,
+    containment: SpawnPolicy,
 ) -> AppResult<ToolOutput> {
     match call.name.as_str() {
         "read_file" => filesystem::read_file(root, &call.arguments["path"], external_allowed).await,
@@ -455,8 +465,12 @@ async fn dispatch(
         "list_directory" => {
             filesystem::list_directory(root, &call.arguments, external_allowed).await
         }
-        "search_files" => filesystem::search_files(root, &call.arguments, external_allowed).await,
-        "search_text" => filesystem::search_text(root, &call.arguments, external_allowed).await,
+        "search_files" => {
+            filesystem::search_files(root, &call.arguments, external_allowed, containment).await
+        }
+        "search_text" => {
+            filesystem::search_text(root, &call.arguments, external_allowed, containment).await
+        }
         "file_metadata" => {
             filesystem::file_metadata(root, &call.arguments["path"], external_allowed).await
         }
@@ -465,14 +479,18 @@ async fn dispatch(
         "delete_file" => filesystem::delete_file(root, &call.arguments, external_allowed).await,
         "move_file" => filesystem::move_file(root, &call.arguments, external_allowed).await,
         "git_status" | "git_diff" | "git_log" | "git_show" | "git_branch" => {
-            repository::execute(root, call.name.as_str(), &call.arguments).await
+            repository::execute(root, call.name.as_str(), &call.arguments, containment).await
         }
-        "run_command" => shell::run_command(root, &call.arguments, external_allowed, events).await,
-        "find_symbol" => filesystem::find_symbol(root, &call.arguments, external_allowed).await,
+        "run_command" => {
+            shell::run_command(root, &call.arguments, external_allowed, events, containment).await
+        }
+        "find_symbol" => {
+            filesystem::find_symbol(root, &call.arguments, external_allowed, containment).await
+        }
         "find_references" => {
-            filesystem::find_references(root, &call.arguments, external_allowed).await
+            filesystem::find_references(root, &call.arguments, external_allowed, containment).await
         }
-        "inspect_project" => context::inspect_project(root).await,
+        "inspect_project" => context::inspect_project(root, containment).await,
         _ => Err(AppError::new(
             "unknown_tool",
             "The requested tool is not registered.",
@@ -491,6 +509,10 @@ mod tests {
             name: name.into(),
             arguments,
         }
+    }
+
+    fn test_policy() -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(crate::containment::ProfileKind::Inspect)
     }
 
     fn git(root: &Path, args: &[&str]) {
@@ -584,7 +606,7 @@ mod tests {
         let traversal = call("read_file", json!({"path":"../outside/secret.txt"}));
         assert!(requires_external_access(root.path(), &traversal).unwrap());
         assert!(
-            execute(root.path(), &traversal, &policy, false)
+            execute(root.path(), &traversal, &policy, test_policy(), false)
                 .await
                 .is_error
         );
@@ -593,7 +615,7 @@ mod tests {
         {
             std::os::unix::fs::symlink(outside.path(), root.path().join("linked-outside")).unwrap();
             let symlink = call("read_file", json!({"path":"linked-outside/secret.txt"}));
-            let result = execute(root.path(), &symlink, &policy, false).await;
+            let result = execute(root.path(), &symlink, &policy, test_policy(), false).await;
             assert!(result.is_error);
             assert_eq!(
                 result.structured_content.unwrap()["error"],
@@ -614,13 +636,13 @@ mod tests {
             external_files: PermissionDecision::Ask,
             ..Default::default()
         };
-        let pending = execute(root.path(), &call, &policy, false).await;
+        let pending = execute(root.path(), &call, &policy, test_policy(), false).await;
         assert!(pending.is_error);
         assert_eq!(
             pending.structured_content.unwrap()["error"],
             "approval_required"
         );
-        let approved = execute(root.path(), &call, &policy, true).await;
+        let approved = execute(root.path(), &call, &policy, test_policy(), true).await;
         assert!(!approved.is_error);
         assert_eq!(approved.content, "approved outside read");
     }
@@ -641,12 +663,16 @@ mod tests {
             "apply_patch",
             json!({"path":"main.rs","edits":[{"oldText":"println!(\"old\")","newText":"println!(\"new\")"}]}),
         );
-        assert!(execute(root.path(), &patch, &denied, true).await.is_error);
+        assert!(
+            execute(root.path(), &patch, &denied, test_policy(), true)
+                .await
+                .is_error
+        );
         let allowed = PermissionPolicy {
             write_files: PermissionDecision::Allow,
             ..Default::default()
         };
-        let result = execute(root.path(), &patch, &allowed, false).await;
+        let result = execute(root.path(), &patch, &allowed, test_policy(), false).await;
         assert!(!result.is_error);
         assert_eq!(
             std::fs::read_to_string(root.path().join("main.rs")).unwrap(),
@@ -661,7 +687,7 @@ mod tests {
             "apply_patch",
             json!({"path":"duplicate.rs","edits":[{"oldText":"fn main","newText":"fn test"}]}),
         );
-        let result = execute(root.path(), &ambiguous, &allowed, false).await;
+        let result = execute(root.path(), &ambiguous, &allowed, test_policy(), false).await;
         assert!(result.is_error);
         assert_eq!(
             result.structured_content.unwrap()["error"],
@@ -681,7 +707,7 @@ mod tests {
             "create_file",
             json!({"path":"created.txt","content":"hello"}),
         );
-        let created = execute(root.path(), &visible, &allowed, false).await;
+        let created = execute(root.path(), &visible, &allowed, test_policy(), false).await;
         assert!(!created.is_error, "{}", created.content);
         assert_eq!(
             std::fs::read_to_string(root.path().join("created.txt")).unwrap(),
@@ -692,7 +718,7 @@ mod tests {
             "create_file",
             json!({"path":"ignored.txt","content":"secret"}),
         );
-        let rejected = execute(root.path(), &ignored, &allowed, false).await;
+        let rejected = execute(root.path(), &ignored, &allowed, test_policy(), false).await;
         assert!(rejected.is_error);
         assert_eq!(
             rejected.structured_content.unwrap()["error"],
@@ -709,6 +735,7 @@ mod tests {
             root.path(),
             &call("list_directory", json!({"path":"src","limit":1})),
             &PermissionPolicy::default(),
+            test_policy(),
             false,
         )
         .await;
@@ -745,6 +772,7 @@ mod tests {
             root.path(),
             &call("git_diff", json!({"limit":100})),
             &policy,
+            test_policy(),
             false,
         )
         .await;
@@ -756,6 +784,7 @@ mod tests {
             root.path(),
             &call("git_show", json!({"revision":"HEAD"})),
             &policy,
+            test_policy(),
             false,
         )
         .await;
@@ -779,6 +808,7 @@ mod tests {
             root.path(),
             &call("search_text", json!({"query":"needle","limit":1})),
             &policy,
+            test_policy(),
             false,
         )
         .await;

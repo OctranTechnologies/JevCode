@@ -13,6 +13,8 @@ import { TaskWorktreesPanel } from './TaskWorktreesPanel';
 import { ProjectMemoryPanel } from './ProjectMemoryPanel';
 import { CustomCommandsPanel } from './CustomCommandsPanel';
 import { ProjectContextPanel } from './ProjectContextPanel';
+import { ContainmentPanel } from './ContainmentPanel';
+import { UncontainedBadge } from './ContainmentBadge';
 import { FileName } from '../../components/FileName';
 import type {
   AgentSession, ChangedFile, PermissionDecision, PermissionPolicy, Project,
@@ -232,7 +234,7 @@ export function ProjectOverview({
 
           <section className="project-section project-tasks-section">
             <div className="project-section-heading"><div><h2>Recent tasks</h2><span>Latest activity in this project</span></div></div>
-            {recentTasks.length ? <ul className="project-task-list">{recentTasks.map(session => <li key={session.id}><button onClick={() => onSelectSession(session)}><span className={`project-task-status is-${session.status}`} /><span className="project-task-title">{session.title || 'New task'}</span><ArrowRight size={13} /></button><small>{formatDate(session.updatedAt)}</small></li>)}</ul> : <p className="project-section-empty">Tasks started here will appear in this list.</p>}
+            {recentTasks.length ? <ul className="project-task-list">{recentTasks.map(session => <li key={session.id}><button onClick={() => onSelectSession(session)}><span className={`project-task-status is-${session.status}`} /><span className="project-task-title">{session.title || 'New task'}</span><UncontainedBadge project={project} /><ArrowRight size={13} /></button><small>{formatDate(session.updatedAt)}</small></li>)}</ul> : <p className="project-section-empty">Tasks started here will appear in this list.</p>}
           </section>
 
           <section className="project-section project-languages-section">
@@ -243,6 +245,7 @@ export function ProjectOverview({
       </div>
 
       <ProjectContextPanel project={project} desktopAllowed={desktopAllowed} settingsDirty={instructions !== project.projectInstructions || preferredModel !== (project.preferredModel ?? '') || !samePolicy(permissions, project.permissions)} onProjectUpdated={onProjectUpdated} />
+      <ContainmentPanel project={project} desktopAllowed={desktopAllowed} onProjectUpdated={onProjectUpdated} onError={onError} />
       <CustomCommandsPanel project={project} desktopAllowed={desktopAllowed} />
 
       <section className="project-instructions-section">

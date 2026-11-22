@@ -97,6 +97,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
+            commands::containment_status,
+            commands::set_project_reduced_safety,
+            commands::set_reduced_safety_allowed,
             commands::open_project,
             commands::create_project,
             commands::remove_project_from_recents,

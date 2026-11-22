@@ -100,6 +100,7 @@ impl Database {
         Self::migrate_jev_evaluation(&connection)?;
         Self::migrate_project_memories(&connection)?;
         Self::migrate_task_plans(&connection)?;
+        Self::migrate_containment(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -352,6 +353,16 @@ impl Database {
              );
              CREATE INDEX IF NOT EXISTS task_plans_project ON task_plans(project_id, updated_at DESC);
              PRAGMA user_version = 17;",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_containment(connection: &Connection) -> AppResult<()> {
+        // The machine-level kill switch defaults on. `INSERT OR IGNORE` leaves
+        // any row a user already has untouched.
+        connection.execute_batch(
+            "INSERT OR IGNORE INTO app_preferences(key, value) VALUES ('reduced_safety_allowed', 'true');
+             PRAGMA user_version = 18;",
         )?;
         Ok(())
     }
@@ -963,6 +974,28 @@ impl Database {
         Ok(())
     }
 
+    /// Machine-level kill switch for reduced safety (D1). Missing rows read as
+    /// allowed so a fresh or partially migrated database keeps the default.
+    pub fn reduced_safety_allowed(&self) -> AppResult<bool> {
+        let value: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM app_preferences WHERE key = 'reduced_safety_allowed'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(value.map(|value| value != "false").unwrap_or(true))
+    }
+
+    pub fn set_reduced_safety_allowed(&self, allowed: bool) -> AppResult<()> {
+        self.connection()?.execute(
+            "INSERT INTO app_preferences(key, value) VALUES ('reduced_safety_allowed', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [if allowed { "true" } else { "false" }],
+        )?;
+        Ok(())
+    }
+
     pub fn permission_rules(&self) -> AppResult<Vec<PermissionRule>> {
         let connection = self.connection()?;
         let mut statement = connection
@@ -1408,6 +1441,7 @@ mod tests {
             preferred_model: None,
             permissions: PermissionPolicy::default(),
             is_recent: true,
+            reduced_safety_opt_in: false,
             guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         };
@@ -1686,6 +1720,7 @@ mod tests {
                 preferred_model: None,
                 permissions: PermissionPolicy::default(),
                 is_recent: true,
+                reduced_safety_opt_in: false,
                 guidance_precedence: crate::domain::GuidancePrecedence::default(),
                 created_at: now(),
             };
@@ -1764,6 +1799,7 @@ mod tests {
                 preferred_model: None,
                 permissions: PermissionPolicy::default(),
                 is_recent: true,
+                reduced_safety_opt_in: false,
                 guidance_precedence: crate::domain::GuidancePrecedence::default(),
                 created_at: now(),
             })
@@ -1833,6 +1869,7 @@ mod tests {
                     preferred_model: None,
                     permissions: PermissionPolicy::default(),
                     is_recent: true,
+                    reduced_safety_opt_in: false,
                     guidance_precedence: crate::domain::GuidancePrecedence::default(),
                     created_at: now(),
                 })
@@ -1902,6 +1939,7 @@ mod tests {
             preferred_model: None,
             permissions: PermissionPolicy::default(),
             is_recent: true,
+            reduced_safety_opt_in: false,
             guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         };
@@ -1987,6 +2025,7 @@ mod tests {
             preferred_model: None,
             permissions: PermissionPolicy::default(),
             is_recent: true,
+            reduced_safety_opt_in: false,
             guidance_precedence: crate::domain::GuidancePrecedence::default(),
             created_at: now(),
         })
@@ -2038,6 +2077,50 @@ mod tests {
     }
 
     #[test]
+    fn containment_migration_defaults_and_preserves_existing_rows() {
+        let root = tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
+        let path = root.path().join("containment.sqlite");
+
+        // A fresh database gets the machine switch on and a project opt-in off.
+        let db = Database::open(&path).unwrap();
+        assert!(db.reduced_safety_allowed().unwrap());
+        drop(db);
+        assert!(Database::open(&path)
+            .unwrap()
+            .reduced_safety_allowed()
+            .unwrap());
+        let connection = Connection::open(&path).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 18, "the containment migration bumps user_version");
+        let value: String = connection
+            .query_row(
+                "SELECT value FROM app_preferences WHERE key = 'reduced_safety_allowed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, "true");
+        drop(connection);
+
+        // An existing explicit value is not overwritten by the migration.
+        let existing = root.path().join("existing.sqlite");
+        let connection = Connection::open(&existing).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE app_preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO app_preferences(key, value) VALUES ('reduced_safety_allowed', 'false');",
+            )
+            .unwrap();
+        drop(connection);
+        let db = Database::open(&existing).unwrap();
+        assert!(!db.reduced_safety_allowed().unwrap());
+        db.set_reduced_safety_allowed(true).unwrap();
+        assert!(db.reduced_safety_allowed().unwrap());
+    }
+
+    #[test]
     fn legacy_project_rows_migrate_to_the_new_metadata_shape() {
         let root = tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
         let path = root.path().join("legacy.sqlite");
@@ -2063,6 +2146,7 @@ mod tests {
         assert!(project.last_opened_at.len() > 10);
         assert!(project.is_recent);
         assert!(project.repository_root.is_none());
+        assert!(!project.reduced_safety_opt_in);
         assert_eq!(project.permissions.read_files, PermissionDecision::Allow);
     }
 }

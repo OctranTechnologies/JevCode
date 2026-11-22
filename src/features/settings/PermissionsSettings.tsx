@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LoaderCircle, RefreshCw, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { command, desktopAvailable } from '../../lib/ipc';
+import { ContainmentSettings } from './ContainmentSettings';
 import type { PermissionMode, PermissionRule, Project } from '../../types/domain';
 
 const modeDetails: Record<PermissionMode, string> = {
@@ -68,6 +69,8 @@ export function PermissionsSettings({
       <p className="permission-mode-description">{modeDetails[mode]}</p>
       <div className="permission-safety-note"><ShieldAlert size={15} /><span>Commands that may delete data, access credentials, leave the workspace, or affect system settings always need fresh approval. Agent commands never elevate privileges.</span></div>
     </section>
+
+    <ContainmentSettings projectId={projects[0]?.id ?? null} onError={onError} />
 
     <section className="persistent-rules-section" aria-labelledby="permission-rules-heading">
       <div className="permission-section-heading">

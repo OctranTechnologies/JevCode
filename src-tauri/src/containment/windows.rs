@@ -13,6 +13,7 @@ use std::{
     mem::size_of,
     os::windows::ffi::OsStrExt,
     path::PathBuf,
+    process::{Output, Stdio},
     ptr,
 };
 
@@ -35,13 +36,16 @@ use super::{ProcessLimits, LAUNCHER_ARGUMENT};
 /// A command for the reduced-safety backend. Arguments, working directory and
 /// environment are carried explicitly so the launcher can reproduce the
 /// caller's intent exactly.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ContainedCommand {
     program: OsString,
     args: Vec<OsString>,
     current_dir: Option<PathBuf>,
     env_clear: bool,
     envs: Vec<(OsString, OsString)>,
+    stdin: Stdio,
+    stdout: Stdio,
+    stderr: Stdio,
 }
 
 impl ContainedCommand {
@@ -52,6 +56,9 @@ impl ContainedCommand {
             current_dir: None,
             env_clear: false,
             envs: Vec::new(),
+            stdin: Stdio::inherit(),
+            stdout: Stdio::inherit(),
+            stderr: Stdio::inherit(),
         }
     }
 
@@ -81,6 +88,21 @@ impl ContainedCommand {
 
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.envs.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn stdin(mut self, stdio: Stdio) -> Self {
+        self.stdin = stdio;
+        self
+    }
+
+    pub fn stdout(mut self, stdio: Stdio) -> Self {
+        self.stdout = stdio;
+        self
+    }
+
+    pub fn stderr(mut self, stdio: Stdio) -> Self {
+        self.stderr = stdio;
         self
     }
 }
@@ -201,33 +223,41 @@ impl ContainedJob {
     fn close(&mut self) {
         self.handle.take();
     }
+}
 
-    /// Start the app binary as a launcher for `command`. The launcher opens the
-    /// job by name, joins it and only then starts the target.
-    fn spawn_launcher(
-        &self,
-        name: &str,
-        command: &ContainedCommand,
-    ) -> io::Result<std::process::Child> {
-        let executable = std::env::current_exe()?;
-        let mut launcher = std::process::Command::new(executable);
-        launcher
-            .arg(LAUNCHER_ARGUMENT)
-            .arg(name)
-            .arg(&command.program)
-            .args(&command.args);
-        if let Some(directory) = &command.current_dir {
-            launcher.current_dir(directory);
-        }
-        if command.env_clear {
-            launcher.env_clear();
-        }
-        launcher.envs(command.envs.iter().map(|(key, value)| (key, value)));
-        // Stdio, environment and working directory are inherited by the target
-        // from the launcher, so the caller's pipes and the filtered environment
-        // reach the target unchanged. The launcher adds no variables of its own.
-        launcher.spawn()
+/// Build the launcher process for `command`.
+///
+/// Stdio, environment and working directory are inherited by the target from
+/// the launcher, so the caller's pipes and the filtered environment reach the
+/// target unchanged. The launcher adds no variables of its own.
+pub fn launcher_command(
+    name: &str,
+    command: ContainedCommand,
+) -> io::Result<std::process::Command> {
+    let executable = std::env::current_exe()?;
+    let mut launcher = std::process::Command::new(executable);
+    launcher
+        .arg(LAUNCHER_ARGUMENT)
+        .arg(name)
+        .arg(&command.program)
+        .args(&command.args)
+        .stdin(command.stdin)
+        .stdout(command.stdout)
+        .stderr(command.stderr);
+    if let Some(directory) = &command.current_dir {
+        launcher.current_dir(directory);
     }
+    if command.env_clear {
+        launcher.env_clear();
+    }
+    launcher.envs(command.envs.iter().map(|(key, value)| (key, value)));
+    // The launcher must not create a console window of its own.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        launcher.creation_flags(0x08000000);
+    }
+    Ok(launcher)
 }
 
 /// A contained process tree: the job handle plus the launcher's child.
@@ -237,22 +267,88 @@ impl ContainedJob {
 /// and every descendant, including processes that outlived their parent.
 pub struct ContainedChild {
     job: ContainedJob,
-    child: std::process::Child,
+    child: Option<std::process::Child>,
 }
 
 impl ContainedChild {
     /// Process id of the launcher. The launcher waits for the target and exits
     /// with its code, so this is not the target's id.
     pub fn id(&self) -> u32 {
-        self.child.id()
+        self.child().id()
+    }
+
+    fn child(&self) -> &std::process::Child {
+        self.child
+            .as_ref()
+            .expect("a contained child is present until it is waited on")
+    }
+
+    fn child_mut(&mut self) -> &mut std::process::Child {
+        self.child
+            .as_mut()
+            .expect("a contained child is present until it is waited on")
     }
 
     pub fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
-        self.child.wait()
+        self.child_mut().wait()
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
-        self.child.try_wait()
+        self.child_mut().try_wait()
+    }
+
+    pub fn take_stdin(&mut self) -> Option<std::process::ChildStdin> {
+        self.child_mut().stdin.take()
+    }
+
+    pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.child_mut().stdout.take()
+    }
+
+    pub fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
+        self.child_mut().stderr.take()
+    }
+
+    /// Wait for the launcher and collect the inherited pipes.
+    ///
+    /// The pipes are drained on separate threads so a descendant holding a
+    /// pipe open cannot block the wait, and the job is closed as soon as the
+    /// launcher exits, which terminates any such descendant before the readers
+    /// are joined.
+    pub fn wait_with_output(mut self) -> io::Result<Output> {
+        use std::io::Read;
+
+        let stdout = self.child_mut().stdout.take();
+        let stderr = self.child_mut().stderr.take();
+        let read = |mut pipe: std::process::ChildStdout| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                pipe.read_to_end(&mut bytes)?;
+                Ok::<_, io::Error>(bytes)
+            })
+        };
+        let read_err = |mut pipe: std::process::ChildStderr| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                pipe.read_to_end(&mut bytes)?;
+                Ok::<_, io::Error>(bytes)
+            })
+        };
+        let stdout_reader = stdout.map(read);
+        let stderr_reader = stderr.map(read_err);
+        let status = self.wait()?;
+        self.job.close();
+        let join = |reader: Option<std::thread::JoinHandle<io::Result<Vec<u8>>>>| match reader {
+            Some(reader) => reader
+                .join()
+                .map_err(|_| io::Error::other("output reader panicked"))?,
+            None => Ok(Vec::new()),
+        };
+        Ok(Output {
+            status,
+            stdout: join(stdout_reader)?,
+            stderr: join(stderr_reader)?,
+        })
     }
 
     /// Explicitly terminate the whole tree.
@@ -261,13 +357,19 @@ impl ContainedChild {
             return Ok(());
         }
         if let Err(error) = self.job.terminate() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            if let Some(child) = &mut self.child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             return Err(error);
         }
-        self.child.wait().map(|_| ())
+        self.child_mut().wait().map(|_| ())
     }
 }
+
+// Job and process handles are kernel objects with no thread affinity, and the
+// wrapper is moved between the runtime's worker threads.
+unsafe impl Send for ContainedChild {}
 
 impl Drop for ContainedChild {
     fn drop(&mut self) {
@@ -282,8 +384,11 @@ impl Drop for ContainedChild {
 pub fn spawn(command: ContainedCommand) -> io::Result<ContainedChild> {
     let job_name = format!("Local\\jevcode-containment-{}", uuid::Uuid::new_v4());
     let job = ContainedJob::create(&job_name)?;
-    let child = job.spawn_launcher(&job_name, &command)?;
-    Ok(ContainedChild { job, child })
+    let child = launcher_command(&job_name, command)?.spawn()?;
+    Ok(ContainedChild {
+        job,
+        child: Some(child),
+    })
 }
 
 /// Entry point of the launcher process. `arguments` are the arguments after
@@ -427,6 +532,25 @@ mod tests {
         path.is_file()
     }
 
+    /// Wait until a helper has finished writing. The helper publishes its
+    /// result by renaming a temporary file, so the final path never exposes a
+    /// partial line.
+    fn wait_for_content(path: &Path, expected: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if fs::read_to_string(path)
+                .map(|content| content.trim() == expected)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
     fn read_trim(path: &Path) -> String {
         fs::read_to_string(path)
             .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
@@ -476,7 +600,9 @@ try {
     $spawned = $true
 } catch {
 }
-Set-Content -LiteralPath '@RESULT@' -Value ('blocker=' + ($null -ne $blocker) + ' spawned=' + $spawned)
+$temporary = '@RESULT@.tmp'
+Set-Content -LiteralPath $temporary -Value ('blocker=' + ($null -ne $blocker) + ' spawned=' + $spawned)
+Move-Item -LiteralPath $temporary -Destination '@RESULT@' -Force
 "#,
             &[
                 ("@GATE@", &script_path(&gate)),
@@ -494,13 +620,14 @@ Set-Content -LiteralPath '@RESULT@' -Value ('blocker=' + ($null -ne $blocker) + 
         assign_to_job(&job, helper.id());
         fs::write(&gate, b"go").expect("open the helper gate");
 
+        let expected = "blocker=True spawned=False";
         assert!(
-            wait_for_file(&result, Duration::from_secs(12)),
-            "the process-limit helper did not report a result"
+            wait_for_content(&result, expected, Duration::from_secs(12)),
+            "the process-limit helper did not report the expected result"
         );
         assert_eq!(
             read_trim(&result),
-            "blocker=True spawned=False",
+            expected,
             "the job's ActiveProcessLimit must deny a process past the limit"
         );
         helper.wait().expect("reap the process-limit helper");
@@ -618,7 +745,10 @@ Start-Sleep -Seconds 30
             "the grandchild must be running before the wrapper is dropped"
         );
 
-        let wrapper = ContainedChild { job, child: helper };
+        let wrapper = ContainedChild {
+            job,
+            child: Some(helper),
+        };
         drop(wrapper);
 
         assert!(

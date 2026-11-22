@@ -2,7 +2,7 @@
 //! are created only after an explicit trust action; secrets never enter config
 //! files, SQLite, tool descriptions, or logs.
 use crate::{
-    containment::{command_for, ProfileKind},
+    containment::{prepare_command, ContainedProcess, PreparedCommand, ProfileKind, SpawnPolicy},
     credentials::CredentialStore,
     domain::{
         McpConnectionStatus, McpScope, McpServerConfig, McpServerView, McpTransport, Tool,
@@ -27,7 +27,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{ChildStdin, ChildStdout},
     sync::Mutex,
 };
 
@@ -104,7 +104,7 @@ enum McpConnection {
 }
 
 struct StdioClient {
-    _child: Child,
+    _child: ContainedProcess,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
@@ -368,7 +368,16 @@ impl McpManager {
                 "Project MCP configuration contains a credential value. Replace it with an OS-stored secret reference.",
             ));
         }
-        let connected = connect_server(config.clone(), secrets, root).await;
+        let project_opted_in = match project_id {
+            Some(project_id) => database.project(project_id)?.reduced_safety_opt_in,
+            None => false,
+        };
+        let policy = SpawnPolicy::new(
+            ProfileKind::Inspect,
+            project_opted_in,
+            database.reduced_safety_allowed()?,
+        );
+        let connected = connect_server(config.clone(), secrets, root, policy).await;
         match connected {
             Ok(live) => {
                 self.connections
@@ -407,8 +416,7 @@ impl McpManager {
         if let Some(live) = self.connections.lock().await.remove(&key) {
             let mut server = live.lock().await;
             if let McpConnection::Stdio(client) = &mut server.connection {
-                let _ = client._child.kill().await;
-                let _ = client._child.wait().await;
+                let _ = client._child.kill();
             }
             server.secrets.clear();
         }
@@ -776,17 +784,16 @@ fn stdio_command(
     args: &[String],
     secrets: &BTreeMap<String, String>,
     project_root: Option<&Path>,
-) -> AppResult<Command> {
-    let mut process = command_for(ProfileKind::Inspect, command);
-    process
+    policy: SpawnPolicy,
+) -> AppResult<PreparedCommand> {
+    let mut process = prepare_command(policy, command)?
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
         .env_clear();
     if config.scope == McpScope::Project {
-        process.current_dir(project_root.ok_or_else(|| {
+        process = process.current_dir(project_root.ok_or_else(|| {
             AppError::new(
                 "project_required",
                 "Select a project before starting its MCP process.",
@@ -807,7 +814,7 @@ fn stdio_command(
         "WINDIR",
     ] {
         if let Some(value) = std::env::var_os(key) {
-            process.env(key, value);
+            process = process.env(key, value);
         }
     }
     for name in &config.env_names {
@@ -820,7 +827,7 @@ fn stdio_command(
                 ),
             )
         })?;
-        process.env(name, secret);
+        process = process.env(name, secret);
     }
     Ok(process)
 }
@@ -829,16 +836,23 @@ async fn connect_server(
     config: McpServerConfig,
     secrets: BTreeMap<String, String>,
     project_root: Option<&Path>,
+    policy: SpawnPolicy,
 ) -> AppResult<LiveServer> {
     let secret_values: Vec<_> = secrets.values().cloned().collect();
     let mut connection = match &config.transport {
         McpTransport::Stdio { command, args } => {
-            let mut process = stdio_command(&config, command, args, &secrets, project_root)?;
+            let process = stdio_command(&config, command, args, &secrets, project_root, policy)?;
             let mut child = process.spawn().map_err(|_| AppError::new("mcp_process_start", "Could not start the configured MCP process. Check the program path and arguments."))?;
-            let stdin = child.stdin.take().ok_or_else(|| {
+            let stdin = child.take_stdin().ok_or_else(|| {
                 AppError::new("mcp_process_start", "Could not open MCP process input.")
             })?;
-            let stdout = child.stdout.take().ok_or_else(|| {
+            let stdout = child.take_stdout().ok_or_else(|| {
+                AppError::new("mcp_process_start", "Could not open MCP process output.")
+            })?;
+            let stdin = ChildStdin::from_std(stdin).map_err(|_| {
+                AppError::new("mcp_process_start", "Could not open MCP process input.")
+            })?;
+            let stdout = ChildStdout::from_std(stdout).map_err(|_| {
                 AppError::new("mcp_process_start", "Could not open MCP process output.")
             })?;
             McpConnection::Stdio(Box::new(StdioClient {
@@ -1550,54 +1564,33 @@ mod tests {
         }
     }
 
+    fn test_policy() -> SpawnPolicy {
+        SpawnPolicy::uncontained_for_tests(ProfileKind::Inspect)
+    }
+
     #[test]
-    fn stdio_command_matches_direct_construction() {
+    fn blocked_policy_never_builds_an_mcp_command() {
         let root = Path::new("project-root");
-        let mut config = stdio(McpScope::Project, "server");
-        config.transport = McpTransport::Stdio {
-            command: "mcp-server".into(),
-            args: vec!["--stdio".into(), "value with spaces".into()],
-        };
-        let args = vec!["--stdio".to_owned(), "value with spaces".to_owned()];
+        let config = stdio(McpScope::Project, "server");
+        let args = vec!["--stdio".to_owned()];
         let secrets = BTreeMap::from([("TOKEN".to_owned(), "secret-value".to_owned())]);
-        let routed = stdio_command(&config, "mcp-server", &args, &secrets, Some(root)).unwrap();
-        let routed = routed.as_std();
-        let mut direct = std::process::Command::new("mcp-server");
-        direct
-            .args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .env_clear()
-            .current_dir(root);
-        for key in [
-            "PATH",
-            "HOME",
-            "LANG",
-            "TMPDIR",
-            "TEMP",
-            "TMP",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "SYSTEMROOT",
-            "WINDIR",
-        ] {
-            if let Some(value) = std::env::var_os(key) {
-                direct.env(key, value);
-            }
-        }
-        direct.env("TOKEN", "secret-value");
-        assert_eq!(routed.get_program(), direct.get_program());
+        let blocked = SpawnPolicy::new(ProfileKind::Inspect, false, true);
         assert_eq!(
-            routed.get_args().collect::<Vec<_>>(),
-            direct.get_args().collect::<Vec<_>>()
+            stdio_command(&config, "mcp-server", &args, &secrets, Some(root), blocked)
+                .err()
+                .expect("a blocked policy must not build an MCP command")
+                .code,
+            "containment_unavailable"
         );
-        assert_eq!(routed.get_current_dir(), direct.get_current_dir());
-        assert_eq!(
-            routed.get_envs().collect::<Vec<_>>(),
-            direct.get_envs().collect::<Vec<_>>()
-        );
+        assert!(stdio_command(
+            &config,
+            "mcp-server",
+            &args,
+            &secrets,
+            Some(root),
+            test_policy()
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1766,7 +1759,7 @@ input.on('line', line => {
             has_auth_token: false,
             enabled: true,
         };
-        let live = connect_server(config.clone(), BTreeMap::new(), None)
+        let live = connect_server(config.clone(), BTreeMap::new(), None, test_policy())
             .await
             .unwrap();
         let manager = McpManager::default();
