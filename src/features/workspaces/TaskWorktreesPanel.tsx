@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, CircleAlert, Copy, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, LoaderCircle, Trash2 } from 'lucide-react';
+import { ChevronDown, CircleAlert, Copy, ExternalLink, GitBranch, GitCommitHorizontal, GitMerge, GitPullRequest, LoaderCircle, Trash2 } from 'lucide-react';
 import { command } from '../../lib/ipc';
 import { normalizeError } from '../../lib/errors';
 import type { AgentSession, TaskWorktree } from '../../types/domain';
+import './TaskWorktreesPanel.css';
 
 type Props = {
   projectId: string;
@@ -19,6 +20,11 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
   const [diffs, setDiffs] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Record<string, { message: string; conflicts: string[] }>>({});
+  const [prFormFor, setPrFormFor] = useState<string | null>(null);
+  const [prTitle, setPrTitle] = useState('');
+  const [prBody, setPrBody] = useState('');
+  const [prReviewed, setPrReviewed] = useState(false);
+  const [pullRequestUrls, setPullRequestUrls] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -51,6 +57,38 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
       setDiffs(current => ({ ...current, [worktree.sessionId]: diff }));
     } catch (error) { setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } })); }
     finally { setBusyId(null); }
+  }
+
+  async function openDraftPrForm(worktree: TaskWorktree) {
+    setExpanded(worktree.sessionId);
+    setPrFormFor(worktree.sessionId);
+    setPrTitle(worktree.title || `Changes from ${worktree.branch}`);
+    setPrBody('');
+    setPrReviewed(false);
+    if (diffs[worktree.sessionId] !== undefined) return;
+    setBusyId(worktree.sessionId);
+    try {
+      const diff = await command('task_worktree_diff', { sessionId: worktree.sessionId });
+      setDiffs(current => ({ ...current, [worktree.sessionId]: diff }));
+    } catch (error) {
+      setPrFormFor(null);
+      setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } }));
+    } finally { setBusyId(null); }
+  }
+
+  async function createDraftPr(worktree: TaskWorktree) {
+    if (busyId || !prReviewed) return;
+    setBusyId(worktree.sessionId);
+    setFeedback(current => ({ ...current, [worktree.sessionId]: { message: '', conflicts: [] } }));
+    onError(null);
+    try {
+      const url = await command('create_task_draft_pr', { sessionId: worktree.sessionId, title: prTitle, body: prBody });
+      setPullRequestUrls(current => ({ ...current, [worktree.sessionId]: url }));
+      setFeedback(current => ({ ...current, [worktree.sessionId]: { message: 'Draft pull request is ready.', conflicts: [] } }));
+      setPrFormFor(null);
+    } catch (error) {
+      setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } }));
+    } finally { setBusyId(null); }
   }
 
   async function runAction(worktree: TaskWorktree, action: 'commit' | 'apply' | 'remove') {
@@ -86,6 +124,7 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
           const message = feedback[worktree.sessionId];
           const diff = diffs[worktree.sessionId];
           const canApply = worktree.available && worktree.hasCommittedChanges && !worktree.dirty && !worktree.conflicts.length && !running;
+          const canDraftPr = worktree.available && worktree.taskStatus === 'completed' && worktree.hasCommittedChanges && !worktree.dirty && !worktree.conflicts.length && !running;
           return <li className="task-worktree-row" key={worktree.sessionId}>
             <div className="task-worktree-topline"><strong title={worktree.title}>{worktree.title || 'New task'}</strong><span className={`task-worktree-state${worktree.dirty ? ' is-dirty' : worktree.hasCommittedChanges ? ' is-ready' : ''}`}><i />{!worktree.available ? 'Missing' : worktree.conflicts.length ? 'Conflicts' : worktree.dirty ? 'Uncommitted' : worktree.hasCommittedChanges ? 'Ready to apply' : running ? 'Working' : 'Clean'}</span></div>
             <div className="task-worktree-branch"><GitBranch size={12} /><code>{worktree.branch}</code><span>from</span><code>{worktree.baseBranch}</code></div>
@@ -98,6 +137,7 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
               <button type="button" onClick={() => void showDiff(worktree)} disabled={!worktree.available || isBusy}><GitPullRequest size={12} />Diff</button>
               <button type="button" onClick={() => void runAction(worktree, 'commit')} disabled={!worktree.available || !worktree.dirty || !!worktree.conflicts.length || running || !!busyId} title={worktree.dirty ? 'Commit all changes in this isolated task checkout' : 'No uncommitted task changes'}><GitCommitHorizontal size={12} />Commit</button>
               <button type="button" className="is-primary" onClick={() => void runAction(worktree, 'apply')} disabled={!canApply || !!busyId} title={worktree.dirty ? 'Commit task changes before applying them' : 'Merge this task branch into the current project branch'}><GitMerge size={12} />Apply</button>
+              <button type="button" onClick={() => void openDraftPrForm(worktree)} disabled={!canDraftPr || !!busyId} title="Review the task diff, then push this branch and create a draft pull request"><GitPullRequest size={12} />Review &amp; draft PR</button>
               <button type="button" onClick={() => void runAction(worktree, 'remove')} disabled={!worktree.available || worktree.dirty || running || !!busyId} title={worktree.dirty ? 'Commit or apply the uncommitted changes before removing this workspace' : 'Remove this workspace and keep its task branch'}>{isBusy && busyId === worktree.sessionId ? <LoaderCircle size={12} className="spin" /> : <Trash2 size={12} />}Remove workspace</button>
             </div>
             {worktree.dirty && <p className="task-worktree-protection"><CircleAlert size={11} />Uncommitted changes are protected. Commit or apply them before removing this checkout.</p>}
@@ -105,6 +145,15 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
               <div><strong>Changes from {worktree.baseBranch}</strong><button type="button" aria-label="Copy task diff" disabled={!diff} onClick={() => diff && void navigator.clipboard.writeText(diff)}><Copy size={12} />Copy</button><button type="button" aria-label="Close task diff" onClick={() => setExpanded(null)}><ChevronDown size={12} /></button></div>
               {isBusy && !diff ? <p>Loading diff…</p> : <pre>{diff || 'No changes to show yet.'}</pre>}
             </div>}
+            {prFormFor === worktree.sessionId && <form className="task-worktree-pr-form" onSubmit={event => { event.preventDefault(); void createDraftPr(worktree); }}>
+              <strong>Review before creating a draft PR</strong>
+              <p>This pushes <code>{worktree.branch}</code> to <code>origin</code>. The pull request stays in draft.</p>
+              <label>Title<input value={prTitle} maxLength={200} onChange={event => setPrTitle(event.target.value)} required /></label>
+              <label>Description<textarea value={prBody} maxLength={10000} rows={4} onChange={event => setPrBody(event.target.value)} placeholder="Summarize the changes and note anything reviewers should check." /></label>
+              <label className="task-worktree-pr-review"><input type="checkbox" checked={prReviewed} onChange={event => setPrReviewed(event.target.checked)} />I reviewed the diff above.</label>
+              <div className="task-worktree-pr-actions"><button type="button" onClick={() => setPrFormFor(null)} disabled={isBusy}>Cancel</button><button type="submit" className="is-primary" disabled={!prReviewed || !prTitle.trim() || !!busyId}>{isBusy ? <LoaderCircle size={12} className="spin" /> : <GitPullRequest size={12} />}Push &amp; create draft</button></div>
+            </form>}
+            {pullRequestUrls[worktree.sessionId] && <a className="task-worktree-pr-link" href={pullRequestUrls[worktree.sessionId]} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} />Open draft pull request</a>}
           </li>;
         })}</ul>
         : <p className="project-section-empty">Tasks use the project folder by default. Choose “Create isolated workspace” in the composer when you want parallel work on a separate checkout.</p>}

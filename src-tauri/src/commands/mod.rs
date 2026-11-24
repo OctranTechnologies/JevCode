@@ -1581,6 +1581,27 @@ pub async fn commit_task_worktree(
 }
 
 #[tauri::command]
+pub async fn create_task_draft_pr(
+    session_id: String,
+    title: String,
+    body: String,
+    state: State<'_, SharedState>,
+) -> AppResult<String> {
+    ensure_task_idle(&state, &session_id)?;
+    let session = state.database.session(&session_id)?;
+    let project = state.database.project(&session.project_id)?;
+    let policy = spawn_policy(&state, &project, containment::ProfileKind::EditWithNetwork)?;
+    git::worktree::create_draft_pull_request(
+        policy,
+        &task_repository_root(&project)?,
+        &session,
+        &title,
+        &body,
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn apply_task_worktree(
     session_id: String,
     state: State<'_, SharedState>,

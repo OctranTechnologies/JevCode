@@ -992,6 +992,11 @@ pub const SPAWN_SITES: &[SpawnSite] = &[
         kind: ProfileKind::Edit,
     },
     SpawnSite {
+        path: "git/worktree.rs",
+        function: "gh_output",
+        kind: ProfileKind::EditWithNetwork,
+    },
+    SpawnSite {
         path: "review.rs",
         function: "unstage_task_changes",
         kind: ProfileKind::Edit,

@@ -1,6 +1,6 @@
 use super::{branches, git_args, output};
 use crate::{
-    containment::SpawnPolicy,
+    containment::{collect_output, prepare_command, ProfileKind, SpawnPolicy},
     domain::{AgentSession, ChangedFile, TaskWorktree},
     error::{AppError, AppResult},
 };
@@ -12,6 +12,92 @@ use std::{
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_DIFF_BYTES: usize = 2 * 1024 * 1024;
+const GH_TIMEOUT: Duration = Duration::from_secs(45);
+
+async fn gh_output(
+    policy: SpawnPolicy,
+    root: &Path,
+    args: &[String],
+) -> AppResult<std::process::Output> {
+    if policy.kind != ProfileKind::EditWithNetwork {
+        return Err(AppError::new(
+            "github_network_permission_required",
+            "Creating a draft pull request requires the project's network-enabled edit profile.",
+        ));
+    }
+    let process = prepare_command(policy, "gh")?
+        .args(args)
+        .current_dir(root)
+        .env("GH_PROMPT_DISABLED", "1")
+        .spawn()
+        .map_err(|_| {
+            AppError::new(
+                "github_cli_unavailable",
+                "GitHub CLI (gh) is unavailable. Install it and sign in with `gh auth login`.",
+            )
+        })?;
+    match tokio::time::timeout(GH_TIMEOUT, collect_output(process)).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(_)) => Err(AppError::new(
+            "github_cli_unavailable",
+            "GitHub CLI could not be started. Install it and sign in with `gh auth login`.",
+        )),
+        Err(_) => Err(AppError::new(
+            "github_cli_timeout",
+            "GitHub CLI took too long to respond. Check your connection and try again.",
+        )),
+    }
+}
+
+fn pull_request_url(output: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(output).lines().find_map(|line| {
+        let candidate = line.trim().trim_matches(['<', '>', '`']);
+        let rest = candidate.strip_prefix("https://")?;
+        if candidate.chars().any(char::is_control) || rest.contains(char::is_whitespace) {
+            return None;
+        }
+        let segments = rest.split('/').collect::<Vec<_>>();
+        let pull_index = segments.iter().rposition(|part| *part == "pull")?;
+        if pull_index < 2
+            || segments[pull_index + 1..].first().is_none_or(|number| {
+                number.is_empty() || !number.chars().all(|c| c.is_ascii_digit())
+            })
+        {
+            return None;
+        }
+        Some(candidate.to_owned())
+    })
+}
+
+fn validated_pr_fields(title: &str, body: &str) -> AppResult<(String, String)> {
+    let title = title.trim();
+    let body = body.trim();
+    if title.is_empty() || title.chars().count() > 200 || title.chars().any(char::is_control) {
+        return Err(AppError::new(
+            "invalid_pull_request_title",
+            "A pull request title must contain 1 to 200 characters.",
+        ));
+    }
+    if body.chars().count() > 10_000 || body.contains('\0') {
+        return Err(AppError::new(
+            "invalid_pull_request_body",
+            "A pull request description must be under 10,000 characters and contain valid text.",
+        ));
+    }
+    Ok((title.to_owned(), body.to_owned()))
+}
+
+fn gh_pr_view_args(branch: &str) -> [String; 7] {
+    [
+        "pr".into(),
+        "view".into(),
+        branch.into(),
+        "--json".into(),
+        "url".into(),
+        "--jq".into(),
+        ".url".into(),
+    ]
+}
 
 fn git_text(stdout: &[u8]) -> String {
     String::from_utf8_lossy(stdout).trim().to_owned()
@@ -508,6 +594,169 @@ pub async fn commit(
     Ok(())
 }
 
+pub async fn create_draft_pull_request(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+    title: &str,
+    body: &str,
+) -> AppResult<String> {
+    let (title, body) = validated_pr_fields(title, body)?;
+    if session.status != crate::domain::SessionStatus::Completed {
+        return Err(AppError::new(
+            "task_not_completed",
+            "Finish the task before creating a draft pull request.",
+        ));
+    }
+    let info = inspect(policy, repository_root, session).await?;
+    if !info.available {
+        return Err(AppError::new(
+            "worktree_unavailable",
+            "This task workspace was moved or removed.",
+        ));
+    }
+    if !info.conflicts.is_empty() {
+        return Err(AppError::new(
+            "worktree_conflicted",
+            "Resolve the task workspace conflicts before creating a pull request.",
+        ));
+    }
+    if info.dirty {
+        return Err(AppError::new(
+            "worktree_has_changes",
+            "Commit the task workspace changes before creating a pull request.",
+        ));
+    }
+    if !info.has_committed_changes {
+        return Err(AppError::new(
+            "no_task_changes",
+            "This task has no committed changes to propose.",
+        ));
+    }
+    let worktree_path = session.worktree_path.as_deref().ok_or_else(|| {
+        AppError::new(
+            "not_isolated",
+            "This task uses the project folder directly.",
+        )
+    })?;
+    let path = validate(policy, repository_root, Path::new(worktree_path)).await?;
+    let branch = session.git_branch.as_deref().ok_or_else(|| {
+        AppError::new(
+            "worktree_metadata_missing",
+            "This task is missing its branch.",
+        )
+    })?;
+    let branch_check = output(
+        policy,
+        &path,
+        &git_args(&["check-ref-format", "--branch", branch]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    if !branch_check.status.success() {
+        return Err(AppError::new(
+            "invalid_task_branch",
+            "The task branch name is invalid. Refresh the task workspace and try again.",
+        ));
+    }
+    let base_branch_check = output(
+        policy,
+        &path,
+        &git_args(&["check-ref-format", "--branch", &info.base_branch]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    if !base_branch_check.status.success() || info.base_branch == branch {
+        return Err(AppError::new(
+            "invalid_task_base_branch",
+            "The task's base branch is invalid. Refresh the task workspace and try again.",
+        ));
+    }
+    let current_branch = output(
+        policy,
+        &path,
+        &git_args(&["rev-parse", "--abbrev-ref", "HEAD"]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    if !current_branch.status.success() || git_text(&current_branch.stdout) != branch {
+        return Err(AppError::new(
+            "task_branch_mismatch",
+            "The task workspace is no longer checked out on its recorded branch.",
+        ));
+    }
+
+    let auth = gh_output(policy, &path, &git_args(&["auth", "status"])).await?;
+    if !auth.status.success() {
+        return Err(AppError::new(
+            "github_not_authenticated",
+            "Sign in to GitHub CLI with `gh auth login`, then try again.",
+        ));
+    }
+    let view_args = gh_pr_view_args(branch);
+    let existing = gh_output(policy, &path, &view_args).await?;
+    if existing.status.success() {
+        return pull_request_url(&existing.stdout).ok_or_else(|| {
+            AppError::new(
+                "github_pr_url_missing",
+                "GitHub found a pull request for this branch but did not return its URL.",
+            )
+        });
+    }
+
+    let push_args = [
+        "push".into(),
+        "--set-upstream".into(),
+        "origin".into(),
+        branch.into(),
+    ];
+    let push = output(policy, &path, &push_args, GH_TIMEOUT).await?;
+    if !push.status.success() {
+        return Err(AppError::new(
+            "task_branch_push_failed",
+            "Git could not push the task branch to origin. Check the remote and your Git credentials.",
+        ));
+    }
+
+    let create_args = [
+        "pr".into(),
+        "create".into(),
+        "--draft".into(),
+        "--title".into(),
+        title,
+        "--body".into(),
+        body,
+        "--base".into(),
+        info.base_branch,
+        "--head".into(),
+        branch.into(),
+    ];
+    let created = gh_output(policy, &path, &create_args).await?;
+    if created.status.success() {
+        return pull_request_url(&created.stdout).ok_or_else(|| {
+            AppError::new(
+                "github_pr_url_missing",
+                "GitHub created the draft pull request but did not return its URL.",
+            )
+        });
+    }
+
+    let view_args = gh_pr_view_args(branch);
+    let existing = gh_output(policy, &path, &view_args).await?;
+    if existing.status.success() {
+        return pull_request_url(&existing.stdout).ok_or_else(|| {
+            AppError::new(
+                "github_pr_url_missing",
+                "GitHub found a pull request for this branch but did not return its URL.",
+            )
+        });
+    }
+    Err(AppError::new(
+        "github_pr_create_failed",
+        "GitHub could not create a draft pull request. Check that origin points to a GitHub repository and try again.",
+    ))
+}
+
 pub async fn apply(
     policy: SpawnPolicy,
     repository_root: &Path,
@@ -736,6 +985,86 @@ mod tests {
             context_resolver_version: crate::guidance::RESOLVER_VERSION,
             context_root: crate::domain::GuidanceRoot::Project,
         }
+    }
+
+    #[test]
+    fn pull_request_fields_are_trimmed_and_bounded() {
+        assert_eq!(
+            validated_pr_fields("  Add task inbox  ", "  Summary\n\nDetails  ").unwrap(),
+            ("Add task inbox".into(), "Summary\n\nDetails".into())
+        );
+        assert_eq!(
+            validated_pr_fields("  ", "body").unwrap_err().code,
+            "invalid_pull_request_title"
+        );
+        assert_eq!(
+            validated_pr_fields(&"x".repeat(201), "").unwrap_err().code,
+            "invalid_pull_request_title"
+        );
+        assert_eq!(
+            validated_pr_fields("title", &"x".repeat(10_001))
+                .unwrap_err()
+                .code,
+            "invalid_pull_request_body"
+        );
+        assert_eq!(
+            validated_pr_fields("bad\ntitle", "").unwrap_err().code,
+            "invalid_pull_request_title"
+        );
+        assert_eq!(
+            validated_pr_fields("title", "bad\0body").unwrap_err().code,
+            "invalid_pull_request_body"
+        );
+    }
+
+    #[test]
+    fn pull_request_url_parser_accepts_https_pull_request_links_only() {
+        assert_eq!(
+            pull_request_url(b"https://github.com/octran/example/pull/42\n"),
+            Some("https://github.com/octran/example/pull/42".into())
+        );
+        assert_eq!(
+            pull_request_url(b"https://git.example.com/team/project/pull/7\n"),
+            Some("https://git.example.com/team/project/pull/7".into())
+        );
+        assert_eq!(
+            pull_request_url(b"http://github.com/octran/example/pull/42"),
+            None
+        );
+        assert_eq!(
+            pull_request_url(b"https://github.com/octran/example/issues/42"),
+            None
+        );
+        assert_eq!(
+            pull_request_url(b"https://github.com/octran/example/pull/nope"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn draft_pull_request_refuses_uncommitted_task_changes_before_network_access() {
+        let temp = tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
+        let (repository, base) = repository(&temp);
+        let worktree = temp.path().join("draft-pr-dirty-task");
+        let branch = "jevcode/draft-pr-dirty-task";
+        create(test_policy(), &repository, &worktree, &base, branch)
+            .await
+            .unwrap();
+        std::fs::write(worktree.join("src.txt"), "uncommitted task edit\n").unwrap();
+        let task = session(&worktree, &base, branch);
+        assert_eq!(
+            create_draft_pull_request(
+                test_policy(),
+                &repository,
+                &task,
+                "Draft review",
+                "Review the task diff.",
+            )
+            .await
+            .unwrap_err()
+            .code,
+            "worktree_has_changes"
+        );
     }
 
     #[tokio::test]

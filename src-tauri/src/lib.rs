@@ -147,6 +147,7 @@ pub fn run() {
             commands::project_task_worktrees,
             commands::task_worktree_diff,
             commands::commit_task_worktree,
+            commands::create_task_draft_pr,
             commands::apply_task_worktree,
             commands::remove_task_worktree,
             commands::create_session,
