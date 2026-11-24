@@ -1,7 +1,10 @@
 use super::{branches, git_args, output};
 use crate::{
     containment::{collect_output, prepare_command, ProfileKind, SpawnPolicy},
-    domain::{AgentSession, ChangedFile, TaskWorktree},
+    domain::{
+        now, AgentSession, ChangedFile, TaskCheckState, TaskPullRequestCheck,
+        TaskPullRequestReviewState, TaskPullRequestState, TaskPullRequestStatus, TaskWorktree,
+    },
     error::{AppError, AppResult},
 };
 use std::{
@@ -97,6 +100,104 @@ fn gh_pr_view_args(branch: &str) -> [String; 7] {
         "--jq".into(),
         ".url".into(),
     ]
+}
+
+fn secure_https_url(value: &str) -> Option<String> {
+    let rest = value.strip_prefix("https://")?;
+    if rest.is_empty() || rest.chars().any(char::is_control) || rest.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+fn task_pull_request_status(output: &[u8]) -> AppResult<Option<TaskPullRequestStatus>> {
+    let value: serde_json::Value = serde_json::from_slice(output).map_err(|_| {
+        AppError::new(
+            "github_status_invalid",
+            "GitHub returned an unreadable pull request status.",
+        )
+    })?;
+    let Some(pr) = value.as_array().and_then(|items| items.first()) else {
+        return Ok(None);
+    };
+    let url = pr["url"]
+        .as_str()
+        .and_then(secure_https_url)
+        .ok_or_else(|| {
+            AppError::new(
+                "github_status_invalid",
+                "GitHub returned a pull request without a safe URL.",
+            )
+        })?;
+    let state = match pr["state"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "OPEN" => TaskPullRequestState::Open,
+        "CLOSED" => TaskPullRequestState::Closed,
+        "MERGED" => TaskPullRequestState::Merged,
+        _ => {
+            return Err(AppError::new(
+                "github_status_invalid",
+                "GitHub returned an unknown pull request state.",
+            ));
+        }
+    };
+    let review_state = match pr["reviewDecision"].as_str().unwrap_or_default() {
+        "APPROVED" => Some(TaskPullRequestReviewState::Approved),
+        "CHANGES_REQUESTED" => Some(TaskPullRequestReviewState::ChangesRequested),
+        "REVIEW_REQUIRED" => Some(TaskPullRequestReviewState::ReviewRequired),
+        "" => None,
+        _ => Some(TaskPullRequestReviewState::Unknown),
+    };
+    let checks = pr["statusCheckRollup"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(20)
+        .map(|check| {
+            let name = check["name"]
+                .as_str()
+                .or_else(|| check["context"].as_str())
+                .or_else(|| check["workflowName"].as_str())
+                .unwrap_or("Check")
+                .chars()
+                .take(120)
+                .collect();
+            let raw_state = check["conclusion"]
+                .as_str()
+                .or_else(|| check["state"].as_str())
+                .or_else(|| check["status"].as_str())
+                .unwrap_or_default()
+                .to_ascii_uppercase();
+            let state = match raw_state.as_str() {
+                "SUCCESS" | "SUCCESSFUL" | "PASSED" => TaskCheckState::Passed,
+                "FAILURE" | "FAILED" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED"
+                | "STARTUP_FAILURE" | "STALE" => TaskCheckState::Failed,
+                "PENDING" | "QUEUED" | "IN_PROGRESS" | "EXPECTED" | "WAITING" => {
+                    TaskCheckState::Pending
+                }
+                "SKIPPED" | "NEUTRAL" => TaskCheckState::Skipped,
+                "CANCELLED" | "CANCELED" => TaskCheckState::Cancelled,
+                _ => TaskCheckState::Unknown,
+            };
+            let url = check["detailsUrl"]
+                .as_str()
+                .or_else(|| check["targetUrl"].as_str())
+                .and_then(secure_https_url);
+            TaskPullRequestCheck { name, state, url }
+        })
+        .collect();
+    Ok(Some(TaskPullRequestStatus {
+        url,
+        state,
+        is_draft: pr["isDraft"].as_bool().unwrap_or(false),
+        review_state,
+        checks,
+        refreshed_at: now(),
+    }))
 }
 
 fn git_text(stdout: &[u8]) -> String {
@@ -757,6 +858,75 @@ pub async fn create_draft_pull_request(
     ))
 }
 
+pub async fn pull_request_status(
+    policy: SpawnPolicy,
+    repository_root: &Path,
+    session: &AgentSession,
+) -> AppResult<Option<TaskPullRequestStatus>> {
+    let info = inspect(policy, repository_root, session).await?;
+    if !info.available {
+        return Err(AppError::new(
+            "worktree_unavailable",
+            "This task workspace was moved or removed.",
+        ));
+    }
+    let worktree_path = session.worktree_path.as_deref().ok_or_else(|| {
+        AppError::new(
+            "not_isolated",
+            "This task uses the project folder directly.",
+        )
+    })?;
+    let path = validate(policy, repository_root, Path::new(worktree_path)).await?;
+    let branch = session.git_branch.as_deref().ok_or_else(|| {
+        AppError::new(
+            "worktree_metadata_missing",
+            "This task is missing its branch.",
+        )
+    })?;
+    let branch_check = output(
+        policy,
+        &path,
+        &git_args(&["check-ref-format", "--branch", branch]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    if !branch_check.status.success() {
+        return Err(AppError::new(
+            "invalid_task_branch",
+            "The task branch name is invalid. Refresh the task workspace and try again.",
+        ));
+    }
+    let auth = gh_output(policy, &path, &git_args(&["auth", "status"])).await?;
+    if !auth.status.success() {
+        return Err(AppError::new(
+            "github_not_authenticated",
+            "Sign in to GitHub CLI with `gh auth login`, then try again.",
+        ));
+    }
+    let args = [
+        "pr".into(),
+        "list".into(),
+        "--head".into(),
+        branch.into(),
+        "--state".into(),
+        "all".into(),
+        "--limit".into(),
+        "1".into(),
+        "--json".into(),
+        "url,state,isDraft,reviewDecision,statusCheckRollup".into(),
+        "--jq".into(),
+        ".[:1] | map({url,state,isDraft,reviewDecision,statusCheckRollup:(.statusCheckRollup[:20] // [])})".into(),
+    ];
+    let result = gh_output(policy, &path, &args).await?;
+    if !result.status.success() {
+        return Err(AppError::new(
+            "github_status_failed",
+            "GitHub could not read this branch's pull request status. Check your connection and try again.",
+        ));
+    }
+    task_pull_request_status(&result.stdout)
+}
+
 pub async fn apply(
     policy: SpawnPolicy,
     repository_root: &Path,
@@ -1038,6 +1208,42 @@ mod tests {
         assert_eq!(
             pull_request_url(b"https://github.com/octran/example/pull/nope"),
             None
+        );
+    }
+
+    #[test]
+    fn github_pull_request_status_normalizes_review_and_check_states() {
+        let status = task_pull_request_status(
+            br#"[{"url":"https://github.com/octran/example/pull/42","state":"OPEN","isDraft":true,"reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[{"name":"CI","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://github.com/octran/example/actions/runs/1"},{"context":"lint","state":"PENDING","targetUrl":"http://example.invalid/check"}]}]"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(status.state, TaskPullRequestState::Open);
+        assert!(status.is_draft);
+        assert_eq!(
+            status.review_state,
+            Some(TaskPullRequestReviewState::ReviewRequired)
+        );
+        assert_eq!(status.checks.len(), 2);
+        assert_eq!(status.checks[0].name, "CI");
+        assert_eq!(status.checks[0].state, TaskCheckState::Passed);
+        assert_eq!(
+            status.checks[0].url.as_deref(),
+            Some("https://github.com/octran/example/actions/runs/1")
+        );
+        assert_eq!(status.checks[1].name, "lint");
+        assert_eq!(status.checks[1].state, TaskCheckState::Pending);
+        assert_eq!(status.checks[1].url, None);
+    }
+
+    #[test]
+    fn github_pull_request_status_handles_no_pr_and_rejects_unsafe_links() {
+        assert_eq!(task_pull_request_status(b"[]").unwrap(), None);
+        assert_eq!(
+            task_pull_request_status(br#"[{"url":"javascript:alert(1)","state":"OPEN"}]"#)
+                .unwrap_err()
+                .code,
+            "github_status_invalid"
         );
     }
 

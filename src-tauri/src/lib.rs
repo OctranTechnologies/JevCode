@@ -148,6 +148,7 @@ pub fn run() {
             commands::task_worktree_diff,
             commands::commit_task_worktree,
             commands::create_task_draft_pr,
+            commands::task_worktree_pull_request_status,
             commands::apply_task_worktree,
             commands::remove_task_worktree,
             commands::create_session,

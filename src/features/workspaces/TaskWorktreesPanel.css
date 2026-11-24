@@ -31,3 +31,14 @@
 .task-worktree-pr-actions button:disabled { opacity: .45; }
 .task-worktree-pr-link { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--wb-accent); font-size: 11px; text-decoration: none; }
 .task-worktree-pr-link:hover { text-decoration: underline; }
+.task-worktree-pr-status { display: grid; justify-items: start; gap: 4px; margin-top: 7px; color: var(--wb-muted); font-size: 11px; }
+.task-worktree-pr-state { color: var(--wb-muted-strong); text-transform: capitalize; }
+.task-worktree-pr-status > small { color: var(--wb-muted); font-size: 10px; }
+.task-worktree-pr-status ul { display: grid; gap: 3px; width: 100%; margin: 2px 0; padding: 0; list-style: none; }
+.task-worktree-pr-status li { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.task-worktree-pr-status li > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; color: var(--wb-muted-strong); text-overflow: ellipsis; white-space: nowrap; }
+.task-worktree-pr-status li small { color: var(--wb-muted); font-size: 10px; text-transform: capitalize; }
+.task-worktree-check-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--wb-border-strong); }
+.task-worktree-check-dot.is-passed { background: var(--wb-success); }
+.task-worktree-check-dot.is-failed { background: var(--wb-danger); }
+.task-worktree-check-dot.is-pending { background: var(--wb-warning); }

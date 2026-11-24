@@ -483,6 +483,11 @@ export interface TaskWorktreeAction {
   conflicts: string[];
   message: string;
 }
+export type TaskCheckState = 'passed' | 'failed' | 'pending' | 'skipped' | 'cancelled' | 'unknown';
+export type TaskPullRequestReviewState = 'approved' | 'changes_requested' | 'review_required' | 'unknown';
+export type TaskPullRequestState = 'open' | 'closed' | 'merged';
+export interface TaskPullRequestCheck { name: string; state: TaskCheckState; url: string | null }
+export interface TaskPullRequestStatus { url: string; state: TaskPullRequestState; isDraft: boolean; reviewState: TaskPullRequestReviewState | null; checks: TaskPullRequestCheck[]; refreshedAt: string }
 export interface TerminalResult { output: string; exitCode: number | null; timedOut: boolean }
 export interface UsageRecord {
   id: string;

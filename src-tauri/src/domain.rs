@@ -1083,6 +1083,53 @@ pub struct TaskWorktreeAction {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskCheckState {
+    Passed,
+    Failed,
+    Pending,
+    Skipped,
+    Cancelled,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPullRequestReviewState {
+    Approved,
+    ChangesRequested,
+    ReviewRequired,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPullRequestState {
+    Open,
+    Closed,
+    Merged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPullRequestCheck {
+    pub name: String,
+    pub state: TaskCheckState,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPullRequestStatus {
+    pub url: String,
+    pub state: TaskPullRequestState,
+    pub is_draft: bool,
+    pub review_state: Option<TaskPullRequestReviewState>,
+    pub checks: Vec<TaskPullRequestCheck>,
+    pub refreshed_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalResult {
