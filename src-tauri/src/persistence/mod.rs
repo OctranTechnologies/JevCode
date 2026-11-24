@@ -1990,6 +1990,47 @@ mod tests {
     }
 
     #[test]
+    fn child_task_link_survives_restart_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("child-task.sqlite");
+        let mut session: AgentSession =
+            serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
+        session.parent_session_id = Some("parent-task".into());
+        session.status = SessionStatus::Working;
+        {
+            let database = Database::open(&path).unwrap();
+            database
+                .save_project(&Project {
+                    id: session.project_id.clone(),
+                    workspace_id: "local".into(),
+                    name: "Delegation recovery test".into(),
+                    path: root.path().display().to_string(),
+                    repository_root: None,
+                    active_branch: None,
+                    last_opened_at: now(),
+                    project_instructions: String::new(),
+                    preferred_model: None,
+                    permissions: PermissionPolicy::default(),
+                    is_recent: true,
+                    reduced_safety_opt_in: false,
+                    guidance_precedence: crate::domain::GuidancePrecedence::default(),
+                    created_at: now(),
+                })
+                .unwrap();
+            database.save_session(&session).unwrap();
+        }
+
+        let reopened = Database::open(&path).unwrap();
+        let recovered = reopened.session(&session.id).unwrap();
+        assert_eq!(recovered.parent_session_id.as_deref(), Some("parent-task"));
+        assert_eq!(recovered.status, SessionStatus::Failed);
+        assert!(recovered
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("app closed")));
+    }
+
+    #[test]
     fn queued_follow_ups_are_fifo_durable_and_start_as_user_turns() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("queued-follow-ups.sqlite");

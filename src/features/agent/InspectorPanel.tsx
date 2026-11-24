@@ -11,15 +11,17 @@ import { TranscriptExport } from './TranscriptExport';
 import { TranscriptImport } from './TranscriptImport';
 import { UncontainedBadge } from '../workspaces/ContainmentBadge';
 import { FileName } from '../../components/FileName';
+import './childTask.css';
 
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
 export function InspectorPanel({
-  project, branch, session, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated,
+  project, branch, session, sessions, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated, onSelectSession,
 }: {
   project?: Project;
   branch: string | null;
   session?: AgentSession;
+  sessions: AgentSession[];
   provider?: Provider;
   demo: boolean;
   open: boolean;
@@ -37,6 +39,7 @@ export function InspectorPanel({
   onAllAction: (action: ReviewAllAction) => void;
   onStartPlan: (plan: TaskPlan) => void;
   onSessionUpdated: (session: AgentSession) => void;
+  onSelectSession: (session: AgentSession) => void;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: ReactNode; count?: string }[] = [
     { id: 'changes', label: 'Files', icon: <FileCode2 size={13} />, count: demo ? '2' : review?.files.length ? String(review.files.length) : undefined },
@@ -67,12 +70,29 @@ export function InspectorPanel({
       {tab === 'context' && <ContextPanel project={project} branch={branch} session={session} provider={provider} />}
       {tab === 'task' && <>
         <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />
+        <ChildTaskRelations session={session} sessions={sessions} onSelectSession={onSelectSession} />
         <TaskPlanPanel session={session} projectId={project?.id} onStart={onStartPlan} />
         <TranscriptExport session={demo ? undefined : session} projectId={project?.id} />
         <TranscriptImport session={demo ? undefined : session} projectId={project?.id} onImported={onSessionUpdated} />
       </>}
     </div>
   </aside>;
+}
+
+function ChildTaskRelations({ session, sessions, onSelectSession }: {
+  session?: AgentSession;
+  sessions: AgentSession[];
+  onSelectSession: (session: AgentSession) => void;
+}) {
+  if (!session) return null;
+  const parent = session.parentSessionId ? sessions.find(item => item.id === session.parentSessionId) : undefined;
+  const children = sessions.filter(item => item.parentSessionId === session.id && !item.archivedAt);
+  if (!parent && children.length === 0) return null;
+  return <section className="child-task-relations" aria-label="Related tasks">
+    <strong>{parent ? 'Parent task' : 'Delegated tasks'}</strong>
+    {parent && <button type="button" onClick={() => onSelectSession(parent)}><span className={`child-task-status is-${parent.status}`} /> <span>{parent.title || 'New task'}</span><small>{parent.status.replaceAll('_', ' ')}</small></button>}
+    {children.map(child => <button type="button" key={child.id} onClick={() => onSelectSession(child)}><span className={`child-task-status is-${child.status}`} /><span>{child.title || 'New task'}</span><small>{child.status.replaceAll('_', ' ')}</small></button>)}
+  </section>;
 }
 
 function ChangesPanel({ demo, session, review, selectedPath, busy, result, onSelect, onFileAction, onAllAction }: { demo: boolean; result: string | null; session?: AgentSession; review: SessionChanges | null; selectedPath: string | null; busy: boolean; onSelect: (path: string) => void; onFileAction: (path: string, action: ReviewFileAction) => void; onAllAction: (action: ReviewAllAction) => void }) {

@@ -1123,6 +1123,7 @@ mod tests {
             task_mode: crate::domain::TaskMode::Agent,
             pinned: false,
             queued_follow_ups: Vec::new(),
+            parent_session_id: None,
             id: "integration-session".into(),
             project_id: "integration-project".into(),
             provider_id: "preview".into(),

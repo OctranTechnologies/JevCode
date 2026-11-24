@@ -42,7 +42,7 @@ interface Commands {
   task_worktree_pull_request_status: { args: { sessionId: string }; result: TaskPullRequestStatus | null };
   apply_task_worktree: { args: { sessionId: string }; result: TaskWorktreeAction };
   remove_task_worktree: { args: { sessionId: string }; result: AgentSession };
-  create_session: { args: { input: { taskMode?: 'agent' | 'plan'; projectId: string; providerId: string; modelId: string; permissionPolicy: PermissionPolicy; workspaceMode?: WorkspaceMode; baseBranch?: string | null; taskRequest?: string } }; result: AgentSession };
+  create_session: { args: { input: { taskMode?: 'agent' | 'plan'; projectId: string; providerId: string; modelId: string; permissionPolicy: PermissionPolicy; workspaceMode?: WorkspaceMode; baseBranch?: string | null; taskRequest?: string; parentSessionId?: string | null } }; result: AgentSession };
   update_session_model: { args: { input: { sessionId: string; providerId: string; modelId: string } }; result: AgentSession };
   set_default_model: { args: { selection: ModelReference | null }; result: ModelPreferences };
   toggle_model_favorite: { args: { selection: ModelReference }; result: ModelPreferences };

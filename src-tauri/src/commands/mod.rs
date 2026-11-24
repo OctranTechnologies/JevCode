@@ -1674,6 +1674,58 @@ pub struct CreateSession {
     base_branch: Option<String>,
     #[serde(default)]
     task_request: Option<String>,
+    #[serde(default)]
+    parent_session_id: Option<String>,
+}
+
+fn child_parent_branch(
+    parent: &AgentSession,
+    project_id: &str,
+    workspace_mode: WorkspaceMode,
+    requested_base: Option<&str>,
+) -> AppResult<String> {
+    if workspace_mode != WorkspaceMode::Isolated {
+        return Err(AppError::new(
+            "child_task_requires_worktree",
+            "A delegated task must use its own isolated workspace.",
+        ));
+    }
+    if parent.project_id != project_id {
+        return Err(AppError::new(
+            "child_task_project_mismatch",
+            "A delegated task must stay in the parent task's project.",
+        ));
+    }
+    if parent.workspace_mode != WorkspaceMode::Isolated
+        || parent.worktree_path.is_none()
+        || parent.git_branch.is_none()
+    {
+        return Err(AppError::new(
+            "child_task_parent_not_isolated",
+            "The parent task needs an isolated Git workspace before it can have a child task.",
+        ));
+    }
+    if matches!(
+        &parent.status,
+        SessionStatus::Queued
+            | SessionStatus::Planning
+            | SessionStatus::Working
+            | SessionStatus::WaitingForPermission
+            | SessionStatus::WaitingForUser
+    ) {
+        return Err(AppError::new(
+            "child_task_parent_busy",
+            "Stop the parent task before creating a child task.",
+        ));
+    }
+    let branch = parent.git_branch.as_deref().expect("checked above");
+    if requested_base.is_some_and(|requested| requested != branch) {
+        return Err(AppError::new(
+            "child_task_base_mismatch",
+            "A child task must start from its parent task's branch.",
+        ));
+    }
+    Ok(branch.to_owned())
 }
 
 /// The guidance a task starts with, read from the folder the task works in.
@@ -1728,6 +1780,38 @@ pub async fn create_session(
     let project = state.database.project(&input.project_id)?;
     let inspect_policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
     let edit_policy = spawn_policy(&state, &project, containment::ProfileKind::Edit)?;
+    let parent_session = if let Some(parent_id) = input.parent_session_id.as_deref() {
+        let parent = state.database.session(parent_id)?;
+        child_parent_branch(
+            &parent,
+            &project.id,
+            input.workspace_mode,
+            input.base_branch.as_deref(),
+        )?;
+        let repository_root = project.repository_root.as_deref().ok_or_else(|| {
+            AppError::new(
+                "not_git_repository",
+                "Delegated tasks need a registered Git repository.",
+            )
+        })?;
+        let worktree =
+            git::worktree::inspect(inspect_policy, Path::new(repository_root), &parent).await?;
+        if !worktree.available {
+            return Err(AppError::new(
+                "child_task_parent_workspace_missing",
+                "The parent task's workspace is unavailable. Reopen or restore it before delegating.",
+            ));
+        }
+        if worktree.dirty {
+            return Err(AppError::new(
+                "child_task_parent_dirty",
+                "Review and commit the parent task's working changes before creating a child task. The child starts from the parent branch's latest commit.",
+            ));
+        }
+        Some(parent)
+    } else {
+        None
+    };
     let provider = state.config.provider(&input.provider_id)?;
     if !models_for_provider(&state, provider)?
         .iter()
@@ -1783,12 +1867,17 @@ pub async fn create_session(
                 )
             })?;
             let current_branch = git::branch(inspect_policy, &repository_root).await?;
-            let base_branch = input.base_branch.or(current_branch).ok_or_else(|| {
-                AppError::new(
-                    "no_base_branch",
-                    "Choose an existing local branch before creating an isolated workspace.",
-                )
-            })?;
+            let base_branch = parent_session
+                .as_ref()
+                .and_then(|parent| parent.git_branch.clone())
+                .or(input.base_branch)
+                .or(current_branch)
+                .ok_or_else(|| {
+                    AppError::new(
+                        "no_base_branch",
+                        "Choose an existing local branch before creating an isolated workspace.",
+                    )
+                })?;
             let branch = task_branch(input.task_request.as_deref().unwrap_or("task"), &session_id);
             let app_data = app.path().app_data_dir().map_err(|_| {
                 AppError::new(
@@ -1839,6 +1928,7 @@ pub async fn create_session(
         task_mode: input.task_mode,
         pinned: false,
         queued_follow_ups: Vec::new(),
+        parent_session_id: parent_session.map(|parent| parent.id),
         id: session_id,
         project_id: input.project_id,
         provider_id: input.provider_id,
@@ -2341,6 +2431,7 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
         task_mode: source.task_mode,
         pinned: false,
         queued_follow_ups: Vec::new(),
+        parent_session_id: None,
         id: new_id.clone(),
         project_id: source.project_id,
         provider_id: source.provider_id,
@@ -4523,6 +4614,57 @@ mod task_lifecycle_tests {
         state::AppState,
     };
     use std::sync::Arc;
+
+    fn isolated_parent() -> AgentSession {
+        let mut parent: AgentSession =
+            serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
+        parent.project_id = "project".into();
+        parent.status = SessionStatus::Completed;
+        parent.workspace_mode = WorkspaceMode::Isolated;
+        parent.git_branch = Some("jevcode/parent-12345678".into());
+        parent.worktree_path = Some("C:/app-data/task-workspaces/parent".into());
+        parent
+    }
+
+    #[test]
+    fn child_task_must_extend_an_idle_parent_in_the_same_isolated_project() {
+        let parent = isolated_parent();
+        assert_eq!(
+            child_parent_branch(&parent, "project", WorkspaceMode::Isolated, None).unwrap(),
+            "jevcode/parent-12345678"
+        );
+        assert_eq!(
+            child_parent_branch(&parent, "another-project", WorkspaceMode::Isolated, None)
+                .unwrap_err()
+                .code,
+            "child_task_project_mismatch"
+        );
+        assert_eq!(
+            child_parent_branch(&parent, "project", WorkspaceMode::Direct, None)
+                .unwrap_err()
+                .code,
+            "child_task_requires_worktree"
+        );
+    }
+
+    #[test]
+    fn child_task_cannot_start_from_a_busy_or_different_parent_branch() {
+        let mut parent = isolated_parent();
+        parent.status = SessionStatus::Working;
+        assert_eq!(
+            child_parent_branch(&parent, "project", WorkspaceMode::Isolated, None)
+                .unwrap_err()
+                .code,
+            "child_task_parent_busy"
+        );
+        parent.status = SessionStatus::Completed;
+        assert_eq!(
+            child_parent_branch(&parent, "project", WorkspaceMode::Isolated, Some("main"))
+                .unwrap_err()
+                .code,
+            "child_task_base_mismatch"
+        );
+    }
 
     #[test]
     fn task_titles_are_short_and_use_the_first_request_line() {

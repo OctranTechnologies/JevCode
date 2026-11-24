@@ -92,6 +92,7 @@ export default function App() {
   const [branch, setBranch] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('direct');
   const [baseBranch, setBaseBranch] = useState('');
+  const [delegationParentId, setDelegationParentId] = useState<string | null>(null);
   const [projectBranches, setProjectBranches] = useState<string[]>([]);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [darkMode, setDarkMode] = useState(() => {
@@ -124,6 +125,7 @@ export default function App() {
     ?? (!desktopAvailable && projectId === demoProject.id ? demoProject : undefined);
   const projects = useMemo(() => !desktopAvailable ? [demoProject] : actualProjects, [actualProjects]);
   const allSessions = useMemo(() => !desktopAvailable ? [demoSession] : desktop.sessions.filter(item => item.id !== pendingDelete?.session.id), [desktop.sessions, pendingDelete]);
+  const delegationParent = delegationParentId ? allSessions.find(item => item.id === delegationParentId) : undefined;
   const recentSessions = useMemo(() => allSessions.filter(item => !item.archivedAt), [allSessions]);
   const lastPrompt = useMemo(() => session?.messages.filter(item => item.role === 'user').at(-1)?.content ?? '', [session?.messages]);
   const providerId = session?.providerId ?? providerChoice;
@@ -300,6 +302,7 @@ export default function App() {
     const preferred = preferredFor(project);
     if (preferred) { setProviderChoice(preferred.providerId); setModelChoice(preferred.modelId); }
     setSessionId(null);
+    setDelegationParentId(null);
     setWorkspaceMode('direct');
     setBaseBranch(project?.activeBranch ?? '');
     setReviewChanges(null);
@@ -324,6 +327,7 @@ export default function App() {
     const preferred = preferredFor(selected);
     if (preferred) { setProviderChoice(preferred.providerId); setModelChoice(preferred.modelId); }
     setSessionId(null);
+    setDelegationParentId(null);
     setWorkspaceMode('direct');
     setBaseBranch(selected?.activeBranch ?? '');
     setReviewChanges(null);
@@ -342,6 +346,7 @@ export default function App() {
       setProviderChoice(selected.providerId);
       setModelChoice(selected.modelId);
       setSessionId(selected.id);
+      setDelegationParentId(null);
       setWorkspaceMode(selected.workspaceMode);
       setBaseBranch(selected.baseBranch ?? '');
       setReviewChanges(null);
@@ -544,8 +549,9 @@ export default function App() {
 
   const fileDragging = useComposerFileDrop(!!project && !busy, attachPaths);
 
-  async function send(content = draft, options: { newTask?: boolean } = {}) {
-    const newTask = options.newTask === true;
+  async function send(content = draft, options: { newTask?: boolean; parentSessionId?: string } = {}) {
+    const parentSessionId = options.parentSessionId ?? delegationParentId ?? undefined;
+    const newTask = options.newTask === true || !!parentSessionId;
     if (!data || !projectId || !content.trim() || busy || sending) return;
     const sentAttachments = attachments;
     const sentSkills = selectedSkills;
@@ -561,8 +567,11 @@ export default function App() {
       if (!active) {
         active = await command('create_session', { input: {
           projectId, providerId, modelId, taskMode: newTask ? 'agent' : mode,
-          workspaceMode,
-          baseBranch: workspaceMode === 'isolated' ? baseBranch || null : null,
+          workspaceMode: parentSessionId ? 'isolated' : workspaceMode,
+          baseBranch: parentSessionId
+            ? allSessions.find(item => item.id === parentSessionId)?.gitBranch ?? null
+            : workspaceMode === 'isolated' ? baseBranch || null : null,
+          parentSessionId: parentSessionId ?? null,
           taskRequest: content.trim(),
           permissionPolicy: {
             ...data.permissionPolicy,
@@ -586,6 +595,7 @@ export default function App() {
       const updated = await command('send_message', { sessionId: active.id, content: prompt, skillIds: sentSkills });
       desktop.dispatch({ type: 'session', session: updated });
       setPendingPrompt(null);
+      if (parentSessionId) setDelegationParentId(null);
       setSelectedSkills([]);
     } catch (error) {
       setPendingPrompt(null);
@@ -757,7 +767,7 @@ export default function App() {
       {view === 'agent' ? <>
         <div className="workspace-content">
           <Conversation session={session} pendingPrompt={pendingPrompt?.sessionId === (session?.id ?? null) ? pendingPrompt.text : undefined} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} />
-          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={session?.taskMode ?? mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send()} onQueueFollowUp={content => void queueFollowUp(content)} canQueueFollowUp={canQueueFollowUp} queuedFollowUps={session?.queuedFollowUps ?? []} onRemoveQueuedFollowUp={id => void removeQueuedFollowUp(id)} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} includeProject={includeProject} setIncludeProject={setIncludeProject} lastPrompt={lastPrompt} dropActive={fileDragging} skills={skills} selectedSkills={selectedSkills} onSkillSelect={id => setSelectedSkills(current => current.includes(id) ? current : [...current, id])} onSkillRemove={id => setSelectedSkills(current => current.filter(item => item !== id))} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
+          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={session?.taskMode ?? mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send(draft, delegationParentId ? { newTask: true, parentSessionId: delegationParentId } : {})} onQueueFollowUp={content => void queueFollowUp(content)} canQueueFollowUp={canQueueFollowUp} queuedFollowUps={session?.queuedFollowUps ?? []} onRemoveQueuedFollowUp={id => void removeQueuedFollowUp(id)} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} includeProject={includeProject} setIncludeProject={setIncludeProject} lastPrompt={lastPrompt} dropActive={fileDragging} skills={skills} selectedSkills={selectedSkills} onSkillSelect={id => setSelectedSkills(current => current.includes(id) ? current : [...current, id])} onSkillRemove={id => setSelectedSkills(current => current.filter(item => item !== id))} delegationParentTitle={delegationParent?.title ?? null} canDelegate={!!session && session.workspaceMode === 'isolated' && !!session.gitBranch && ['completed', 'failed', 'cancelled'].includes(session.status) && !sending} onDelegate={() => { if (session?.gitBranch) setDelegationParentId(session.id); }} onCancelDelegation={() => setDelegationParentId(null)} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
       </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : view === 'inbox' ? <TaskInbox sessions={allSessions} projects={projects} providers={data.providers} onSelectSession={selectSession} onTogglePin={toggleSessionPin} onNewTask={newTask} /> : <div className="settings-content-scroll">{(view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about' || view === 'appearance') && <nav className="settings-section-nav" aria-label="Settings sections"><button className={view === 'providers' ? 'is-active' : ''} onClick={() => setView('providers')} aria-current={view === 'providers' ? 'page' : undefined}>Providers</button><button className={view === 'decisions' ? 'is-active' : ''} onClick={() => setView('decisions')} aria-current={view === 'decisions' ? 'page' : undefined}>Decision assistance</button><button className={view === 'updates' ? 'is-active' : ''} onClick={() => setView('updates')} aria-current={view === 'updates' ? 'page' : undefined}>Updates</button><button className={view === 'about' ? 'is-active' : ''} onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined}>About</button><button className={view === 'appearance' ? 'is-active' : ''} onClick={() => setView('appearance')} aria-current={view === 'appearance' ? 'page' : undefined}>Appearance</button></nav>}{view === 'appearance' ? <AppearanceSettings mode={interfaceMode} onMode={changeInterfaceMode} /> : view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} initialOpenAIStatus={data.openaiAuthStatus} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'decisions' ? <JevDecisionSettings /> : view === 'updates' ? <UpdatesSettings preferences={updatePreferences ?? data.updatePreferences} online={networkOnline} agentActive={agentTaskActive} onSaved={setUpdatePreferences} /> : view === 'about' ? <AboutSettings online={networkOnline} agentActive={agentTaskActive} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}
@@ -765,7 +775,7 @@ export default function App() {
 
     {isAgentView && <>
       {inspectorOpen && <ResizeDivider label="Resize task details" width={inspectorWidth} min={276} max={480} reverse onResize={setInspectorWidth} />}
-      <InspectorPanel project={project} branch={branch} session={session} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult}usage={desktop.usage} onSelectFile={selectReviewFile} onStartPlan={plan => void startTaskFromPlan(plan)} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
+      <InspectorPanel project={project} branch={branch} session={session} sessions={allSessions} provider={provider} demo={activeTaskIsDemo} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult}usage={desktop.usage} onSelectFile={selectReviewFile} onStartPlan={plan => void startTaskFromPlan(plan)} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onSelectSession={selectSession} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
     </>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
     <CreateProjectDialog open={createProjectOpen} busy={creatingProject} onClose={() => setCreateProjectOpen(false)} onCreate={createProject} onOpenExisting={() => { setCreateProjectOpen(false); void openFolder(); }} />

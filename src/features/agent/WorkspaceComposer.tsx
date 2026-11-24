@@ -1,15 +1,17 @@
-import { ArrowUp, ChevronDown, FilePlus2, ListPlus, Paperclip, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, FilePlus2, GitBranch, ListPlus, Paperclip, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import type { ModelPreferences, ModelReference, Provider, QueuedFollowUp, SkillSummary, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 import { DisclosureMenu } from '../../components/DisclosureMenu';
 import { filterSkills } from '../../lib/skills';
+import './childTask.css';
 
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, baseBranch, branches, canIsolate, modelPickerOpenRequest,
   onSubmit, onQueueFollowUp, canQueueFollowUp, queuedFollowUps, onRemoveQueuedFollowUp, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
   sessionLocked, desktopAllowed, providerConnected, authRouteLabel, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false, skills, selectedSkills, onSkillSelect, onSkillRemove,
+  delegationParentTitle, canDelegate = false, onDelegate, onCancelDelegation,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -53,6 +55,10 @@ export function WorkspaceComposer({
   selectedSkills: string[];
   onSkillSelect: (id: string) => void;
   onSkillRemove: (id: string) => void;
+  delegationParentTitle?: string | null;
+  canDelegate?: boolean;
+  onDelegate?: () => void;
+  onCancelDelegation?: () => void;
 }) {
   const provider = providers.find(item => item.id === providerId);
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
@@ -63,6 +69,7 @@ export function WorkspaceComposer({
   const shownSkills = searchableSkills ? filterSkills(availableSkills, skillQuery) : availableSkills;
   return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {mode === 'plan' && <p role="status" className="composer-footnote">Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.</p>}
+    {delegationParentTitle && <div className="child-task-banner" role="status"><GitBranch size={14} /><span>New child task from <strong>{delegationParentTitle}</strong>. It will start on the parent branch in a separate worktree.</span><button type="button" onClick={onCancelDelegation}>Cancel</button></div>}
     {approval}
     {queuedFollowUps.length > 0 && <div className="queued-follow-ups" aria-label="Queued follow-ups">
       <div className="queued-follow-ups-heading"><strong>Queued follow-ups</strong><span>{queuedFollowUps.length}</span></div>
@@ -92,6 +99,7 @@ export function WorkspaceComposer({
             <div className="composer-options-popover">
               <label className="composer-option-row"><span><strong>Task approach</strong><small>Plan tasks stay read-only. Implementation requires a new Agent task.</small></span><select value={mode} disabled={sessionLocked || sending || busy} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task approach"><option value="agent">Agent</option><option value="plan">Plan · read-only</option></select></label>
               <label className="composer-option-row composer-context-toggle"><span><strong>Project context</strong><small>Allow this task to inspect project files.</small></span><input type="checkbox" checked={includeProject} disabled={sessionLocked} onChange={event => setIncludeProject(event.target.checked)} /></label>
+              {canDelegate && <button type="button" className="composer-delegate-choice" onClick={onDelegate}><GitBranch size={13} /><span>Create a child task from this branch</span></button>}
             </div>
           </DisclosureMenu>
         </div>

@@ -38,4 +38,13 @@ describe('task inbox', () => {
     expect(emptyView).toContain('No tasks yet');
     expect(emptyView).toContain('Start a task');
   });
+
+  it('shows the parent relationship and delegated task count in the inbox', () => {
+    const parent = task({ id: 'parent', title: 'Build account settings', status: 'completed' });
+    const child = task({ id: 'child', title: 'Add the settings form', status: 'working', parentSessionId: 'parent' });
+    const html = renderToStaticMarkup(<TaskInbox sessions={[parent, child]} projects={[]} providers={[]} onSelectSession={vi.fn()} onTogglePin={vi.fn()} onNewTask={vi.fn()} />);
+
+    expect(html).toContain('Child of Build account settings');
+    expect(html).toContain('1 delegated task');
+  });
 });

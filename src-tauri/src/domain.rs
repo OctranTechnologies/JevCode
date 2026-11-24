@@ -426,6 +426,9 @@ pub struct AgentSession {
     pub pinned: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_follow_ups: Vec<QueuedFollowUp>,
+    /// Parent task whose branch this task was created to extend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
     pub id: String,
     pub project_id: String,
     pub provider_id: String,

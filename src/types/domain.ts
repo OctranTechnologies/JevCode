@@ -152,6 +152,7 @@ export interface AgentSession {
   taskMode: 'agent' | 'plan';
   pinned?: boolean;
   queuedFollowUps?: QueuedFollowUp[];
+  parentSessionId?: string | null;
   id: string;
   projectId: string;
   providerId: string;

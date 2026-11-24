@@ -1,0 +1,70 @@
+.child-task-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  color: var(--wb-muted-strong);
+  background: var(--wb-accent-soft);
+  border: 1px solid var(--wb-accent-line);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.child-task-banner > svg { flex: 0 0 auto; color: var(--wb-accent); }
+.child-task-banner > span { flex: 1; min-width: 0; }
+.child-task-banner strong { color: var(--wb-ink); font-weight: 600; }
+.child-task-banner button {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  color: var(--wb-muted-strong);
+  background: transparent;
+  border: 1px solid var(--wb-border);
+  border-radius: 3px;
+  font-size: 10px;
+}
+.child-task-banner button:hover { color: var(--wb-ink); background: var(--wb-surface); }
+.composer-delegate-choice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  padding: 0 5px;
+  color: var(--wb-muted-strong);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--wb-border);
+  font-size: 11px;
+  text-align: left;
+}
+.composer-delegate-choice:hover { color: var(--wb-accent); }
+.child-task-relations {
+  display: grid;
+  gap: 5px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--wb-border);
+}
+.child-task-relations > strong { margin-bottom: 2px; color: var(--wb-muted); font-size: 10px; font-weight: 620; letter-spacing: .06em; text-transform: uppercase; }
+.child-task-relations > button {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 6px;
+  color: var(--wb-muted-strong);
+  background: var(--wb-surface-quiet);
+  border: 1px solid var(--wb-border);
+  font-size: 11px;
+  text-align: left;
+}
+.child-task-relations > button:hover { color: var(--wb-ink); border-color: var(--wb-accent-line); }
+.child-task-relations > button > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.child-task-relations small { color: var(--wb-muted); font-size: 10px; text-transform: capitalize; }
+.child-task-status { width: 6px; height: 6px; background: var(--wb-muted); border-radius: 50%; }
+.child-task-status.is-working,
+.child-task-status.is-planning,
+.child-task-status.is-queued { background: var(--wb-accent); }
+.child-task-status.is-failed { background: var(--wb-danger); }
+.child-task-status.is-waiting_for_permission,
+.child-task-status.is-waiting_for_user { background: var(--wb-warning); }
