@@ -1124,6 +1124,8 @@ mod tests {
             pinned: false,
             queued_follow_ups: Vec::new(),
             parent_session_id: None,
+            execution_harness: None,
+            execution_model: None,
             id: "integration-session".into(),
             project_id: "integration-project".into(),
             provider_id: "preview".into(),

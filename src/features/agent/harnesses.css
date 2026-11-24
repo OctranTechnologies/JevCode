@@ -1,0 +1,7 @@
+.composer-harness-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 0 9px; color: var(--wb-accent); font-size: 10px; font-weight: 620; white-space: nowrap; background: var(--wb-surface); border: 1px solid var(--wb-border-strong); border-radius: 0; }
+.composer-harness-button:hover:not(:disabled) { background: var(--wb-accent-soft); border-color: var(--wb-accent); }
+.composer-harness-button:disabled { opacity: .55; }
+.composer-harness-options { display: grid; gap: 8px; padding-top: 9px; border-top: 1px solid var(--wb-border); }
+.composer-harness-model { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--wb-muted-strong); font-size: 11px; }
+.composer-harness-model input { width: 125px; min-width: 0; min-height: 27px; padding: 0 6px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 0; }
+.composer-harness-model input:disabled { opacity: .55; }

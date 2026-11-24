@@ -116,6 +116,7 @@ pub fn run() {
             commands::convert_custom_command,
             commands::scan_mcp_imports,
             commands::detect_harnesses,
+            commands::run_task_harness,
             commands::import_mcp_servers,
             commands::create_task_plan,
             commands::list_task_plans,

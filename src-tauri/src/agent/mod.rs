@@ -2721,6 +2721,244 @@ pub async fn run(
     run_inner(state, sink, session, cancel, None, AgentRuntime::default()).await;
 }
 
+pub async fn run_external_harness(
+    state: SharedState,
+    sink: Box<dyn EventSink>,
+    mut session: AgentSession,
+    harness: crate::harnesses::HarnessId,
+    model: Option<String>,
+    mut cancel: watch::Receiver<bool>,
+) {
+    let session_id = session.id.clone();
+    loop {
+        let result = tokio::select! {
+            biased;
+            result = run_external_harness_turn(&state, sink.as_ref(), &mut session, harness, model.as_deref(), cancel.clone()) => result,
+            _ = cancel.changed() => Err(AppError::new("cancelled", "Run stopped by you.")),
+        };
+        if let Err(error) = result {
+            session.status = if error.code == "cancelled" {
+                SessionStatus::Cancelled
+            } else {
+                SessionStatus::Failed
+            };
+            session.error = Some(error.message.clone());
+            record_activity(
+                &mut session,
+                AgentActivityKind::Progress,
+                if error.code == "cancelled" {
+                    format!("{} run stopped.", harness.name())
+                } else {
+                    format!("{} run failed: {}", harness.name(), error.message)
+                },
+                None,
+            );
+            if let Err(checkpoint_error) = checkpoint(&state, sink.as_ref(), &mut session) {
+                tracing::error!(code = %checkpoint_error.code, "Could not persist external harness state");
+            }
+            state.release_run(&session_id);
+            break;
+        }
+
+        match state.start_next_queued_follow_up_or_release(&session_id) {
+            Ok(Some(next_session)) => {
+                session = next_session;
+                sink.session_updated(&session);
+            }
+            Ok(None) => break,
+            Err(error) => {
+                tracing::error!(session_id = %session_id, code = %error.code, "Could not start queued work after external harness run");
+                state.release_run(&session_id);
+                break;
+            }
+        }
+    }
+}
+
+async fn run_external_harness_turn(
+    state: &SharedState,
+    sink: &dyn EventSink,
+    session: &mut AgentSession,
+    harness: crate::harnesses::HarnessId,
+    model: Option<&str>,
+    mut cancel: watch::Receiver<bool>,
+) -> AppResult<()> {
+    let project = state.database.project(&session.project_id)?;
+    let repository_root = project.repository_root.as_deref().ok_or_else(|| {
+        AppError::new(
+            "not_git_repository",
+            "External coding tools need a Git task worktree.",
+        )
+    })?;
+    let worktree = session.worktree_path.as_deref().ok_or_else(|| {
+        AppError::new(
+            "harness_requires_worktree",
+            "This task's isolated workspace is no longer available.",
+        )
+    })?;
+    let inspect_policy = SpawnPolicy::new(
+        ProfileKind::Inspect,
+        project.reduced_safety_opt_in,
+        state.database.reduced_safety_allowed()?,
+    );
+    let task_root = crate::git::worktree::project_path(
+        inspect_policy,
+        Path::new(repository_root),
+        Path::new(&project.path),
+        Path::new(worktree),
+    )
+    .await?;
+    let branch = crate::git::branch(inspect_policy, &task_root)
+        .await?
+        .ok_or_else(|| {
+            AppError::new(
+                "worktree_branch_missing",
+                "The task workspace has no Git branch.",
+            )
+        })?;
+    if session.git_branch.as_deref() != Some(branch.as_str()) {
+        return Err(AppError::new(
+            "worktree_branch_mismatch",
+            "The task workspace no longer matches its saved branch.",
+        ));
+    }
+    let edit_policy = SpawnPolicy::new(
+        ProfileKind::EditWithNetwork,
+        project.reduced_safety_opt_in,
+        state.database.reduced_safety_allowed()?,
+    );
+    let prompt = external_harness_prompt(session);
+    let command = crate::harnesses::task_command(harness, model, &prompt)?;
+
+    session.status = SessionStatus::Working;
+    session.error = None;
+    record_activity(
+        session,
+        AgentActivityKind::Progress,
+        format!(
+            "Running {} in {} with its restricted task permissions.",
+            harness.name(),
+            branch
+        ),
+        None,
+    );
+    checkpoint(state, sink, session)?;
+
+    let process = tools::process::run_program_streaming_with_input(
+        edit_policy,
+        command.executable,
+        &command.args,
+        &task_root,
+        Duration::from_secs(30 * 60),
+        1_048_576,
+        &command.stdin,
+    );
+    let output = tokio::select! {
+        biased;
+        _ = cancel.changed() => return Err(AppError::new("cancelled", "Run stopped by you.")),
+        output = process => output?,
+    };
+    let visible = crate::harnesses::visible_output(harness, &output.stdout);
+    let visible = if output.exit_code == Some(0) && !visible.trim().is_empty() {
+        visible
+    } else if !output.stderr.trim().is_empty() {
+        output.stderr.clone()
+    } else if !visible.trim().is_empty() {
+        visible
+    } else {
+        format!("{} finished without returning a response.", harness.name())
+    };
+    let visible = redact_harness_output(&visible);
+    let mut content = visible;
+    if output.truncated {
+        content.push_str("\n\n[External tool output truncated at 1 MiB]");
+    }
+    session
+        .messages
+        .push(AgentMessage::text(MessageRole::Assistant, content));
+    if output.timed_out {
+        return Err(AppError::new(
+            "harness_timeout",
+            format!("{} stopped after 30 minutes.", harness.name()),
+        ));
+    }
+    if output.exit_code != Some(0) {
+        return Err(AppError::new(
+            "harness_exit",
+            format!(
+                "{} exited with status {}.",
+                harness.name(),
+                output
+                    .exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown".into())
+            ),
+        ));
+    }
+    session.status = SessionStatus::Completed;
+    session.error = None;
+    record_activity(
+        session,
+        AgentActivityKind::Progress,
+        format!("{} finished on branch {}.", harness.name(), branch),
+        None,
+    );
+    checkpoint(state, sink, session)
+}
+
+fn external_harness_prompt(session: &AgentSession) -> String {
+    const MAX_CONTEXT: usize = 48 * 1024;
+    let mut user_turns = session
+        .messages
+        .iter()
+        .filter(|message| message.role == MessageRole::User)
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>();
+    user_turns.reverse();
+    let mut prompt = String::from(
+        "Work only in the current directory, which is this task's isolated project workspace. Do not access files outside it. Respect the active external-tool restrictions and do not attempt permission bypasses. Return a concise summary of changes and verification.\n\nTask requests:\n",
+    );
+    for (index, message) in user_turns.iter().enumerate() {
+        if prompt.len() >= MAX_CONTEXT {
+            break;
+        }
+        let safe_content = redact_harness_output(&message.content);
+        let remaining = MAX_CONTEXT.saturating_sub(prompt.len());
+        let take = safe_content.len().min(remaining.saturating_sub(24));
+        if take == 0 {
+            break;
+        }
+        prompt.push_str(&format!("\n{}. ", index + 1));
+        let boundary = safe_content
+            .char_indices()
+            .take_while(|(index, character)| index + character.len_utf8() <= take)
+            .map(|(index, character)| index + character.len_utf8())
+            .last()
+            .unwrap_or(0);
+        prompt.push_str(&safe_content[..boundary]);
+        if take < safe_content.len() {
+            prompt.push_str("\n[Earlier request truncated]");
+            break;
+        }
+        prompt.push('\n');
+    }
+    prompt
+}
+
+fn redact_harness_output(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if crate::context_migration::line_has_secret(line) {
+                "[credential removed]"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn run_inner(
     state: SharedState,
     sink: Box<dyn EventSink>,
@@ -3058,6 +3296,8 @@ mod tests {
             pinned: false,
             queued_follow_ups: Vec::new(),
             parent_session_id: None,
+            execution_harness: None,
+            execution_model: None,
             id: id(),
             project_id: project.id.clone(),
             provider_id: "preview".into(),
@@ -4117,6 +4357,8 @@ mod tests {
             pinned: false,
             queued_follow_ups: Vec::new(),
             parent_session_id: None,
+            execution_harness: None,
+            execution_model: None,
             id: "compact-test".into(),
             project_id: "project".into(),
             provider_id: "preview".into(),

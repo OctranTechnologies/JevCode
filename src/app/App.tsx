@@ -31,7 +31,7 @@ import { ProjectOverview } from '../features/workspaces/ProjectOverview';
 import { TaskInbox } from '../features/workspaces/TaskInbox';
 import { CreateProjectDialog } from '../features/workspaces/CreateProjectDialog';
 import { CommandPalette, type PaletteAction } from '../components/CommandPalette';
-import type { AgentSession, InterfaceMode, Model, ModelReference, PermissionResolution, Project, SkillSummary, TaskPlan, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
+import type { AgentSession, HarnessStatus, InterfaceMode, Model, ModelReference, PermissionResolution, Project, SkillSummary, TaskPlan, ReviewAllAction, ReviewFileAction, SessionChanges, SessionFileDiff, UpdatePreferences, WorkspaceMode } from '../types/domain';
 import type { View } from '../features/workspaces/Sidebar';
 import { latestRestorableSession } from './restore';
 import { primaryShortcutModifier as shortcutMod } from '../lib/shortcuts';
@@ -53,6 +53,10 @@ export default function App() {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+  const [harnessSending, setHarnessSending] = useState(false);
+  const [harnesses, setHarnesses] = useState<HarnessStatus[]>([]);
+  const [harnessId, setHarnessId] = useState('');
+  const [harnessModel, setHarnessModel] = useState('');
   const [pendingPrompt, setPendingPrompt] = useState<{ text: string; sessionId: string | null } | null>(null);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
@@ -121,6 +125,18 @@ export default function App() {
       .catch(() => { if (active) setSkills([]); });
     return () => { active = false; };
   }, [projectId]);
+  useEffect(() => {
+    if (!desktopAvailable) return;
+    let active = true;
+    void command('detect_harnesses', undefined).then(detected => {
+      if (!active) return;
+      setHarnesses(detected);
+      setHarnessId(current => detected.some(item => item.id === current && item.installed && item.taskExecutionSupported)
+        ? current
+        : detected.find(item => item.installed && item.taskExecutionSupported)?.id ?? '');
+    }).catch(() => { if (active) setHarnesses([]); });
+    return () => { active = false; };
+  }, []);
   const project: Project | undefined = actualProjects.find(item => item.id === projectId)
     ?? (!desktopAvailable && projectId === demoProject.id ? demoProject : undefined);
   const projects = useMemo(() => !desktopAvailable ? [demoProject] : actualProjects, [actualProjects]);
@@ -134,6 +150,19 @@ export default function App() {
   const authRouteLabel = providerId === 'gemini' ? googleBillingRouteLabel(selectedProviderAccount?.authMethod) : null;
   const modelId = (session?.modelId ?? modelChoice) || provider?.models[0]?.id || '';
   const busy = !!session && ['queued', 'planning', 'working', 'waiting_for_permission'].includes(session.status);
+  const selectedHarness = harnesses.find(item => item.id === harnessId);
+  const canRunHarness = !!session
+    && session.taskMode === 'agent'
+    && session.workspaceMode === 'isolated'
+    && !!session.worktreePath
+    && !!session.gitBranch
+    && ['completed', 'failed', 'cancelled'].includes(session.status)
+    && session.permissionPolicy.readFiles === 'allow'
+    && session.permissionPolicy.writeFiles === 'allow'
+    && session.permissionPolicy.mode !== 'ask'
+    && (harnessId !== 'codex' || (session.permissionPolicy.shell === 'allow' && session.permissionPolicy.git === 'allow' && session.permissionPolicy.mode === 'full_access'))
+    && !!selectedHarness?.installed
+    && selectedHarness.taskExecutionSupported;
   const canQueueFollowUp = !!session && ['queued', 'planning', 'working'].includes(session.status);
   useApprovalAttention(!!session?.pendingToolCall || !!session?.pendingUserInput);
   const tokens = desktop.usage.reduce((sum, record) => sum + record.inputTokens + record.outputTokens, 0);
@@ -607,6 +636,28 @@ export default function App() {
     finally { setSending(false); }
   }
 
+  async function runTaskHarness() {
+    if (!session || !canRunHarness || !draft.trim() || harnessSending || sending || !selectedHarness) return;
+    const originalDraft = draft;
+    const prompt = `${draft.trim()}${attachments.length ? `\n\nPlease inspect these selected project files as context:\n${attachments.map(path => `- ${path}`).join('\n')}` : ''}`;
+    setHarnessSending(true);
+    setDraft('');
+    setError(null);
+    try {
+      const updated = await command('run_task_harness', { input: {
+        sessionId: session.id,
+        harnessId: selectedHarness.id,
+        model: harnessModel.trim() || null,
+        prompt,
+      } });
+      dispatch({ type: 'session', session: updated });
+      setAttachments([]);
+    } catch (error) {
+      setDraft(current => current || originalDraft);
+      setError(normalizeError(error).message);
+    } finally { setHarnessSending(false); }
+  }
+
   /** A new Agent task carries the plan's text and cites its source. It inherits no approvals, grants, or pending calls. */
   async function startTaskFromPlan(plan: TaskPlan) {
     try {
@@ -767,7 +818,7 @@ export default function App() {
       {view === 'agent' ? <>
         <div className="workspace-content">
           <Conversation session={session} pendingPrompt={pendingPrompt?.sessionId === (session?.id ?? null) ? pendingPrompt.text : undefined} projectName={project?.name} demo={activeTaskIsDemo} review={reviewChanges} streamingText={session ? desktop.streaming[session.id] ?? '' : ''} toolOutput={desktop.toolOutput} interfaceMode={interfaceMode} onSuggestion={setDraft} onRetry={retryTask} onReviewFile={selectReviewFile} onReviewChanges={() => { setInspectorTab('changes'); setInspectorOpen(true); }} />
-          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={session?.taskMode ?? mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send(draft, delegationParentId ? { newTask: true, parentSessionId: delegationParentId } : {})} onQueueFollowUp={content => void queueFollowUp(content)} canQueueFollowUp={canQueueFollowUp} queuedFollowUps={session?.queuedFollowUps ?? []} onRemoveQueuedFollowUp={id => void removeQueuedFollowUp(id)} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy} sending={sending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} includeProject={includeProject} setIncludeProject={setIncludeProject} lastPrompt={lastPrompt} dropActive={fileDragging} skills={skills} selectedSkills={selectedSkills} onSkillSelect={id => setSelectedSkills(current => current.includes(id) ? current : [...current, id])} onSkillRemove={id => setSelectedSkills(current => current.filter(item => item !== id))} delegationParentTitle={delegationParent?.title ?? null} canDelegate={!!session && session.workspaceMode === 'isolated' && !!session.gitBranch && ['completed', 'failed', 'cancelled'].includes(session.status) && !sending} onDelegate={() => { if (session?.gitBranch) setDelegationParentId(session.id); }} onCancelDelegation={() => setDelegationParentId(null)} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
+          <WorkspaceComposer draft={draft} setDraft={setDraft} providers={data.providers} modelPreferences={data.modelPreferences} providerId={providerId} modelId={modelId} onModel={reference => void selectModel(reference)} onToggleFavorite={reference => void toggleModelFavorite(reference)} onSetDefault={reference => void setDefaultModel(reference)} modelPickerOpenRequest={modelPickerOpenRequest} modelLocked={!desktopAvailable || busy || session?.status === 'waiting_for_user'} mode={session?.taskMode ?? mode} onMode={setMode} workspaceMode={workspaceMode} baseBranch={baseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} onSubmit={() => void send(draft, delegationParentId ? { newTask: true, parentSessionId: delegationParentId } : {})} onQueueFollowUp={content => void queueFollowUp(content)} canQueueFollowUp={canQueueFollowUp} queuedFollowUps={session?.queuedFollowUps ?? []} onRemoveQueuedFollowUp={id => void removeQueuedFollowUp(id)} onStop={() => void stopTask()} onAttach={() => void attachFiles()} attachments={attachments} onRemoveAttachment={path => setAttachments(current => current.filter(item => item !== path))} busy={busy || harnessSending} sending={sending || harnessSending} hasProject={!!project} sessionLocked={!!session} desktopAllowed={desktopAvailable} providerConnected={!!selectedProvider?.connected} authRouteLabel={authRouteLabel} includeProject={includeProject} setIncludeProject={setIncludeProject} lastPrompt={lastPrompt} dropActive={fileDragging} skills={skills} selectedSkills={selectedSkills} onSkillSelect={id => setSelectedSkills(current => current.includes(id) ? current : [...current, id])} onSkillRemove={id => setSelectedSkills(current => current.filter(item => item !== id))} delegationParentTitle={delegationParent?.title ?? null} canDelegate={!!session && session.workspaceMode === 'isolated' && !!session.gitBranch && ['completed', 'failed', 'cancelled'].includes(session.status) && !sending} onDelegate={() => { if (session?.gitBranch) setDelegationParentId(session.id); }} onCancelDelegation={() => setDelegationParentId(null)} harnesses={harnesses} harnessId={harnessId} setHarnessId={setHarnessId} harnessModel={harnessModel} setHarnessModel={setHarnessModel} canRunHarness={canRunHarness} onRunHarness={() => void runTaskHarness()} approval={session?.pendingToolCall ? <PermissionRequest session={session} projectName={project?.name} busy={permissionBusy} onPermission={resolution => void resolvePermission(resolution)} /> : null} />
         </div>
         <footer className="workspace-statusbar"><span><span className={`status-indicator${busy ? ' is-busy' : ''}`} />{busy ? session?.status === 'waiting_for_permission' ? 'Waiting for approval' : session?.status === 'planning' ? 'Planning task' : 'Agent working' : session?.status === 'waiting_for_user' ? 'Waiting for your answer' : 'Ready'}</span><span className="status-readonly"><ShieldCheck size={12} />{permissionModeLabel(session?.permissionPolicy.mode ?? data.permissionPolicy.mode)}</span><span className="status-saved">Saved locally</span>{!activeTaskIsDemo && <span className="status-token-count">{tokens.toLocaleString()} tokens used</span>}</footer>
       </> : view === 'overview' ? project ? <ProjectOverview project={project} sessions={recentSessions} providers={data.providers} desktopAllowed={desktopAvailable} onStartTask={newTask} onSelectSession={selectSession} onProjectUpdated={updateProject} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onError={desktop.setError} /> : <ProjectEmpty opening={opening} onOpen={() => void openFolder()} onCreate={() => setCreateProjectOpen(true)} /> : view === 'inbox' ? <TaskInbox sessions={allSessions} projects={projects} providers={data.providers} onSelectSession={selectSession} onTogglePin={toggleSessionPin} onNewTask={newTask} /> : <div className="settings-content-scroll">{(view === 'providers' || view === 'decisions' || view === 'updates' || view === 'about' || view === 'appearance') && <nav className="settings-section-nav" aria-label="Settings sections"><button className={view === 'providers' ? 'is-active' : ''} onClick={() => setView('providers')} aria-current={view === 'providers' ? 'page' : undefined}>Providers</button><button className={view === 'decisions' ? 'is-active' : ''} onClick={() => setView('decisions')} aria-current={view === 'decisions' ? 'page' : undefined}>Decision assistance</button><button className={view === 'updates' ? 'is-active' : ''} onClick={() => setView('updates')} aria-current={view === 'updates' ? 'page' : undefined}>Updates</button><button className={view === 'about' ? 'is-active' : ''} onClick={() => setView('about')} aria-current={view === 'about' ? 'page' : undefined}>About</button><button className={view === 'appearance' ? 'is-active' : ''} onClick={() => setView('appearance')} aria-current={view === 'appearance' ? 'page' : undefined}>Appearance</button></nav>}{view === 'appearance' ? <AppearanceSettings mode={interfaceMode} onMode={changeInterfaceMode} /> : view === 'providers' ? <ProviderSettings providers={data.providers} accounts={data.accounts} initialOpenAIStatus={data.openaiAuthStatus} onAccount={account => dispatch({ type: 'account', account })} onModels={updateModelCatalog} /> : view === 'decisions' ? <JevDecisionSettings /> : view === 'updates' ? <UpdatesSettings preferences={updatePreferences ?? data.updatePreferences} online={networkOnline} agentActive={agentTaskActive} onSaved={setUpdatePreferences} /> : view === 'about' ? <AboutSettings online={networkOnline} agentActive={agentTaskActive} /> : view === 'permissions' ? <PermissionsSettings mode={data.permissionPolicy.mode} projects={projects} onMode={mode => desktop.dispatch({ type: 'permission-mode', mode })} onError={desktop.setError} /> : view === 'mcp' ? <McpSettings project={project} onError={desktop.setError} /> : view === 'diagnostics' ? <DiagnosticsSettings online={networkOnline} onError={desktop.setError} /> : <UsageView records={desktop.usage} providers={data.providers} projects={projects} sessions={allSessions} />}</div>}

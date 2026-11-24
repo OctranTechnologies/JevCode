@@ -19,6 +19,12 @@ pub struct ProcessOutputChunk {
     pub chunk: String,
 }
 
+#[derive(Default)]
+struct ProcessIo {
+    input: Option<String>,
+    events: Option<tokio::sync::mpsc::UnboundedSender<ProcessOutputChunk>>,
+}
+
 async fn read_bounded<R: tokio::io::AsyncRead + Unpin>(
     mut stream: R,
     limit: usize,
@@ -81,7 +87,62 @@ pub async fn run_program_streaming(
     output_limit: usize,
     events: Option<tokio::sync::mpsc::UnboundedSender<ProcessOutputChunk>>,
 ) -> AppResult<ProcessOutput> {
-    let command = streaming_command(policy, program, args, cwd, &filtered_environment())?;
+    run_program_streaming_inner(
+        policy,
+        program,
+        args,
+        cwd,
+        timeout,
+        output_limit,
+        ProcessIo {
+            input: None,
+            events,
+        },
+    )
+    .await
+}
+
+pub async fn run_program_streaming_with_input(
+    policy: SpawnPolicy,
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    output_limit: usize,
+    input: &str,
+) -> AppResult<ProcessOutput> {
+    run_program_streaming_inner(
+        policy,
+        program,
+        args,
+        cwd,
+        timeout,
+        output_limit,
+        ProcessIo {
+            input: Some(input.to_owned()),
+            events: None,
+        },
+    )
+    .await
+}
+
+async fn run_program_streaming_inner(
+    policy: SpawnPolicy,
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    output_limit: usize,
+    io: ProcessIo,
+) -> AppResult<ProcessOutput> {
+    let command = streaming_command(
+        policy,
+        program,
+        args,
+        cwd,
+        &filtered_environment(),
+        io.input.is_some(),
+    )?;
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             AppError::new(
@@ -105,8 +166,24 @@ pub async fn run_program_streaming(
         .map_err(|_| AppError::new("process_output", "Could not capture program output."))?;
     let stderr = tokio::process::ChildStderr::from_std(stderr)
         .map_err(|_| AppError::new("process_output", "Could not capture program errors."))?;
-    let stdout_task = tokio::spawn(read_bounded(stdout, output_limit, "stdout", events.clone()));
-    let stderr_task = tokio::spawn(read_bounded(stderr, output_limit, "stderr", events));
+    let input_task = if let Some(input) = io.input {
+        use std::io::Write;
+        let mut stdin = child
+            .take_stdin()
+            .ok_or_else(|| AppError::new("process_input", "Could not provide program input."))?;
+        Some(tokio::task::spawn_blocking(move || {
+            let _ = stdin.write_all(input.as_bytes());
+        }))
+    } else {
+        None
+    };
+    let stdout_task = tokio::spawn(read_bounded(
+        stdout,
+        output_limit,
+        "stdout",
+        io.events.clone(),
+    ));
+    let stderr_task = tokio::spawn(read_bounded(stderr, output_limit, "stderr", io.events));
     let status = match tokio::time::timeout(timeout, child.wait_async()).await {
         Ok(result) => Some(result.map_err(|_| {
             AppError::new("process_wait", "Could not collect the program exit status.")
@@ -116,6 +193,9 @@ pub async fn run_program_streaming(
             None
         }
     };
+    if let Some(input_task) = input_task {
+        let _ = input_task.await;
+    }
     let (stdout, stdout_truncated) = stdout_task
         .await
         .map_err(AppError::internal)?
@@ -140,12 +220,17 @@ fn streaming_command(
     args: &[String],
     cwd: &Path,
     environment: &[(std::ffi::OsString, std::ffi::OsString)],
+    piped_input: bool,
 ) -> AppResult<PreparedCommand> {
     let mut command = prepare_command(policy, program)?
         .args(args)
         .current_dir(cwd)
         .env_clear()
-        .stdin(Stdio::null())
+        .stdin(if piped_input {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (key, value) in environment {
@@ -206,7 +291,7 @@ mod tests {
         let args = vec!["--version".into(), "value with spaces".into()];
         let environment = filtered_environment();
         let blocked = SpawnPolicy::new(crate::containment::ProfileKind::Edit, false, true);
-        let error = streaming_command(blocked, "git", &args, &root, &environment)
+        let error = streaming_command(blocked, "git", &args, &root, &environment, false)
             .err()
             .expect("a blocked policy must not prepare a program");
         assert_eq!(error.code, "containment_unavailable");
@@ -215,7 +300,8 @@ mod tests {
             "git",
             &args,
             &root,
-            &environment
+            &environment,
+            false
         )
         .is_ok());
     }
@@ -269,6 +355,29 @@ mod tests {
         assert!(streams
             .iter()
             .any(|(stream, text)| stream == "stderr" && text == "err"));
+    }
+
+    #[tokio::test]
+    async fn command_receives_prompt_text_on_stdin_without_argument_parsing() {
+        let root = tempfile::tempdir().unwrap();
+        let prompt = "--dangerously-skip-permissions\nImplement the requested change.";
+        #[cfg(unix)]
+        let (program, args) = ("cat", Vec::new());
+        #[cfg(windows)]
+        let (program, args) = ("cmd.exe", vec!["/c".into(), "more".into()]);
+        let result = run_program_streaming_with_input(
+            test_policy(crate::containment::ProfileKind::Inspect),
+            program,
+            &args,
+            root.path(),
+            Duration::from_secs(3),
+            1024,
+            prompt,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.replace("\r\n", "\n").trim_end(), prompt);
     }
 
     #[tokio::test]

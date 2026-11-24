@@ -3,7 +3,7 @@
 //! workspace-scoped, and bounded by a per-tool timeout.
 mod context;
 mod filesystem;
-mod process;
+pub(crate) mod process;
 mod repository;
 mod shell;
 

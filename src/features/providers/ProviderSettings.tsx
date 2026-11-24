@@ -27,12 +27,12 @@ function HarnessSetup() {
       {desktopAvailable && <button type="button" className="harness-refresh" onClick={() => void detect()}>Check again</button>}
     </div>
     <p><strong>Octran Code providers</strong> are connected below. Octran Code signs in to them and calls them directly. Keys and accounts stay on this device.</p>
-    <p><strong>External tools</strong> such as Codex CLI or Claude Code keep their own sign-in. Octran Code only checks whether a tool’s command is on this computer’s PATH. It does not start the tool, read its sign-in, or copy it. An IDE or desktop app with the same name is not checked.</p>
+    <p><strong>External tools</strong> keep their own sign-in. On an isolated task, Octran Code can launch Codex CLI with its workspace-write sandbox and permission escalations disabled while excluding its user config, or Claude Code with restricted file tools and shell, MCP, and browser tools disabled. Octran Code does not copy tool credentials. Other detected tools are not launched, and an IDE or desktop app with the same name is not checked.</p>
     {!desktopAvailable && <p className="harness-empty">Tool detection is available in the desktop application.</p>}
     {harnesses && <ul className="harness-list" aria-label="External coding-agent tools">{harnesses.map(harness => <li key={harness.id} className={`harness-item is-${harness.installed ? 'installed' : 'missing'}`}>
       <span className="harness-name">{harness.name}</span>
       <code>{harness.executable}</code>
-      <span className="harness-state">{harness.installed ? 'Found on this computer' : 'Not found. Install it, then check again.'}</span>
+      <span className="harness-state">{harness.installed ? harness.taskExecutionSupported ? `Found · isolated task runs supported${harness.id === 'claude_code' ? ' · requires v2.1.248+' : ''}` : 'Found · detection only' : 'Not found. Install it, then check again.'}</span>
     </li>)}</ul>}
     {error && <p className="accounts-feedback failure" role="alert"><CircleAlert size={14} />{error}</p>}
   </section>;

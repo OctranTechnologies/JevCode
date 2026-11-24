@@ -194,6 +194,11 @@ function TaskPanel({ session, demo, project, provider, review, usage }: { sessio
     <h3 title={session.title}>{session.title || 'New task'}</h3>
     <div className="task-detail-field"><span>Project</span><strong>{project?.name ?? 'Unknown project'}</strong></div>
     <div className="task-detail-field"><span>Model</span><strong>{provider?.models.find(model => model.id === session.modelId)?.displayName ?? `Unavailable · ${session.modelId}`}</strong></div>
+    {session.executionHarness && <>
+      <div className="task-detail-field"><span>External tool</span><strong>{executionHarnessName(session.executionHarness)}</strong></div>
+      <div className="task-detail-field"><span>External model</span><strong>{session.executionModel || 'CLI default'}</strong></div>
+      <div className="task-detail-field task-harness-permission"><span>CLI permissions</span><strong>{executionHarnessPermissions(session.executionHarness)}</strong></div>
+    </>}
     {session.gitBranch && <div className="task-detail-field"><span>Git branch</span><strong>{session.gitBranch}</strong></div>}
     {session.worktreePath && <div className="task-detail-field"><span>Worktree</span><strong title={session.worktreePath}>{session.worktreePath}</strong></div>}
     <div className="task-detail-field"><span>Started</span><strong>{new Date(session.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</strong></div>
@@ -217,6 +222,18 @@ function humanStatus(status: AgentSession['status']) {
   if (status === 'failed') return 'Failed';
   if (status === 'cancelled') return 'Stopped';
   return 'Ready';
+}
+
+function executionHarnessName(id: string) {
+  if (id === 'codex') return 'Codex CLI';
+  if (id === 'claude_code') return 'Claude Code';
+  return id;
+}
+
+function executionHarnessPermissions(id: string) {
+  if (id === 'codex') return 'Workspace-write sandbox; permission escalations disabled; user config excluded.';
+  if (id === 'claude_code') return 'Restricted file tools; shell, MCP, and browser tools disabled.';
+  return 'Adapter permissions unavailable.';
 }
 
 function permissionLabel(value: AgentSession['permissionPolicy']['shell'] | undefined) {

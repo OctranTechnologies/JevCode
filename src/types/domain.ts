@@ -153,6 +153,8 @@ export interface AgentSession {
   pinned?: boolean;
   queuedFollowUps?: QueuedFollowUp[];
   parentSessionId?: string | null;
+  executionHarness?: string | null;
+  executionModel?: string | null;
   id: string;
   projectId: string;
   providerId: string;
@@ -257,6 +259,8 @@ export interface HarnessStatus {
   name: string;
   executable: string;
   installed: boolean;
+  taskExecutionSupported: boolean;
+  taskPermissionSummary: string | null;
 }
 export type CustomCommandFormat = 'claude_command' | 'antigravity_workflow' | 'gemini_command';
 /** A command another agent keeps in this project. `blocked` says why it cannot become a skill. */

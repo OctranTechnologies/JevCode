@@ -297,6 +297,129 @@ pub fn detect_harnesses() -> Vec<crate::harnesses::HarnessStatus> {
     crate::harnesses::detect()
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunTaskHarnessInput {
+    session_id: String,
+    harness_id: String,
+    model: Option<String>,
+    prompt: String,
+}
+
+/// Runs Codex or Claude Code against an existing isolated task workspace.
+/// Each adapter fixes its own permission mode; native model approvals are not
+/// implicitly forwarded to these external tools.
+#[tauri::command]
+pub fn run_task_harness(
+    input: RunTaskHarnessInput,
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let harness = crate::harnesses::HarnessId::parse(&input.harness_id)?;
+    if !crate::harnesses::detect().iter().any(|status| {
+        status.id == harness.as_str() && status.installed && status.task_execution_supported
+    }) {
+        return Err(AppError::new(
+            "harness_unavailable",
+            "Install the selected command-line tool and check for it again in Provider settings.",
+        ));
+    }
+    let prompt = input.prompt.trim();
+    if prompt.is_empty() || prompt.len() > 32_768 || prompt.contains('\0') {
+        return Err(AppError::new(
+            "invalid_input",
+            "Enter a task prompt under 32 KiB.",
+        ));
+    }
+    if !crate::context_migration::secret_line_numbers(prompt).is_empty() {
+        return Err(AppError::new(
+            "harness_prompt_secret",
+            "Remove possible credentials from the prompt before sending it to an external coding tool.",
+        ));
+    }
+    crate::harnesses::task_command(harness, input.model.as_deref(), prompt)?;
+    ensure_task_idle(&state, &input.session_id)?;
+    let receiver = state.reserve_run(&input.session_id)?;
+    let result = (|| {
+        let mut session = state.database.session(&input.session_id)?;
+        if !matches!(
+            &session.status,
+            SessionStatus::Completed | SessionStatus::Failed | SessionStatus::Cancelled
+        ) {
+            return Err(AppError::new(
+                "task_not_ready_for_harness",
+                "Finish or stop the current task before running an external coding tool.",
+            ));
+        }
+        if session.task_mode != TaskMode::Agent {
+            return Err(AppError::new(
+                "plan_harness_not_allowed",
+                "Plan tasks are read-only and cannot be continued by an external coding tool.",
+            ));
+        }
+        if session.workspace_mode != WorkspaceMode::Isolated
+            || session.worktree_path.is_none()
+            || session.git_branch.is_none()
+        {
+            return Err(AppError::new(
+                "harness_requires_worktree",
+                "External coding tools can only run in an isolated task workspace.",
+            ));
+        }
+        crate::harnesses::validate_task_permissions(
+            harness,
+            session.permission_policy.mode,
+            session.permission_policy.read_files,
+            session.permission_policy.write_files,
+            session.permission_policy.git,
+            session.permission_policy.shell,
+        )?;
+        if session.messages.len() > 256 {
+            return Err(AppError::new(
+                "session_limit",
+                "This session has reached its history limit. Start a new task.",
+            ));
+        }
+        if session.title == "New session" || session.title == "New task" {
+            session.title = task_title(prompt);
+        }
+        session
+            .messages
+            .push(AgentMessage::text(MessageRole::User, prompt));
+        session.execution_harness = Some(harness.as_str().into());
+        session.execution_model = input
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned);
+        session.status = SessionStatus::Queued;
+        session.archived_at = None;
+        session.error = None;
+        session.updated_at = now();
+        state.database.save_session(&session)?;
+        Ok(session)
+    })();
+    match result {
+        Ok(session) => {
+            let shared = Arc::clone(&state);
+            tauri::async_runtime::spawn(agent::run_external_harness(
+                shared,
+                Box::new(TauriEvents(app)),
+                session.clone(),
+                harness,
+                input.model,
+                receiver,
+            ));
+            Ok(session)
+        }
+        Err(error) => {
+            state.release_run(&input.session_id);
+            Err(error)
+        }
+    }
+}
+
 /// Previews the MCP servers other tools keep in this project's files. Nothing is read
 /// into Octran Code's settings until the user imports the ones they select.
 #[tauri::command]
@@ -1929,6 +2052,8 @@ pub async fn create_session(
         pinned: false,
         queued_follow_ups: Vec::new(),
         parent_session_id: parent_session.map(|parent| parent.id),
+        execution_harness: None,
+        execution_model: None,
         id: session_id,
         project_id: input.project_id,
         provider_id: input.provider_id,
@@ -2432,6 +2557,8 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
         pinned: false,
         queued_follow_ups: Vec::new(),
         parent_session_id: None,
+        execution_harness: None,
+        execution_model: None,
         id: new_id.clone(),
         project_id: source.project_id,
         provider_id: source.provider_id,

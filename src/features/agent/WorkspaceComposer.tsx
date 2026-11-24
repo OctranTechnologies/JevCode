@@ -1,10 +1,11 @@
-import { ArrowUp, ChevronDown, FilePlus2, GitBranch, ListPlus, Paperclip, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, FilePlus2, GitBranch, ListPlus, Paperclip, Play, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import type { ModelPreferences, ModelReference, Provider, QueuedFollowUp, SkillSummary, WorkspaceMode } from '../../types/domain';
+import type { HarnessStatus, ModelPreferences, ModelReference, Provider, QueuedFollowUp, SkillSummary, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 import { DisclosureMenu } from '../../components/DisclosureMenu';
 import { filterSkills } from '../../lib/skills';
 import './childTask.css';
+import './harnesses.css';
 
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
@@ -12,6 +13,7 @@ export function WorkspaceComposer({
   onSubmit, onQueueFollowUp, canQueueFollowUp, queuedFollowUps, onRemoveQueuedFollowUp, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
   sessionLocked, desktopAllowed, providerConnected, authRouteLabel, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false, skills, selectedSkills, onSkillSelect, onSkillRemove,
   delegationParentTitle, canDelegate = false, onDelegate, onCancelDelegation,
+  harnesses, harnessId, setHarnessId, harnessModel, setHarnessModel, canRunHarness, onRunHarness,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -59,6 +61,13 @@ export function WorkspaceComposer({
   canDelegate?: boolean;
   onDelegate?: () => void;
   onCancelDelegation?: () => void;
+  harnesses: HarnessStatus[];
+  harnessId: string;
+  setHarnessId: (id: string) => void;
+  harnessModel: string;
+  setHarnessModel: (model: string) => void;
+  canRunHarness: boolean;
+  onRunHarness: () => void;
 }) {
   const provider = providers.find(item => item.id === providerId);
   const workspaceUnavailable = workspaceMode === 'isolated' && (!canIsolate || !baseBranch || !branches.includes(baseBranch));
@@ -67,6 +76,8 @@ export function WorkspaceComposer({
   const [skillQuery, setSkillQuery] = useState('');
   const searchableSkills = availableSkills.length > 5;
   const shownSkills = searchableSkills ? filterSkills(availableSkills, skillQuery) : availableSkills;
+  const supportedHarnesses = harnesses.filter(item => item.taskExecutionSupported);
+  const selectedHarness = harnesses.find(item => item.id === harnessId);
   return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {mode === 'plan' && <p role="status" className="composer-footnote">Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.</p>}
     {delegationParentTitle && <div className="child-task-banner" role="status"><GitBranch size={14} /><span>New child task from <strong>{delegationParentTitle}</strong>. It will start on the parent branch in a separate worktree.</span><button type="button" onClick={onCancelDelegation}>Cancel</button></div>}
@@ -100,12 +111,21 @@ export function WorkspaceComposer({
               <label className="composer-option-row"><span><strong>Task approach</strong><small>Plan tasks stay read-only. Implementation requires a new Agent task.</small></span><select value={mode} disabled={sessionLocked || sending || busy} onChange={event => onMode(event.target.value as 'agent' | 'plan')} aria-label="Task approach"><option value="agent">Agent</option><option value="plan">Plan · read-only</option></select></label>
               <label className="composer-option-row composer-context-toggle"><span><strong>Project context</strong><small>Allow this task to inspect project files.</small></span><input type="checkbox" checked={includeProject} disabled={sessionLocked} onChange={event => setIncludeProject(event.target.checked)} /></label>
               {canDelegate && <button type="button" className="composer-delegate-choice" onClick={onDelegate}><GitBranch size={13} /><span>Create a child task from this branch</span></button>}
+              {supportedHarnesses.length > 0 && <div className="composer-harness-options">
+                <label className="composer-option-row"><span><strong>External coding tool</strong><small>Continue this isolated task with a local CLI.</small></span><select value={harnessId} disabled={busy || sending} onChange={event => setHarnessId(event.target.value)} aria-label="External coding tool">
+                  <option value="">Choose a tool</option>
+                  {supportedHarnesses.map(item => <option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed ? '' : ' · not installed'}</option>)}
+                </select></label>
+                <label className="composer-harness-model"><span>Model override</span><input value={harnessModel} disabled={busy || sending || !selectedHarness?.installed} onChange={event => setHarnessModel(event.target.value)} placeholder="Use CLI default" maxLength={120} aria-label="External coding tool model override" /></label>
+                <p className="composer-options-note">{selectedHarness?.taskPermissionSummary ?? 'Only supported Codex and Claude adapters can run tasks. Other detected tools are not launched.'}</p>
+                {selectedHarness?.installed && <p className="composer-options-note">A task with read and write permissions is required; Codex also requires Full Access command and Git permissions.</p>}
+              </div>}
             </div>
           </DisclosureMenu>
         </div>
         <div className="composer-controls-right">
           <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked || sending} compact openRequest={modelPickerOpenRequest} onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />
-          {busy ? <>{canQueueFollowUp && <button type="button" className="composer-queue-button" onClick={() => onQueueFollowUp(draft)} disabled={!desktopAllowed || sending || !draft.trim()} title="Queue this follow-up to run after the current task"><ListPlus size={13} /><span>Queue</span></button>}<button type="button" className="composer-stop-button swap-in" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button></> : <button type="submit" className="composer-send-button swap-in" disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open Octran Code desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button>}
+          {busy ? <>{canQueueFollowUp && <button type="button" className="composer-queue-button" onClick={() => onQueueFollowUp(draft)} disabled={!desktopAllowed || sending || !draft.trim()} title="Queue this follow-up to run after the current task"><ListPlus size={13} /><span>Queue</span></button>}<button type="button" className="composer-stop-button swap-in" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button></> : <>{canRunHarness && <button type="button" className="composer-harness-button swap-in" onClick={onRunHarness} disabled={sending || !draft.trim()} title={`Run this follow-up with ${selectedHarness?.name ?? 'the selected CLI'}`}><Play size={12} fill="currentColor" /><span>{sending ? 'Starting' : `Run ${selectedHarness?.name ?? 'CLI'}`}</span></button>}<button type="submit" className="composer-send-button swap-in" disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open Octran Code desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button></>}
         </div>
       </div>
     </form>

@@ -429,6 +429,11 @@ pub struct AgentSession {
     /// Parent task whose branch this task was created to extend.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
+    /// Last external harness used for this task's worktree, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_model: Option<String>,
     pub id: String,
     pub project_id: String,
     pub provider_id: String,
