@@ -1805,6 +1805,7 @@ pub async fn create_session(
     let session = AgentSession {
         task_mode: input.task_mode,
         pinned: false,
+        queued_follow_ups: Vec::new(),
         id: session_id,
         project_id: input.project_id,
         provider_id: input.provider_id,
@@ -2200,6 +2201,41 @@ pub fn set_session_pinned(
 }
 
 #[tauri::command]
+pub fn queue_follow_up(
+    session_id: String,
+    content: String,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let content = content.trim();
+    if content.is_empty() || content.len() > 32_768 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Enter a follow-up of up to 32 KiB.",
+        ));
+    }
+    let runs = state.runs.lock().map_err(AppError::internal)?;
+    if !runs.contains_key(&session_id) {
+        return Err(AppError::new(
+            "invalid_state",
+            "This task has already finished. Send a new message to continue it.",
+        ));
+    }
+    state.database.enqueue_follow_up(&session_id, content)
+}
+
+#[tauri::command]
+pub fn remove_queued_follow_up(
+    session_id: String,
+    follow_up_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let _runs = state.runs.lock().map_err(AppError::internal)?;
+    state
+        .database
+        .remove_queued_follow_up(&session_id, &follow_up_id)
+}
+
+#[tauri::command]
 pub fn delete_session(session_id: String, state: State<'_, SharedState>) -> AppResult<()> {
     let runs = state.runs.lock().map_err(AppError::internal)?;
     if runs.contains_key(&session_id) {
@@ -2271,6 +2307,7 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
     let session = AgentSession {
         task_mode: source.task_mode,
         pinned: false,
+        queued_follow_ups: Vec::new(),
         id: new_id.clone(),
         project_id: source.project_id,
         provider_id: source.provider_id,

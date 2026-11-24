@@ -1,6 +1,7 @@
 use crate::{
     config::AppConfig,
     credentials::CredentialStore,
+    domain::AgentSession,
     error::{AppError, AppResult},
     extensions::ExtensionRegistry,
     mcp::McpManager,
@@ -62,6 +63,29 @@ impl AppState {
     pub fn release_run(&self, id: &str) {
         if let Ok(mut runs) = self.runs.lock() {
             runs.remove(id);
+        }
+    }
+
+    /// Start the next queued follow-up while holding the same lock that guards
+    /// queue additions. If the queue is empty, release the task's run slot.
+    pub fn start_next_queued_follow_up_or_release(
+        &self,
+        id: &str,
+    ) -> AppResult<Option<AgentSession>> {
+        let mut runs = self.runs.lock().map_err(AppError::internal)?;
+        if !runs.contains_key(id) {
+            return Ok(None);
+        }
+        match self.database.start_next_queued_follow_up(id) {
+            Ok(Some(session)) => Ok(Some(session)),
+            Ok(None) => {
+                runs.remove(id);
+                Ok(None)
+            }
+            Err(error) => {
+                runs.remove(id);
+                Err(error)
+            }
         }
     }
 

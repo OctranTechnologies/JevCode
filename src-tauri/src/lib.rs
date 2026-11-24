@@ -158,6 +158,8 @@ pub fn run() {
             commands::archive_session,
             commands::resume_session,
             commands::set_session_pinned,
+            commands::queue_follow_up,
+            commands::remove_queued_follow_up,
             commands::delete_session,
             commands::duplicate_session,
             commands::fork_session,

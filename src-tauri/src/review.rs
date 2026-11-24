@@ -1215,6 +1215,7 @@ mod tests {
         let session = AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
             pinned: false,
+            queued_follow_ups: Vec::new(),
             id: "review-session".into(),
             project_id: project.id,
             provider_id: "preview".into(),

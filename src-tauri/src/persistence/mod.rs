@@ -1258,11 +1258,137 @@ impl Database {
             .optional()?;
         let mut saved = session.clone();
         if let Some(data) = existing_data {
-            saved.pinned = decode_session(&data)?.pinned;
+            let existing = decode_session(&data)?;
+            saved.pinned = existing.pinned;
+            saved.queued_follow_ups = existing.queued_follow_ups;
+            if existing.updated_at > saved.updated_at {
+                saved.updated_at = existing.updated_at;
+            }
         }
         transaction.execute("INSERT INTO sessions (id, project_id, updated_at, data) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data", params![saved.id, saved.project_id, saved.updated_at, serde_json::to_string(&saved)?])?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn enqueue_follow_up(&self, id: &str, content: &str) -> AppResult<AgentSession> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let data = transaction
+            .query_row("SELECT data FROM sessions WHERE id = ?1", [id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?
+            .ok_or_else(|| AppError::new("not_found", "Task not found."))?;
+        let mut session = decode_session(&data)?;
+        if !matches!(
+            &session.status,
+            SessionStatus::Queued
+                | SessionStatus::Planning
+                | SessionStatus::Working
+                | SessionStatus::Completed
+        ) {
+            return Err(AppError::new(
+                "invalid_state",
+                "Follow-ups can be queued while a task is running.",
+            ));
+        }
+        if session.archived_at.is_some() {
+            return Err(AppError::new(
+                "invalid_state",
+                "Resume this task before queuing a follow-up.",
+            ));
+        }
+        if session.queued_follow_ups.len() >= 20
+            || session.messages.len() + (session.queued_follow_ups.len() + 1) * 2 > 256
+        {
+            return Err(AppError::new(
+                "queue_limit",
+                "This task has reached its follow-up queue limit.",
+            ));
+        }
+        session.queued_follow_ups.push(QueuedFollowUp {
+            id: crate::domain::id(),
+            content: content.to_owned(),
+            created_at: now(),
+        });
+        session.updated_at = now();
+        transaction.execute(
+            "UPDATE sessions SET updated_at = ?1, data = ?2 WHERE id = ?3",
+            params![session.updated_at, serde_json::to_string(&session)?, id],
+        )?;
+        transaction.commit()?;
+        Ok(session)
+    }
+
+    pub fn remove_queued_follow_up(&self, id: &str, follow_up_id: &str) -> AppResult<AgentSession> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let data = transaction
+            .query_row("SELECT data FROM sessions WHERE id = ?1", [id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?
+            .ok_or_else(|| AppError::new("not_found", "Task not found."))?;
+        let mut session = decode_session(&data)?;
+        let index = session
+            .queued_follow_ups
+            .iter()
+            .position(|follow_up| follow_up.id == follow_up_id)
+            .ok_or_else(|| AppError::new("not_found", "That queued follow-up no longer exists."))?;
+        session.queued_follow_ups.remove(index);
+        session.updated_at = now();
+        transaction.execute(
+            "UPDATE sessions SET updated_at = ?1, data = ?2 WHERE id = ?3",
+            params![session.updated_at, serde_json::to_string(&session)?, id],
+        )?;
+        transaction.commit()?;
+        Ok(session)
+    }
+
+    pub fn start_next_queued_follow_up(&self, id: &str) -> AppResult<Option<AgentSession>> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let data = transaction
+            .query_row("SELECT data FROM sessions WHERE id = ?1", [id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?
+            .ok_or_else(|| AppError::new("not_found", "Task not found."))?;
+        let mut session = decode_session(&data)?;
+        if session.status != SessionStatus::Completed || session.queued_follow_ups.is_empty() {
+            return Ok(None);
+        }
+        if session.messages.len() >= 256 {
+            return Err(AppError::new(
+                "session_limit",
+                "This task has reached its history limit. Remove queued follow-ups or start a new task.",
+            ));
+        }
+        let follow_up = session.queued_follow_ups.remove(0);
+        if session.working_context.objective.is_empty() {
+            session.working_context.objective = follow_up.content.clone();
+        }
+        session
+            .working_context
+            .protected_instructions
+            .push(follow_up.content.clone());
+        session.working_context.outstanding_tasks = vec![follow_up.content.clone()];
+        session.working_context.completion_review = None;
+        session
+            .messages
+            .push(AgentMessage::text(MessageRole::User, follow_up.content));
+        session.status = SessionStatus::Queued;
+        session.iterations = 0;
+        session.tool_calls = 0;
+        session.tool_rounds = 0;
+        session.error = None;
+        session.updated_at = now();
+        transaction.execute(
+            "UPDATE sessions SET updated_at = ?1, data = ?2 WHERE id = ?3",
+            params![session.updated_at, serde_json::to_string(&session)?, id],
+        )?;
+        transaction.commit()?;
+        Ok(Some(session))
     }
 
     pub fn set_session_pinned(&self, id: &str, pinned: bool) -> AppResult<AgentSession> {
@@ -1861,6 +1987,85 @@ mod tests {
         let reopened_session = reopened.session(&session.id).unwrap();
         assert!(reopened_session.pinned);
         assert_eq!(reopened_session.title, "Updated by an in-flight task");
+    }
+
+    #[test]
+    fn queued_follow_ups_are_fifo_durable_and_start_as_user_turns() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("queued-follow-ups.sqlite");
+        let mut session: AgentSession =
+            serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
+        session.status = SessionStatus::Completed;
+        session.messages = vec![AgentMessage::text(MessageRole::User, "Initial task.")];
+        session.pending_tool_call = None;
+        session.pending_permission = None;
+        session.queued_tool_calls.clear();
+        let database = Database::open(&path).unwrap();
+        database
+            .save_project(&Project {
+                id: session.project_id.clone(),
+                workspace_id: "local".into(),
+                name: "Queued task test".into(),
+                path: root.path().display().to_string(),
+                repository_root: None,
+                active_branch: None,
+                last_opened_at: now(),
+                project_instructions: String::new(),
+                preferred_model: None,
+                permissions: PermissionPolicy::default(),
+                is_recent: true,
+                reduced_safety_opt_in: false,
+                guidance_precedence: crate::domain::GuidancePrecedence::default(),
+                created_at: now(),
+            })
+            .unwrap();
+        database.save_session(&session).unwrap();
+
+        let first = database
+            .enqueue_follow_up(&session.id, "Run the focused tests.")
+            .unwrap();
+        let first_id = first.queued_follow_ups[0].id.clone();
+        let second = database
+            .enqueue_follow_up(&session.id, "Then summarize the diff.")
+            .unwrap();
+        let second_id = second.queued_follow_ups[1].id.clone();
+
+        // A worker checkpoint based on the earlier snapshot must not erase the queue.
+        database.save_session(&session).unwrap();
+        let persisted = database.session(&session.id).unwrap();
+        assert_eq!(persisted.queued_follow_ups.len(), 2);
+        assert!(persisted.updated_at >= second.updated_at);
+
+        let removed = database
+            .remove_queued_follow_up(&session.id, &second_id)
+            .unwrap();
+        assert_eq!(removed.queued_follow_ups.len(), 1);
+        assert_eq!(removed.queued_follow_ups[0].id, first_id);
+
+        let started = database
+            .start_next_queued_follow_up(&session.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(started.status, SessionStatus::Queued);
+        assert!(started.queued_follow_ups.is_empty());
+        assert_eq!(
+            started.messages.last().unwrap().content,
+            "Run the focused tests."
+        );
+        assert!(started
+            .working_context
+            .protected_instructions
+            .contains(&"Run the focused tests.".to_owned()));
+        drop(database);
+
+        let reopened = Database::open(&path).unwrap();
+        let resumed = reopened.session(&session.id).unwrap();
+        assert_eq!(resumed.status, SessionStatus::Failed);
+        assert_eq!(
+            resumed.messages.last().unwrap().content,
+            "Run the focused tests."
+        );
+        assert!(resumed.queued_follow_ups.is_empty());
     }
 
     #[test]

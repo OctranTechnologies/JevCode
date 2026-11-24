@@ -5,7 +5,7 @@ import { WorkspaceSidebar } from '../src/features/workspaces/WorkspaceSidebar';
 const noop = () => undefined;
 
 function renderSidebar(collapsed: boolean) {
-  return renderToStaticMarkup(<WorkspaceSidebar projects={[]} sessions={[]} projectId="" sessionId={null} view="overview" collapsed={collapsed} opening={false} showArchived={false} interfaceMode="maximum" onShowArchived={noop} onCollapse={noop} onProject={noop} onSession={noop} onRenameSession={noop} onArchiveSession={noop} onDeleteSession={noop} onDuplicateSession={noop} onForkSession={noop} onView={noop} onNew={noop} onOpen={noop} onCreate={noop} onRemoveRecent={noop} onReveal={noop} onSearch={noop} />);
+  return renderToStaticMarkup(<WorkspaceSidebar projects={[]} sessions={[]} projectId="" sessionId={null} view="overview" collapsed={collapsed} opening={false} showArchived={false} interfaceMode="maximum" onShowArchived={noop} onCollapse={noop} onProject={noop} onSession={noop} onRenameSession={noop} onArchiveSession={noop} onDeleteSession={noop} onDuplicateSession={noop} onForkSession={noop} onTogglePinSession={noop} onView={noop} onNew={noop} onOpen={noop} onCreate={noop} onRemoveRecent={noop} onReveal={noop} onSearch={noop} />);
 }
 
 function headerOf(html: string) {

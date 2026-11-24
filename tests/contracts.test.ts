@@ -10,6 +10,8 @@ const session = JSON.parse(readFileSync(new URL('./fixtures/session.json', impor
 describe('desktop contracts', () => {
   it('accepts the shared Rust wire fixture and the provider catalog', () => {
     const parsed = sessionSchema.parse(session);
+    expect(parsed.pinned).toBe(false);
+    expect(parsed.queuedFollowUps).toEqual([]);
     expect(parsed.pendingToolCall?.name).toBe('git_status');
     const result = bootstrapSchema.parse({ workspace: { id: 'local', name: 'Local workspace', projects: [] }, providers: defaults.providers, accounts: [], sessions: [parsed], usage: [], tools: [], permissionPolicy: parsed.permissionPolicy, modelPreferences: { defaultModel: null, favorites: [], recent: [] }, openaiAuthStatus: { apiKey: { providerId: 'openai', providerName: 'OpenAI', state: 'not_connected', authMethod: null, accountLabel: null, connectedAt: null, lastValidatedAt: null, lastErrorCode: null, availableMethods: [] }, chatgpt: { available: true, connectedAccounts: [], selectedAccountId: null, selectedAuthMethod: null, unavailableReason: null } }, updatePreferences: { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null } });
     expect(result.providers.map(provider => provider.id)).toEqual(['preview', 'openai', 'anthropic', 'gemini', 'opencode-zen', 'opencode-go']);

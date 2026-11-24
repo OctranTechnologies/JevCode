@@ -1,6 +1,6 @@
-import { ArrowUp, ChevronDown, FilePlus2, Paperclip, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
+import { ArrowUp, ChevronDown, FilePlus2, ListPlus, Paperclip, Search, ShieldCheck, SlidersHorizontal, Sparkles, Square, X } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import type { ModelPreferences, ModelReference, Provider, SkillSummary, WorkspaceMode } from '../../types/domain';
+import type { ModelPreferences, ModelReference, Provider, QueuedFollowUp, SkillSummary, WorkspaceMode } from '../../types/domain';
 import { ModelPicker } from '../models/ModelPicker';
 import { DisclosureMenu } from '../../components/DisclosureMenu';
 import { filterSkills } from '../../lib/skills';
@@ -8,7 +8,7 @@ import { filterSkills } from '../../lib/skills';
 export function WorkspaceComposer({
   draft, setDraft, providers, modelPreferences, providerId, modelId, onModel, onToggleFavorite, onSetDefault, modelLocked, mode, onMode,
   workspaceMode, baseBranch, branches, canIsolate, modelPickerOpenRequest,
-  onSubmit, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
+  onSubmit, onQueueFollowUp, canQueueFollowUp, queuedFollowUps, onRemoveQueuedFollowUp, onStop, onAttach, attachments, onRemoveAttachment, busy, sending, hasProject,
   sessionLocked, desktopAllowed, providerConnected, authRouteLabel, includeProject, setIncludeProject, approval, lastPrompt, dropActive = false, skills, selectedSkills, onSkillSelect, onSkillRemove,
 }: {
   draft: string;
@@ -29,6 +29,10 @@ export function WorkspaceComposer({
   branches: string[];
   canIsolate: boolean;
   onSubmit: () => void;
+  onQueueFollowUp: (content: string) => void;
+  canQueueFollowUp: boolean;
+  queuedFollowUps: QueuedFollowUp[];
+  onRemoveQueuedFollowUp: (id: string) => void;
   onStop: () => void;
   onAttach: () => void;
   attachments: string[];
@@ -60,11 +64,19 @@ export function WorkspaceComposer({
   return <section className={`composer-dock${approval ? ' has-approval' : ''}${dropActive ? ' is-drop-target' : ''}`} aria-label="Task composer">
     {mode === 'plan' && <p role="status" className="composer-footnote">Plan mode is read-only. Edits, commands, and MCP execution are blocked. Start a new Agent task to implement this plan.</p>}
     {approval}
-    <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); }}>
+    {queuedFollowUps.length > 0 && <div className="queued-follow-ups" aria-label="Queued follow-ups">
+      <div className="queued-follow-ups-heading"><strong>Queued follow-ups</strong><span>{queuedFollowUps.length}</span></div>
+      <ol>{queuedFollowUps.map((item, index) => <li key={item.id}>
+        <span className="queued-follow-up-index">{index + 1}</span>
+        <span className="queued-follow-up-content">{item.content}</span>
+        <button type="button" onClick={() => onRemoveQueuedFollowUp(item.id)} disabled={sending} aria-label={`Remove queued follow-up ${index + 1}`} title="Remove follow-up"><X size={13} /></button>
+      </li>)}</ol>
+    </div>}
+    <form className="workspace-composer" onSubmit={event => { event.preventDefault(); if (busy) { if (canQueueFollowUp && !sending && draft.trim()) onQueueFollowUp(draft); } else if (!unavailable && !sending && draft.trim()) onSubmit(); }}>
       {selectedSkills.length > 0 && <div className="attached-files" aria-label="Skills for this task">{selectedSkills.map(id => { const skill = skills.find(item => item.id === id); const label = skill?.name ?? id; return <span className="attached-file" key={id}><Sparkles size={12} /><span>Skill: {label}</span><button type="button" onClick={() => onSkillRemove(id)} aria-label={`Remove skill ${label}`}><X size={12} /></button></span>; })}</div>}
       {attachments.length > 0 && <div className="attached-files" aria-label="Files selected as task context">{attachments.map(path => <span className="attached-file" key={path}><FilePlus2 size={12} /><span>{path}</span><button type="button" onClick={() => onRemoveAttachment(path)} aria-label={`Remove ${path}`}><X size={12} /></button></span>)}</div>}
       <label className="sr-only" htmlFor="workspace-prompt">Describe a task for Octran Code</label>
-      <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={!hasProject ? 'Open a project to start a task…' : busy ? 'Octran Code is working. Draft your next message here…' : 'Ask Octran Code to explore, explain, or change something…'} rows={3} onKeyDown={event => { if (event.key === 'ArrowUp' && !draft && lastPrompt) { event.preventDefault(); setDraft(lastPrompt); } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!unavailable && !busy && !sending && draft.trim()) onSubmit(); } }} />
+      <textarea id="workspace-prompt" value={draft} onChange={event => setDraft(event.target.value)} placeholder={!hasProject ? 'Open a project to start a task…' : busy ? 'Octran Code is working. Draft your next message here…' : 'Ask Octran Code to explore, explain, or change something…'} rows={3} onKeyDown={event => { if (event.key === 'ArrowUp' && !draft && lastPrompt) { event.preventDefault(); setDraft(lastPrompt); } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (busy) { if (canQueueFollowUp && !sending && draft.trim()) onQueueFollowUp(draft); } else if (!unavailable && !sending && draft.trim()) onSubmit(); } }} />
       <div className="composer-toolbar">
         <div className="composer-tool-actions">
           <button type="button" className="composer-tool-button" onClick={onAttach} disabled={!desktopAllowed || !hasProject || busy} title={desktopAllowed ? 'Attach files from this project' : 'Use the desktop app to attach local files'}><Paperclip size={14} /><span>Attach</span></button>
@@ -85,7 +97,7 @@ export function WorkspaceComposer({
         </div>
         <div className="composer-controls-right">
           <ModelPicker providers={providers} preferences={modelPreferences} providerId={providerId} modelId={modelId} locked={modelLocked || sending} compact openRequest={modelPickerOpenRequest} onSelect={onModel} onToggleFavorite={onToggleFavorite} onSetDefault={onSetDefault} />
-          {busy ? <button type="button" className="composer-stop-button swap-in" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button> : <button type="submit" className="composer-send-button swap-in"disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open Octran Code desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button>}
+          {busy ? <>{canQueueFollowUp && <button type="button" className="composer-queue-button" onClick={() => onQueueFollowUp(draft)} disabled={!desktopAllowed || sending || !draft.trim()} title="Queue this follow-up to run after the current task"><ListPlus size={13} /><span>Queue</span></button>}<button type="button" className="composer-stop-button swap-in" onClick={onStop} aria-label="Stop agent task"><Square size={13} fill="currentColor" /><span>Stop</span></button></> : <button type="submit" className="composer-send-button swap-in" disabled={unavailable || sending || !draft.trim()} title={!desktopAllowed ? 'Open Octran Code desktop to send a task' : undefined} aria-label="Send task"><span>{sending ? 'Sending' : 'Send'}</span><ArrowUp size={14} /></button>}
         </div>
       </div>
     </form>

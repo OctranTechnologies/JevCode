@@ -703,6 +703,7 @@ mod tests {
         AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
             pinned: false,
+            queued_follow_ups: Vec::new(),
             id: "integration-session".into(),
             project_id: "integration-project".into(),
             provider_id: "preview".into(),

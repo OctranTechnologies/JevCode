@@ -1,6 +1,6 @@
 import {
   Archive, BarChart3, ChevronDown, ChevronsLeft, ChevronsRight, Copy, ExternalLink, Folder, FolderPlus, GitBranch,
-  GitFork, Layers3, MessageSquare, MoreHorizontal, Pencil, Plus, Puzzle, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
+  GitFork, Inbox, Layers3, MessageSquare, MoreHorizontal, Pencil, Pin, Plus, Puzzle, RotateCcw, Search, Settings2, ShieldCheck, Trash2, X,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { displayPath } from '../../lib/paths';
@@ -12,7 +12,7 @@ import type { View } from './Sidebar';
 
 export function WorkspaceSidebar({
   projects, sessions, projectId, sessionId, view, provider, collapsed, opening, showArchived, interfaceMode, onShowArchived, onCollapse,
-  onProject, onSession, onRenameSession, onArchiveSession, onDeleteSession, onDuplicateSession, onForkSession,
+  onProject, onSession, onRenameSession, onArchiveSession, onDeleteSession, onDuplicateSession, onForkSession, onTogglePinSession,
   onView, onNew, onOpen, onCreate, onRemoveRecent, onReveal, onSearch,
 }: {
   projects: Project[];
@@ -34,6 +34,7 @@ export function WorkspaceSidebar({
   onDeleteSession: (session: AgentSession) => void;
   onDuplicateSession: (session: AgentSession) => void;
   onForkSession: (session: AgentSession) => void;
+  onTogglePinSession: (session: AgentSession) => void;
   onView: (view: View) => void;
   onNew: () => void;
   onOpen: () => void;
@@ -50,7 +51,10 @@ export function WorkspaceSidebar({
   useEffect(() => updateService.subscribe(setUpdate), []);
   const updatePending = updateService.hasPendingUpdate();
   const recentProjects = projects.filter(project => project.isRecent).slice(0, 5);
-  const visibleTasks = sessions.filter(session => showArchived ? !!session.archivedAt : !session.archivedAt);
+  const visibleTasks = sessions
+    .filter(session => showArchived ? !!session.archivedAt : !session.archivedAt)
+    .sort((left, right) => Number(right.pinned === true) - Number(left.pinned === true) || right.updatedAt.localeCompare(left.updatedAt));
+  const inboxCount = sessions.filter(session => !session.archivedAt && ['queued', 'planning', 'working', 'waiting_for_permission', 'waiting_for_user'].includes(session.status)).length;
   const projectRow = (project: Project, prefix: string) => {
     const active = projectId === project.id && view === 'overview';
     const menuOpen = projectMenu === `${prefix}-${project.id}`;
@@ -76,6 +80,10 @@ export function WorkspaceSidebar({
 
     <button className="new-task-button" onClick={onNew} title={`New task · ${modifier} N`}>
       <Plus size={16} strokeWidth={2.2} /><span>New task</span><kbd>{modifier} N</kbd>
+    </button>
+
+    <button className={`task-inbox-nav${view === 'inbox' ? ' is-active' : ''}`} onClick={() => onView('inbox')} aria-current={view === 'inbox' ? 'page' : undefined}>
+      <Inbox size={15} /><span>Task inbox</span>{inboxCount > 0 && <span className="task-inbox-count">{inboxCount}</span>}
     </button>
 
     <button className="sidebar-search" onClick={onSearch} title={`Search projects and tasks · ${modifier} K`}>
@@ -106,6 +114,7 @@ export function WorkspaceSidebar({
                 : <button onClick={() => { setTaskMenu(null); onArchiveSession(session); }}><Archive size={13} />Archive</button>}
               <button onClick={() => { setTaskMenu(null); onDuplicateSession(session); }}><Copy size={13} />Duplicate</button>
               <button onClick={() => { setTaskMenu(null); onForkSession(session); }}><GitFork size={13} />Fork</button>
+              <button onClick={() => { setTaskMenu(null); onTogglePinSession(session); }}><Pin size={13} />{session.pinned ? 'Unpin task' : 'Pin task'}</button>
               <button className="task-delete-action" onClick={() => { setTaskMenu(null); onDeleteSession(session); }}><Trash2 size={13} />Delete</button>
             </div>}
           </div>;

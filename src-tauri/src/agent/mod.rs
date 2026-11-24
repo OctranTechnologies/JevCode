@@ -2653,7 +2653,20 @@ pub fn checkpoint(
     session: &mut AgentSession,
 ) -> AppResult<()> {
     session.updated_at = now();
+    let _runs = state.runs.lock().map_err(AppError::internal)?;
+    if let Ok(saved) = state.database.session(&session.id) {
+        session.pinned = saved.pinned;
+        session.queued_follow_ups = saved.queued_follow_ups;
+        if saved.updated_at > session.updated_at {
+            session.updated_at = saved.updated_at;
+        }
+    }
     state.database.save_session(session)?;
+    if let Ok(saved) = state.database.session(&session.id) {
+        session.pinned = saved.pinned;
+        session.queued_follow_ups = saved.queued_follow_ups;
+        session.updated_at = saved.updated_at;
+    }
     sink.session_updated(session);
     Ok(())
 }
@@ -2717,56 +2730,72 @@ async fn run_inner(
     runtime: AgentRuntime,
 ) {
     let session_id = session.id.clone();
-    let result = tokio::select! {
-        biased;
-        result = drive(&state, sink.as_ref(), &mut session, provider_override, &runtime, cancel.clone()) => result,
-        _ = cancel.changed() => Err(AppError::new("cancelled", "Run stopped by you.")),
-    };
-    if let Err(error) = result {
-        tracing::warn!(session_id = %session.id, code = %error.code, "Agent run ended");
-        if let Ok(provider) = state.config.provider(&session.provider_id) {
-            let stored = state
-                .database
-                .provider_account(&session.provider_id)
-                .ok()
-                .flatten();
-            if let Ok(Some(account)) =
-                crate::auth::account_after_request_error(provider, stored, &error.code)
-            {
-                if state.database.save_provider_account(&account).is_ok() {
-                    sink.provider_account_updated(&account);
+    loop {
+        let result = tokio::select! {
+            biased;
+            result = drive(&state, sink.as_ref(), &mut session, provider_override.as_deref(), &runtime, cancel.clone()) => result,
+            _ = cancel.changed() => Err(AppError::new("cancelled", "Run stopped by you.")),
+        };
+        if let Err(error) = result {
+            tracing::warn!(session_id = %session.id, code = %error.code, "Agent run ended");
+            if let Ok(provider) = state.config.provider(&session.provider_id) {
+                let stored = state
+                    .database
+                    .provider_account(&session.provider_id)
+                    .ok()
+                    .flatten();
+                if let Ok(Some(account)) =
+                    crate::auth::account_after_request_error(provider, stored, &error.code)
+                {
+                    if state.database.save_provider_account(&account).is_ok() {
+                        sink.provider_account_updated(&account);
+                    }
                 }
             }
-        }
-        session.status = if error.code == "cancelled" {
-            SessionStatus::Cancelled
-        } else {
-            SessionStatus::Failed
-        };
-        session.error = Some(error.message.clone());
-        settle_pending(&mut session, &error.message);
-        record_activity(
-            &mut session,
-            AgentActivityKind::Progress,
-            if error.code == "cancelled" {
-                "Task cancelled."
+            session.status = if error.code == "cancelled" {
+                SessionStatus::Cancelled
             } else {
-                "Task failed."
-            },
-            None,
-        );
-        if let Err(error) = checkpoint(&state, sink.as_ref(), &mut session) {
-            tracing::error!(code = %error.code, "Could not persist terminal session state");
+                SessionStatus::Failed
+            };
+            session.error = Some(error.message.clone());
+            settle_pending(&mut session, &error.message);
+            record_activity(
+                &mut session,
+                AgentActivityKind::Progress,
+                if error.code == "cancelled" {
+                    "Task cancelled."
+                } else {
+                    "Task failed."
+                },
+                None,
+            );
+            if let Err(error) = checkpoint(&state, sink.as_ref(), &mut session) {
+                tracing::error!(code = %error.code, "Could not persist terminal session state");
+            }
+            state.release_run(&session_id);
+            break;
+        }
+
+        match state.start_next_queued_follow_up_or_release(&session_id) {
+            Ok(Some(next_session)) => {
+                session = next_session;
+                sink.session_updated(&session);
+            }
+            Ok(None) => break,
+            Err(error) => {
+                tracing::error!(session_id = %session_id, code = %error.code, "Could not start a queued follow-up");
+                state.release_run(&session_id);
+                break;
+            }
         }
     }
-    state.release_run(&session_id);
 }
 
 async fn drive(
     state: &SharedState,
     sink: &dyn EventSink,
     session: &mut AgentSession,
-    provider_override: Option<Box<dyn LlmProvider>>,
+    provider_override: Option<&dyn LlmProvider>,
     runtime: &AgentRuntime,
     mut cancel: watch::Receiver<bool>,
 ) -> AppResult<()> {
@@ -2823,10 +2852,14 @@ async fn drive(
                 "This model is no longer available. Choose another model from the picker.",
             )
         })?;
-    let adapter = match provider_override {
-        Some(provider) => provider,
-        None => providers::adapter(provider_config, state.clone())?,
+    let owned_adapter = if provider_override.is_none() {
+        Some(providers::adapter(provider_config, state.clone())?)
+    } else {
+        None
     };
+    let adapter = provider_override
+        .or(owned_adapter.as_deref())
+        .ok_or_else(|| AppError::new("internal", "Agent provider adapter is unavailable."))?;
     runtime
         .execute(
             session,
@@ -2840,7 +2873,7 @@ async fn drive(
                     .as_ref()
                     .unwrap_or(&provider_config.protocol),
                 model: &model,
-                provider: adapter.as_ref(),
+                provider: adapter,
             },
         )
         .await
@@ -3023,6 +3056,7 @@ mod tests {
         let session = AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
             pinned: false,
+            queued_follow_ups: Vec::new(),
             id: id(),
             project_id: project.id.clone(),
             provider_id: "preview".into(),
@@ -3113,6 +3147,44 @@ mod tests {
             .any(|event| event.kind == AgentActivityKind::FileInspected));
         assert_eq!(state.database.usage().unwrap().len(), 2);
         assert!(!sink.deltas.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_runs_persisted_follow_ups_in_order_after_completion() {
+        let root = tempfile::tempdir().unwrap();
+        let (state, _, session) = setup_session(root.path());
+        let receiver = state.reserve_run(&session.id).unwrap();
+        state
+            .database
+            .enqueue_follow_up(&session.id, "Run the focused tests.")
+            .unwrap();
+        let mock = MockProvider::new(vec![
+            response("The initial task is complete.", vec![]),
+            response("The focused tests pass.", vec![]),
+        ]);
+        let captured = mock.captured_messages.clone();
+
+        run_inner(
+            state.clone(),
+            Box::new(Sink::default()),
+            session.clone(),
+            receiver,
+            Some(Box::new(mock)),
+            AgentRuntime::default(),
+        )
+        .await;
+
+        let saved = state.database.session(&session.id).unwrap();
+        assert_eq!(saved.status, SessionStatus::Completed);
+        assert!(saved.queued_follow_ups.is_empty());
+        assert!(saved.messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content == "Run the focused tests."
+        }));
+        let requests = captured.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].iter().any(|message| {
+            message.role == MessageRole::User && message.content == "Run the focused tests."
+        }));
     }
 
     #[tokio::test]
@@ -4042,6 +4114,7 @@ mod tests {
         let mut session = AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
             pinned: false,
+            queued_follow_ups: Vec::new(),
             id: "compact-test".into(),
             project_id: "project".into(),
             provider_id: "preview".into(),
