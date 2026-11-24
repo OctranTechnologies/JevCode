@@ -144,6 +144,7 @@ pub fn run() {
             commands::get_app_diagnostics,
             commands::open_latest_release,
             commands::run_project_terminal,
+            commands::run_task_terminal,
             commands::project_branch,
             commands::project_task_worktrees,
             commands::task_worktree_diff,

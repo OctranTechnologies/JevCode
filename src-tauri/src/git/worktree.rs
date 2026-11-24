@@ -1143,6 +1143,7 @@ mod tests {
             iterations: 0,
             tool_calls: 0,
             activity_events: vec![],
+            terminal_runs: vec![],
             created_at: now(),
             updated_at: now(),
             error: None,

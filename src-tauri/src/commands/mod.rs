@@ -1465,6 +1465,7 @@ pub fn get_app_diagnostics(
 }
 
 const TERMINAL_OUTPUT_LIMIT: usize = 1_048_576;
+const TASK_TERMINAL_OUTPUT_LIMIT: usize = 131_072;
 
 async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Vec<u8> {
     let mut output = Vec::new();
@@ -1479,6 +1480,24 @@ async fn read_capped<R: tokio::io::AsyncRead + Unpin>(mut reader: R) -> Vec<u8> 
         }
     }
     output
+}
+
+async fn read_task_terminal_output<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+) -> (Vec<u8>, bool) {
+    let mut output = Vec::new();
+    let mut truncated = false;
+    let mut chunk = [0_u8; 8192];
+    while let Ok(read) = reader.read(&mut chunk).await {
+        if read == 0 {
+            break;
+        }
+        let remaining = TASK_TERMINAL_OUTPUT_LIMIT.saturating_sub(output.len());
+        let accepted = read.min(remaining);
+        output.extend_from_slice(&chunk[..accepted]);
+        truncated |= accepted < read;
+    }
+    (output, truncated)
 }
 
 /// This console is directly user-operated, is always rooted at the registered
@@ -1634,6 +1653,208 @@ async fn task_project_path(
         Path::new(worktree),
     )
     .await
+}
+
+fn validate_task_terminal_access(session: &AgentSession) -> AppResult<()> {
+    if session.task_mode != TaskMode::Agent {
+        return Err(AppError::new(
+            "task_terminal_unavailable",
+            "The task terminal is available for agent tasks only.",
+        ));
+    }
+    if session.workspace_mode != WorkspaceMode::Isolated || session.worktree_path.is_none() {
+        return Err(AppError::new(
+            "task_terminal_requires_worktree",
+            "Create this task in an isolated worktree before opening its terminal.",
+        ));
+    }
+    if session.permission_policy.mode != PermissionMode::FullAccess
+        || session.permission_policy.shell != PermissionDecision::Allow
+    {
+        return Err(AppError::new(
+            "task_terminal_permission_required",
+            "Set this task to Full Access and allow shell commands before running a terminal command.",
+        ));
+    }
+    if matches!(
+        session.status,
+        SessionStatus::Planning
+            | SessionStatus::Working
+            | SessionStatus::WaitingForPermission
+            | SessionStatus::WaitingForUser
+    ) {
+        return Err(AppError::new(
+            "session_busy",
+            "Wait for the active task run to finish before opening its terminal.",
+        ));
+    }
+    Ok(())
+}
+
+fn redact_task_terminal_output(output: &str) -> String {
+    output
+        .lines()
+        .map(|line| {
+            if context_migration::line_has_secret(line) {
+                "[possible secret hidden]"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunTaskTerminalInput {
+    session_id: String,
+    command_text: String,
+}
+
+#[tauri::command]
+pub async fn run_task_terminal(
+    input: RunTaskTerminalInput,
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let command_text = input.command_text.trim();
+    if command_text.is_empty() || command_text.len() > 4096 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Enter a command under 4,096 characters.",
+        ));
+    }
+    if !context_migration::secret_line_numbers(command_text).is_empty() {
+        return Err(AppError::new(
+            "terminal_secret_blocked",
+            "This command looks like it contains a credential. Read the value from a local environment variable instead.",
+        ));
+    }
+    let mut cancel = state.reserve_run(&input.session_id)?;
+    let result = async {
+        let mut session = state.database.session(&input.session_id)?;
+        validate_task_terminal_access(&session)?;
+        let project = state.database.project(&session.project_id)?;
+        let inspect = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+        let working_directory = task_project_path(&project, &session, inspect).await?;
+        let run_id = id();
+        let started_at = now();
+        session.terminal_runs.push(TaskTerminalRun {
+            id: run_id.clone(),
+            command: command_text.to_owned(),
+            output: String::new(),
+            status: TaskTerminalRunStatus::Running,
+            exit_code: None,
+            started_at,
+            completed_at: None,
+        });
+        if session.terminal_runs.len() > 12 {
+            let excess = session.terminal_runs.len() - 12;
+            session.terminal_runs.drain(0..excess);
+        }
+        session.updated_at = now();
+        state.database.save_session(&session)?;
+        TauriEvents(app.clone()).session_updated(&session);
+
+        let mut process = terminal_process(command_text);
+        process
+            .current_dir(&working_directory)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        process.creation_flags(0x08000000);
+        let mut child = match process.spawn() {
+            Ok(child) => child,
+            Err(_) => {
+                let run = session
+                    .terminal_runs
+                    .iter_mut()
+                    .find(|run| run.id == run_id)
+                    .expect("new terminal run is present");
+                run.output = "A local command interpreter is unavailable.".into();
+                run.status = TaskTerminalRunStatus::Failed;
+                run.completed_at = Some(now());
+                session.updated_at = now();
+                state.database.save_session(&session)?;
+                TauriEvents(app).session_updated(&session);
+                return Ok(session);
+            }
+        };
+        let stdout = child.stdout.take().expect("stdout is piped");
+        let stderr = child.stderr.take().expect("stderr is piped");
+        let stdout_reader = tokio::spawn(read_task_terminal_output(stdout));
+        let stderr_reader = tokio::spawn(read_task_terminal_output(stderr));
+        enum ProcessEnd {
+            Exited(std::process::ExitStatus),
+            TimedOut,
+            Cancelled,
+            WaitFailed,
+        }
+        let process_end = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(120), child.wait()) => match result {
+                Ok(Ok(status)) => ProcessEnd::Exited(status),
+                Ok(Err(_)) => ProcessEnd::WaitFailed,
+                Err(_) => ProcessEnd::TimedOut,
+            },
+            _ = cancel.changed() => ProcessEnd::Cancelled,
+        };
+        if matches!(
+            &process_end,
+            ProcessEnd::TimedOut | ProcessEnd::Cancelled | ProcessEnd::WaitFailed
+        ) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+        let (mut stdout, stdout_truncated) = stdout_reader.await.map_err(AppError::internal)?;
+        let (stderr, stderr_truncated) = stderr_reader.await.map_err(AppError::internal)?;
+        if !stderr.is_empty() {
+            if !stdout.is_empty() && !stdout.ends_with(b"\n") {
+                stdout.push(b'\n');
+            }
+            stdout.extend_from_slice(&stderr);
+        }
+        let mut output = String::from_utf8_lossy(&stdout).into_owned();
+        if stdout_truncated || stderr_truncated {
+            output.push_str("\n[Output truncated at 128 KiB per stream]");
+        }
+        let (status, exit_code) = match process_end {
+            ProcessEnd::Exited(status) if status.success() => {
+                (TaskTerminalRunStatus::Completed, status.code())
+            }
+            ProcessEnd::Exited(status) => (TaskTerminalRunStatus::Failed, status.code()),
+            ProcessEnd::TimedOut => {
+                output.push_str("\n[Command stopped after 120 seconds]");
+                (TaskTerminalRunStatus::TimedOut, None)
+            }
+            ProcessEnd::Cancelled => {
+                output.push_str("\n[Command stopped by you]");
+                (TaskTerminalRunStatus::Cancelled, None)
+            }
+            ProcessEnd::WaitFailed => {
+                output.push_str("\n[Could not read the command process status]");
+                (TaskTerminalRunStatus::Failed, None)
+            }
+        };
+        let run = session
+            .terminal_runs
+            .iter_mut()
+            .find(|run| run.id == run_id)
+            .expect("new terminal run is present");
+        run.output = redact_task_terminal_output(&output);
+        run.status = status;
+        run.exit_code = exit_code;
+        run.completed_at = Some(now());
+        session.updated_at = now();
+        state.database.save_session(&session)?;
+        TauriEvents(app).session_updated(&session);
+        Ok(session)
+    }
+    .await;
+    state.release_run(&input.session_id);
+    result
 }
 
 fn ensure_task_idle(state: &SharedState, session_id: &str) -> AppResult<()> {
@@ -2071,6 +2292,7 @@ pub async fn create_session(
         iterations: 0,
         tool_calls: 0,
         activity_events: vec![],
+        terminal_runs: vec![],
         created_at: now(),
         updated_at: now(),
         error: None,
@@ -2588,6 +2810,7 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
         } else {
             vec![]
         },
+        terminal_runs: vec![],
         created_at: now.clone(),
         updated_at: now.clone(),
         error: None,
@@ -4751,6 +4974,42 @@ mod task_lifecycle_tests {
         parent.git_branch = Some("jevcode/parent-12345678".into());
         parent.worktree_path = Some("C:/app-data/task-workspaces/parent".into());
         parent
+    }
+
+    #[test]
+    fn task_terminal_requires_an_idle_isolated_agent_with_full_shell_access() {
+        let mut session = isolated_parent();
+        session.task_mode = TaskMode::Agent;
+        session.permission_policy.mode = PermissionMode::FullAccess;
+        session.permission_policy.shell = PermissionDecision::Allow;
+        assert!(validate_task_terminal_access(&session).is_ok());
+
+        session.permission_policy.mode = PermissionMode::WorkspaceWrite;
+        assert_eq!(
+            validate_task_terminal_access(&session).unwrap_err().code,
+            "task_terminal_permission_required"
+        );
+        session.permission_policy.mode = PermissionMode::FullAccess;
+        session.permission_policy.shell = PermissionDecision::Deny;
+        assert_eq!(
+            validate_task_terminal_access(&session).unwrap_err().code,
+            "task_terminal_permission_required"
+        );
+        session.permission_policy.shell = PermissionDecision::Allow;
+        session.workspace_mode = WorkspaceMode::Direct;
+        assert_eq!(
+            validate_task_terminal_access(&session).unwrap_err().code,
+            "task_terminal_requires_worktree"
+        );
+    }
+
+    #[test]
+    fn task_terminal_output_hides_credential_lines() {
+        let output = redact_task_terminal_output(
+            "Tests passed\nOPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz1234\nDone",
+        );
+        assert_eq!(output, "Tests passed\n[possible secret hidden]\nDone");
+        assert!(!output.contains("sk-abcdefghijklmnopqrstuvwxyz1234"));
     }
 
     #[test]

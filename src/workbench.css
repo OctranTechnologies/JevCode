@@ -457,8 +457,33 @@ body.is-resizing-pane .workbench { transition: none; }
 .terminal-panel-heading button { margin-left: auto; color: var(--wb-terminal-muted); }
 .terminal-panel-heading button:hover { color: var(--wb-terminal-ink); background: color-mix(in srgb, var(--wb-terminal-ink) 8%, transparent); }
 .terminal-live-dot { width: 6px; height: 6px; background: var(--wb-success); border-radius: 50%; }
+.terminal-live-dot.is-running { background: var(--wb-accent); }
 .terminal-panel pre { margin: 0; padding: 13px 11px; color: var(--wb-terminal-ink); font: 11px/1.75 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .terminal-footnote { padding: 8px 10px; color: #94a096; font-size: 11px; border-top: 1px solid #2e3731; }
+.task-terminal-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.task-terminal-branch { min-width: 0; margin-left: auto; overflow: hidden; color: var(--wb-terminal-muted); font: 10px var(--font-mono); letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
+.task-terminal-panel .terminal-panel-heading button { margin-left: 0; }
+.task-terminal-explainer { padding: 8px 10px; color: var(--wb-terminal-muted); font-size: 10px; line-height: 1.5; border-bottom: 1px solid var(--wb-terminal-line); }
+.task-terminal-history { flex: 1; min-height: 0; padding: 0 10px; overflow: auto; }
+.task-terminal-history > .terminal-preview-message { padding: 12px 0; }
+.task-terminal-run { padding: 9px 0 10px; border-bottom: 1px solid var(--wb-terminal-line); }
+.task-terminal-command { display: flex; align-items: flex-start; gap: 6px; color: var(--wb-terminal-accent); font: 11px/1.55 var(--font-mono); }
+.task-terminal-command > span { flex: 0 0 auto; }
+.task-terminal-command > code { flex: 1; min-width: 0; color: var(--wb-terminal-ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-terminal-command > small { flex: 0 0 auto; color: var(--wb-terminal-muted); font: 9px var(--font-sans); text-transform: uppercase; }
+.task-terminal-command > small.is-completed { color: var(--wb-success); }
+.task-terminal-command > small.is-failed, .task-terminal-command > small.is-timed_out { color: var(--wb-danger); }
+.task-terminal-run pre { padding: 6px 0 0; color: var(--wb-terminal-ink); font: 10px/1.65 var(--font-mono); }
+.task-terminal-copy { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; padding: 3px 0; color: var(--wb-terminal-muted); font-size: 10px; background: transparent; border: 0; }
+.task-terminal-copy:hover { color: var(--wb-terminal-ink); }
+.task-terminal-permission, .task-terminal-error { margin: 0; padding: 8px 10px; color: var(--wb-warning); font-size: 10px; line-height: 1.5; border-top: 1px solid var(--wb-terminal-line); }
+.task-terminal-error { color: var(--wb-danger); }
+.task-terminal-input { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-top: 1px solid var(--wb-terminal-line); }
+.task-terminal-input > span { color: var(--wb-terminal-accent); font: 13px var(--font-mono); }
+.task-terminal-input textarea { flex: 1; min-width: 0; max-height: 64px; padding: 3px 0; resize: vertical; color: var(--wb-terminal-ink); font: 11px/1.5 var(--font-mono); background: transparent; border: 0; outline: 0; }
+.task-terminal-input textarea::placeholder { color: var(--wb-terminal-muted); }
+.task-terminal-input > button { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 8px; color: var(--wb-terminal-ink); font-size: 10px; background: color-mix(in srgb, var(--wb-terminal-ink) 8%, transparent); border: 1px solid var(--wb-terminal-line); }
+.task-terminal-input > button:disabled { color: var(--wb-terminal-muted); opacity: .6; }
 .context-detail-panel { padding: 1px 10px 18px; }
 .context-detail-panel .inspector-section-label { margin-inline: 0; }
 .context-detail-row { display: grid; gap: 5px; padding: 7px 1px; border-bottom: 1px solid var(--wb-border); }

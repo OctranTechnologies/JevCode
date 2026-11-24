@@ -148,6 +148,7 @@ export interface DecisionEvaluationRecord {
 export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyDownload: boolean; channel: 'stable'; deferredVersion: string | null; skippedVersion: string | null; remindAfter: string | null; downloadRequestedVersion: string | null }
 export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface QueuedFollowUp { id: string; content: string; createdAt: string }
+export interface TaskTerminalRun { id: string; command: string; output: string; status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'; exitCode: number | null; startedAt: string; completedAt: string | null }
 export interface AgentSession {
   taskMode: 'agent' | 'plan';
   pinned?: boolean;
@@ -172,6 +173,7 @@ export interface AgentSession {
   iterations: number;
   toolCalls: number;
   activityEvents: AgentActivityEvent[];
+  terminalRuns: TaskTerminalRun[];
   createdAt: string;
   updatedAt: string;
   error: string | null;

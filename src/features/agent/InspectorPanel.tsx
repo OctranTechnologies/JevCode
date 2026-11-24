@@ -1,6 +1,6 @@
 import {
   Check, ChevronDown, ChevronLeft, CircleHelp, Clock3, Copy, ExternalLink, FileCode2, FilePlus2, GitBranch,
-  ListChecks, RotateCcw, Shield, Terminal, X, GitCommitHorizontal,
+  ListChecks, LoaderCircle, Play, RotateCcw, Shield, Square, Terminal, X, GitCommitHorizontal,
 } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentSession, Project, Provider, ReviewAllAction, TaskPlan, ReviewFileAction, SessionChanges, SessionFileDiff, UsageRecord } from '../../types/domain';
@@ -16,7 +16,7 @@ import './childTask.css';
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
 export function InspectorPanel({
-  project, branch, session, sessions, provider, demo, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated, onSelectSession,
+  project, branch, session, sessions, provider, demo, desktopAllowed, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated, onSelectSession, onRunTerminal, onStopTerminal,
 }: {
   project?: Project;
   branch: string | null;
@@ -24,6 +24,7 @@ export function InspectorPanel({
   sessions: AgentSession[];
   provider?: Provider;
   demo: boolean;
+  desktopAllowed: boolean;
   open: boolean;
   onClose: () => void;
   tab: InspectorTab;
@@ -40,6 +41,8 @@ export function InspectorPanel({
   onStartPlan: (plan: TaskPlan) => void;
   onSessionUpdated: (session: AgentSession) => void;
   onSelectSession: (session: AgentSession) => void;
+  onRunTerminal: (commandText: string) => Promise<AgentSession>;
+  onStopTerminal: () => Promise<void>;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: ReactNode; count?: string }[] = [
     { id: 'changes', label: 'Files', icon: <FileCode2 size={13} />, count: demo ? '2' : review?.files.length ? String(review.files.length) : undefined },
@@ -66,7 +69,7 @@ export function InspectorPanel({
       {demo && <div className="inspector-demo-note"><span className="demo-note-mark">i</span><span>Example data · not applied to files</span></div>}
       {tab === 'changes' && <ChangesPanel demo={demo} session={session} review={review} selectedPath={selectedPath} busy={reviewBusy} result={reviewResult} onSelect={path => { onSelectFile(path); switchTab('diff'); }} onFileAction={onFileAction} onAllAction={onAllAction} />}
       {tab === 'diff' && <DiffPanel demo={demo} selectedFile={selectedPath} selectedChange={review?.files.find(file => file.path === selectedPath)} reviewDiff={reviewDiff} reviewBusy={reviewBusy} onBack={() => switchTab('changes')} onFileAction={onFileAction} />}
-      {tab === 'terminal' && <TerminalPanel demo={demo} />}
+      {tab === 'terminal' && <TerminalPanel demo={demo} session={session} desktopAllowed={desktopAllowed} onRun={onRunTerminal} onStop={onStopTerminal} onSessionUpdated={onSessionUpdated} />}
       {tab === 'context' && <ContextPanel project={project} branch={branch} session={session} provider={provider} />}
       {tab === 'task' && <>
         <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />
@@ -144,9 +147,53 @@ function DiffPanel({ demo, selectedFile, selectedChange, reviewDiff, reviewBusy,
   </div>;
 }
 
-function TerminalPanel({ demo }: { demo: boolean }) {
-  if (!demo) return <div className="inspector-empty"><Terminal size={18} /><strong>Agent commands run with approval</strong><p>When project command access is set to Ask or Allow, executed commands and bounded output appear in the task timeline.</p></div>;
-  return <div className="terminal-panel"><div className="terminal-panel-heading"><span className="terminal-live-dot" /> SAMPLE OUTPUT <button title="Copy output" aria-label="Copy terminal output" onClick={() => void navigator.clipboard?.writeText(demoTerminal)}><Copy size={13} /></button></div><pre>{demoTerminal}</pre><div className="terminal-footnote">Example command output · no command was run</div></div>;
+function TerminalPanel({ demo, session, desktopAllowed, onRun, onStop, onSessionUpdated }: { demo: boolean; session?: AgentSession; desktopAllowed: boolean; onRun: (commandText: string) => Promise<AgentSession>; onStop: () => Promise<void>; onSessionUpdated: (session: AgentSession) => void }) {
+  const [commandText, setCommandText] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (demo) return <div className="terminal-panel"><div className="terminal-panel-heading"><span className="terminal-live-dot" /> SAMPLE OUTPUT <button title="Copy output" aria-label="Copy terminal output" onClick={() => void navigator.clipboard?.writeText(demoTerminal)}><Copy size={13} /></button></div><pre>{demoTerminal}</pre><div className="terminal-footnote">Example command output · no command was run</div></div>;
+  if (!session) return <div className="inspector-empty"><Terminal size={18} /><strong>No active task</strong><p>Select an isolated task to open its terminal.</p></div>;
+  const active = session.terminalRuns.find(run => run.status === 'running');
+  const allowed = desktopAllowed
+    && session.taskMode === 'agent'
+    && session.workspaceMode === 'isolated'
+    && session.permissionPolicy.mode === 'full_access'
+    && session.permissionPolicy.shell === 'allow'
+    && !['planning', 'working', 'waiting_for_permission', 'waiting_for_user'].includes(session.status);
+  async function run() {
+    const value = commandText.trim();
+    if (!allowed || !value || pending || active) return;
+    setPending(true);
+    setError(null);
+    try {
+      onSessionUpdated(await onRun(value));
+      setCommandText('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally { setPending(false); }
+  }
+  async function stop() {
+    setError(null);
+    try { await onStop(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  }
+  const history = [...session.terminalRuns].reverse();
+  return <div className="terminal-panel task-terminal-panel">
+    <div className="terminal-panel-heading"><span className={`terminal-live-dot${active ? ' is-running' : ''}`} /> TASK TERMINAL <span className="task-terminal-branch">{session.gitBranch ?? 'isolated worktree'}</span>{active && <button type="button" title="Stop command" aria-label="Stop terminal command" onClick={() => void stop()}><Square size={12} /></button>}</div>
+    <div className="task-terminal-explainer">Runs in this task's isolated worktree with your account permissions. Agent tools cannot access this terminal. Likely credential lines are hidden from saved output.</div>
+    <div className="task-terminal-history" aria-live="polite">
+      {history.length === 0 && <p className="terminal-preview-message">Run a command to attach its output to this task.</p>}
+      {history.map(run => <article className="task-terminal-run" key={run.id}>
+        <div className="task-terminal-command"><span>›</span><code>{run.command}</code><small className={`is-${run.status}`}>{run.status === 'completed' ? `Exit ${run.exitCode ?? 0}` : run.status.replaceAll('_', ' ')}</small></div>
+        <pre>{run.output || (run.status === 'running' ? 'Running…' : '(no output)')}</pre>
+        {run.output && <button type="button" className="task-terminal-copy" onClick={() => void navigator.clipboard?.writeText(run.output)}><Copy size={12} />Copy output</button>}
+      </article>)}
+      {pending && !active && <div className="terminal-running"><LoaderCircle size={13} className="spin" />Starting command…</div>}
+    </div>
+    {!allowed && <p className="task-terminal-permission">Use an Agent task in an isolated worktree with Full Access and shell commands set to Allow.</p>}
+    {error && <p className="task-terminal-error" role="alert">{error}</p>}
+    <div className="task-terminal-input"><span aria-hidden="true">›</span><textarea aria-label="Task terminal command" value={commandText} onChange={event => setCommandText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void run(); } }} placeholder={allowed ? 'Enter a command…' : 'Terminal permission required'} disabled={!allowed || !!active || pending} rows={1} /><button type="button" disabled={!allowed || !!active || pending || !commandText.trim()} onClick={() => void run()}>{pending ? <LoaderCircle size={13} className="spin" /> : <Play size={12} fill="currentColor" />}Run</button></div>
+  </div>;
 }
 
 function ContextPanel({ project, branch, session, provider }: { project?: Project; branch: string | null; session?: AgentSession; provider?: Provider }) {

@@ -461,6 +461,9 @@ pub struct AgentSession {
     pub tool_calls: u32,
     #[serde(default)]
     pub activity_events: Vec<AgentActivityEvent>,
+    /// User-run task terminal commands and bounded, redacted output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal_runs: Vec<TaskTerminalRun>,
     pub created_at: String,
     pub updated_at: String,
     pub error: Option<String>,
@@ -489,6 +492,28 @@ pub struct AgentSession {
     /// stored read from the opened folder.
     #[serde(default)]
     pub context_root: GuidanceRoot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTerminalRunStatus {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTerminalRun {
+    pub id: String,
+    pub command: String,
+    pub output: String,
+    pub status: TaskTerminalRunStatus,
+    pub exit_code: Option<i32>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
 }
 
 /// Durable, user-visible task context. It contains summaries of observable
