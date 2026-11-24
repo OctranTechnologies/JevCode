@@ -1804,6 +1804,7 @@ pub async fn create_session(
     }
     let session = AgentSession {
         task_mode: input.task_mode,
+        pinned: false,
         id: session_id,
         project_id: input.project_id,
         provider_id: input.provider_id,
@@ -2190,6 +2191,15 @@ pub fn resume_session(
 }
 
 #[tauri::command]
+pub fn set_session_pinned(
+    session_id: String,
+    pinned: bool,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    state.database.set_session_pinned(&session_id, pinned)
+}
+
+#[tauri::command]
 pub fn delete_session(session_id: String, state: State<'_, SharedState>) -> AppResult<()> {
     let runs = state.runs.lock().map_err(AppError::internal)?;
     if runs.contains_key(&session_id) {
@@ -2260,6 +2270,7 @@ fn clone_session(state: &SharedState, source_id: &str, fork: bool) -> AppResult<
     };
     let session = AgentSession {
         task_mode: source.task_mode,
+        pinned: false,
         id: new_id.clone(),
         project_id: source.project_id,
         provider_id: source.provider_id,

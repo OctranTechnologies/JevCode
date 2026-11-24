@@ -157,6 +157,7 @@ pub fn run() {
             commands::rename_session,
             commands::archive_session,
             commands::resume_session,
+            commands::set_session_pinned,
             commands::delete_session,
             commands::duplicate_session,
             commands::fork_session,

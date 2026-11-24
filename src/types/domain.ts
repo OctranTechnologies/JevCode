@@ -149,6 +149,7 @@ export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyD
 export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface AgentSession {
   taskMode: 'agent' | 'plan';
+  pinned?: boolean;
   id: string;
   projectId: string;
   providerId: string;

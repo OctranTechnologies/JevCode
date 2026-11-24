@@ -410,6 +410,8 @@ pub enum SourceChange {
 pub struct AgentSession {
     #[serde(default)]
     pub task_mode: TaskMode,
+    #[serde(default)]
+    pub pinned: bool,
     pub id: String,
     pub project_id: String,
     pub provider_id: String,

@@ -1247,8 +1247,41 @@ impl Database {
     }
 
     pub fn save_session(&self, session: &AgentSession) -> AppResult<()> {
-        self.connection()?.execute("INSERT INTO sessions (id, project_id, updated_at, data) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data", params![session.id, session.project_id, session.updated_at, serde_json::to_string(session)?])?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let existing_data = transaction
+            .query_row(
+                "SELECT data FROM sessions WHERE id = ?1",
+                [&session.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let mut saved = session.clone();
+        if let Some(data) = existing_data {
+            saved.pinned = decode_session(&data)?.pinned;
+        }
+        transaction.execute("INSERT INTO sessions (id, project_id, updated_at, data) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data", params![saved.id, saved.project_id, saved.updated_at, serde_json::to_string(&saved)?])?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn set_session_pinned(&self, id: &str, pinned: bool) -> AppResult<AgentSession> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let data = transaction
+            .query_row("SELECT data FROM sessions WHERE id = ?1", [id], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?
+            .ok_or_else(|| AppError::new("not_found", "Task not found."))?;
+        let mut session = decode_session(&data)?;
+        session.pinned = pinned;
+        transaction.execute(
+            "UPDATE sessions SET data = ?1 WHERE id = ?2",
+            params![serde_json::to_string(&session)?, id],
+        )?;
+        transaction.commit()?;
+        Ok(session)
     }
 
     pub fn delete_session(&self, id: &str) -> AppResult<()> {
@@ -1779,6 +1812,55 @@ mod tests {
         }
         let reopened = Database::open(&path).unwrap();
         assert_eq!(reopened.update_preferences().unwrap(), preferences);
+    }
+
+    #[test]
+    fn session_pin_survives_stale_saves_and_database_reopening() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("pinned-session.sqlite");
+        let session: AgentSession =
+            serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
+        let mut stale_session = session.clone();
+        {
+            let database = Database::open(&path).unwrap();
+            database
+                .save_project(&Project {
+                    id: session.project_id.clone(),
+                    workspace_id: "local".into(),
+                    name: "Pinned task test".into(),
+                    path: root.path().display().to_string(),
+                    repository_root: None,
+                    active_branch: None,
+                    last_opened_at: now(),
+                    project_instructions: String::new(),
+                    preferred_model: None,
+                    permissions: PermissionPolicy::default(),
+                    is_recent: true,
+                    reduced_safety_opt_in: false,
+                    guidance_precedence: crate::domain::GuidancePrecedence::default(),
+                    created_at: now(),
+                })
+                .unwrap();
+            database.save_session(&session).unwrap();
+            assert!(!database.session(&session.id).unwrap().pinned);
+
+            assert!(
+                database
+                    .set_session_pinned(&session.id, true)
+                    .unwrap()
+                    .pinned
+            );
+            stale_session.title = "Updated by an in-flight task".into();
+            stale_session.updated_at = "2026-10-10T01:00:00Z".into();
+            database.save_session(&stale_session).unwrap();
+            let saved = database.session(&session.id).unwrap();
+            assert!(saved.pinned);
+            assert_eq!(saved.title, "Updated by an in-flight task");
+        }
+        let reopened = Database::open(&path).unwrap();
+        let reopened_session = reopened.session(&session.id).unwrap();
+        assert!(reopened_session.pinned);
+        assert_eq!(reopened_session.title, "Updated by an in-flight task");
     }
 
     #[test]

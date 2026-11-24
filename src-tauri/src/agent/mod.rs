@@ -3022,6 +3022,7 @@ mod tests {
         let project = workspaces::open_project(&state.database, root.to_str().unwrap()).unwrap();
         let session = AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
+            pinned: false,
             id: id(),
             project_id: project.id.clone(),
             provider_id: "preview".into(),
@@ -4040,6 +4041,7 @@ mod tests {
         let system = AgentMessage::text(MessageRole::System, "Project policy");
         let mut session = AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
+            pinned: false,
             id: "compact-test".into(),
             project_id: "project".into(),
             provider_id: "preview".into(),

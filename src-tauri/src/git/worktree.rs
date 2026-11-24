@@ -702,6 +702,7 @@ mod tests {
     fn session(path: &Path, base: &str, branch: &str) -> AgentSession {
         AgentSession {
             task_mode: crate::domain::TaskMode::Agent,
+            pinned: false,
             id: "integration-session".into(),
             project_id: "integration-project".into(),
             provider_id: "preview".into(),
