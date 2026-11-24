@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Command-line tools JevCode recognizes. Each keeps its own sign-in.
+/// Command-line tools Octran Code recognizes. Each keeps its own sign-in.
 const HARNESSES: [(&str, &str, &str); 5] = [
     ("codex", "Codex CLI", "codex"),
     ("claude_code", "Claude Code", "claude"),
@@ -22,7 +22,7 @@ const HARNESSES: [(&str, &str, &str); 5] = [
 pub struct HarnessStatus {
     pub id: &'static str,
     pub name: &'static str,
-    /// The command JevCode looks for on PATH.
+    /// The command Octran Code looks for on PATH.
     pub executable: &'static str,
     pub installed: bool,
 }

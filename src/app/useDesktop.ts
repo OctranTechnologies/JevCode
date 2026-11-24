@@ -26,7 +26,7 @@ export function useDesktop() {
             }
           },
           record => dispatch({ type: 'usage', record }),
-          () => { logEvent('ipc_event_invalid', 'error'); setError('An update could not be read. Reload JevCode.'); },
+          () => { logEvent('ipc_event_invalid', 'error'); setError('An update could not be read. Reload Octran Code.'); },
           chunk => setStreaming(current => ({ ...current, [chunk.sessionId]: chunk.reset ? '' : `${current[chunk.sessionId] ?? ''}${chunk.delta}` })),
           chunk => setToolOutput(current => {
             const previous = current[chunk.toolCallId] ?? { stdout: '', stderr: '' };

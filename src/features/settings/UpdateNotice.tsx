@@ -48,15 +48,15 @@ export function UpdateNotice({ agentActive }: { agentActive: boolean }) {
       {downloading ? <LoaderCircle size={15} className="spin" /> : needsRestart ? <RotateCw size={15} /> : <Download size={15} />}
     </div>
     <div className="update-notice-copy">
-      <strong>{ready || needsRestart ? `Update v${version} ready` : downloading ? `Updating JevCode to v${version}` : `JevCode v${version} is available`}</strong>
+      <strong>{ready || needsRestart ? `Update v${version} ready` : downloading ? `Updating Octran Code to v${version}` : `Octran Code v${version} is available`}</strong>
       {downloading ? <>
         <span>{progress === null ? 'Downloading the signed update…' : `${progress}% · ${formatBytes(update.downloadedBytes)}${update.contentLength === null ? ' downloaded' : ` of ${formatBytes(update.contentLength)}`}`}</span>
         <progress max={100} value={progress ?? undefined} aria-label="Update download progress" />
       </> : ready ? <span>{agentActive ? 'Finish the active task before installing and restarting.' : 'The signed download is ready to install.'}</span>
-        : needsRestart ? <span>{agentActive ? 'Finish the active task before restarting JevCode.' : 'The update is installed and ready to restart.'}</span>
+        : needsRestart ? <span>{agentActive ? 'Finish the active task before restarting Octran Code.' : 'The update is installed and ready to restart.'}</span>
           : <span>Review the release notes before updating.</span>}
       {version && (update.notes || update.phase === 'available') && <ReleaseNotes version={version} body={update.notes} publishedAt={update.publishedAt} className="update-notice-notes" />}
-      {actionBlocked && <span className="update-notice-hold"><AlertCircle size={12} />The agent is working. JevCode will wait before restarting.</span>}
+      {actionBlocked && <span className="update-notice-hold"><AlertCircle size={12} />The agent is working. Octran Code will wait before restarting.</span>}
       {actionError && <span className="update-notice-error" role="alert">{actionError}</span>}
     </div>
     <div className="update-notice-actions">

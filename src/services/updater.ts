@@ -413,16 +413,16 @@ export class UpdateService {
 
 function validateUpdateMetadata(update: Update): string | null {
   if (!isSemver(update.currentVersion) || !isSemver(update.version)) {
-    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+    return 'The update information is invalid, so Octran Code did not install it. Try again later.';
   }
   if (compareSemver(update.version, update.currentVersion) <= 0) {
-    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+    return 'The update information is invalid, so Octran Code did not install it. Try again later.';
   }
   if (update.body != null && typeof update.body !== 'string') {
-    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+    return 'The update information is invalid, so Octran Code did not install it. Try again later.';
   }
   if (update.date != null && !isRfc3339Date(update.date)) {
-    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+    return 'The update information is invalid, so Octran Code did not install it. Try again later.';
   }
   return null;
 }
@@ -485,10 +485,10 @@ function isRfc3339Date(value: unknown): value is string {
 function friendlyUpdateError(error: unknown, operation: UpdateOperation): string {
   const detail = error instanceof Error ? error.message.toLowerCase() : '';
   if (/(signature|verify|verification)/.test(detail)) {
-    return 'The update signature was invalid. JevCode did not install it.';
+    return 'The update signature was invalid. Octran Code did not install it.';
   }
   if (/(manifest|metadata|invalid version|semver|parse update)/.test(detail)) {
-    return 'The update information is invalid, so JevCode did not install it. Try again later.';
+    return 'The update information is invalid, so Octran Code did not install it. Try again later.';
   }
   if (/(endpoint|configuration|config|public key)/.test(detail)) {
     return 'The updater is not configured for this build. Install the latest release from GitHub.';
@@ -496,7 +496,7 @@ function friendlyUpdateError(error: unknown, operation: UpdateOperation): string
   if (/(timeout|network|dns|connect|fetch|request)/.test(detail)) {
     return 'Couldn’t connect to update server. Check your connection and try again.';
   }
-  if (operation === 'download') return 'Update download failed. JevCode did not install it. Try again later.';
+  if (operation === 'download') return 'Update download failed. Octran Code did not install it. Try again later.';
   if (operation === 'install') return 'Update installation failed. Your current version is still installed. Try again later.';
   return 'Couldn’t connect to update server. Try again later.';
 }

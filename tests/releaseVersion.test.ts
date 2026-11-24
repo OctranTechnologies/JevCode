@@ -13,7 +13,7 @@ function versionFiles(version = '0.1.0'): VersionFileContents {
     tauriConfig: `{
   "$schema": "https://schema.tauri.app/config/2",
   "version": "${version}",
-  "productName": "JevCode"
+  "productName": "Octran Code"
 }\n`,
     packageJson: `{
   "name": "jevcode",

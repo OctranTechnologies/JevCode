@@ -68,10 +68,10 @@ function summaryCopy(condition: ContainmentCondition, platform: ContainmentStatu
   if (condition === 'blocked') {
     return platform === 'windows'
       ? 'This project is blocked until reduced safety is turned on for it. Agent commands and child-process Git stay unavailable; file edits and in-app file reads still work.'
-      : 'Command execution is blocked on this system because JevCode cannot enforce this task’s containment profile. File edits and in-app file reads still work.';
+      : 'Command execution is blocked on this system because Octran Code cannot enforce this task’s containment profile. File edits and in-app file reads still work.';
   }
   if (condition === 'reduced') {
-    return 'Reduced safety is on. Process limits only. Commands can read and write anything your user account can reach and can use the network. JevCode is not containing them. Continue only for repositories you trust.';
+    return 'Reduced safety is on. Process limits only. Commands can read and write anything your user account can reach and can use the network. Octran Code is not containing them. Continue only for repositories you trust.';
   }
   return 'Commands, Git, and search run inside this project’s task containment profile.';
 }
@@ -101,7 +101,7 @@ export function ContainmentPanelView({ status, busy, error, onEnable, onDisable 
   ];
   return <section className="project-containment-section" aria-labelledby="project-containment-heading">
     <div className="project-section-heading">
-      <div><h2 id="project-containment-heading">Containment</h2><span>What JevCode can enforce for this project</span></div>
+      <div><h2 id="project-containment-heading">Containment</h2><span>What Octran Code can enforce for this project</span></div>
       <span className={`project-containment-state is-${condition}`}>{conditionLabel[condition]}</span>
     </div>
     <div className="project-containment-body">
@@ -158,7 +158,7 @@ export function ReducedSafetyDialogView({ projectName, phrase, busy, error, onPh
             <li>Network access</li>
           </ul>
         </div>
-        <p className="project-containment-dialog-warning">Commands can read and write anything your user account can reach and can use the network. JevCode is not containing them. Continue only for repositories you trust.</p>
+        <p className="project-containment-dialog-warning">Commands can read and write anything your user account can reach and can use the network. Octran Code is not containing them. Continue only for repositories you trust.</p>
         <label>Type “{REDUCED_SAFETY_CONFIRMATION}” to confirm<input autoFocus value={phrase} onChange={event => onPhrase(event.target.value)} disabled={busy} autoComplete="off" spellCheck={false} /></label>
         {phrase.length > 0 && !matches && <p className="project-containment-dialog-hint" role="status">The phrase must match exactly, in lowercase.</p>}
         {error && <p className="project-containment-error" role="alert">{error}</p>}
@@ -231,7 +231,7 @@ export function ContainmentPanel({ project, desktopAllowed, onProjectUpdated, on
 
   if (!desktopAllowed) {
     return <section className="project-containment-section" aria-labelledby="project-containment-heading">
-      <div className="project-section-heading"><div><h2 id="project-containment-heading">Containment</h2><span>What JevCode can enforce for this project</span></div></div>
+      <div className="project-section-heading"><div><h2 id="project-containment-heading">Containment</h2><span>What Octran Code can enforce for this project</span></div></div>
       <p className="project-section-empty">Containment status is available in the desktop app.</p>
     </section>;
   }
@@ -240,7 +240,7 @@ export function ContainmentPanel({ project, desktopAllowed, onProjectUpdated, on
     {status
       ? <ContainmentPanelView status={status} busy={busy} error={error} onEnable={() => setDialogOpen(true)} onDisable={() => void changeReducedSafety(false, '')} />
       : <section className="project-containment-section" aria-labelledby="project-containment-heading">
-        <div className="project-section-heading"><div><h2 id="project-containment-heading">Containment</h2><span>What JevCode can enforce for this project</span></div></div>
+        <div className="project-section-heading"><div><h2 id="project-containment-heading">Containment</h2><span>What Octran Code can enforce for this project</span></div></div>
         {loading && <p className="project-section-empty"><LoaderCircle size={13} className="spin" /> Loading containment status…</p>}
         {!loading && error && <p className="project-containment-error" role="alert">{error}<button type="button" className="project-text-action" onClick={() => void load()}>Retry</button></p>}
       </section>}

@@ -1,25 +1,25 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="JevCode logo" width="72" />
+  <img src="src-tauri/icons/icon.png" alt="Octran Code logo" width="72" />
 </p>
 
-<h1 align="center">JevCode</h1>
+<h1 align="center">Octran Code</h1>
 
 <p align="center">A local-first desktop coding agent with visible actions and reviewable changes.</p>
 
 <p align="center">
-  <a href="https://github.com/OctranTechnologies/JevCode/actions/workflows/release.yml"><img src="https://github.com/OctranTechnologies/JevCode/actions/workflows/release.yml/badge.svg" alt="Windows and Linux release builds" /></a>
-  <img src="https://img.shields.io/github/v/release/OctranTechnologies/JevCode?label=release" alt="Latest release" />
-  <img src="https://img.shields.io/github/license/OctranTechnologies/JevCode" alt="License" />
+  <a href="https://github.com/OctranTechnologies/OctranCode/actions/workflows/release.yml"><img src="https://github.com/OctranTechnologies/OctranCode/actions/workflows/release.yml/badge.svg" alt="Windows and Linux release builds" /></a>
+  <img src="https://img.shields.io/github/v/release/OctranTechnologies/OctranCode?label=release" alt="Latest release" />
+  <img src="https://img.shields.io/github/license/OctranTechnologies/OctranCode" alt="License" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-607d8b" alt="Windows and Linux" />
   <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2" />
   <img src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" alt="React 19" />
 </p>
 
-JevCode is a desktop workspace for asking AI agents to work in local repositories. The app keeps file and command access behind native checks, asks before sensitive actions, and makes task changes available for review.
+Octran Code is a desktop workspace for asking AI agents to work in local repositories. The app keeps file and command access behind native checks, asks before sensitive actions, and makes task changes available for review.
 
 ## Screenshot
 
-![JevCode task workspace shown with illustrative sample data](docs/jevcode-desktop.png)
+![Octran Code task workspace shown with illustrative sample data](docs/jevcode-desktop.png)
 
 *Sample workspace preview; task and diff data are illustrative, and no files were changed.*
 
@@ -30,7 +30,7 @@ JevCode is a desktop workspace for asking AI agents to work in local repositorie
 - Connect OpenAI, Anthropic, Google Gemini, OpenCode Zen, or OpenCode Go.
 - Review task-scoped diffs; accept or revert files while preserving earlier edits.
 - Choose direct project work or an isolated Git worktree.
-- See which instruction, rule, and skill files from Codex, Claude Code, Cursor, Gemini CLI, Antigravity, or Copilot JevCode loads, and copy reviewed ones into project instructions. Project files are never changed. See [docs/context-migration.md](docs/context-migration.md).
+- See which instruction, rule, and skill files Octran Code loads from Codex, Claude Code, Cursor, Gemini CLI, Antigravity, and Copilot, then copy reviewed ones into project instructions. Project files are never changed. See [docs/context-migration.md](docs/context-migration.md).
 - Use native permission prompts for edits and terminal commands.
 - Track local request usage and estimated costs.
 - Configure Jev as a separate decision assistant, or add MCP tools with explicit trust and permissions.
@@ -64,9 +64,9 @@ For a browser-only preview without native project access, run `npm run dev`.
 
 ### Download
 
-Download the latest Windows x64 or Linux x64 installer from [GitHub Releases](https://github.com/OctranTechnologies/JevCode/releases/latest). Linux formats depend on the assets attached to the release.
+Download the latest Windows x64 or Linux x64 installer from [GitHub Releases](https://github.com/OctranTechnologies/OctranCode/releases/latest). Linux formats depend on the assets attached to the release.
 
-## Use JevCode
+## Use Octran Code
 
 1. Connect a provider in **Settings → Providers**.
 2. Open or create a project.
@@ -86,16 +86,16 @@ Common shortcuts: `Ctrl/Cmd+N` new task · `Ctrl/Cmd+O` open project · `Ctrl/Cm
 | OpenCode Zen | Zen API key | Separate account and model availability. |
 | OpenCode Go | Go API key | Separate account and model availability. |
 
-The model catalog is normalized by native provider adapters. Availability and capabilities depend on provider and authentication route. Local usage estimates cover JevCode requests only, not provider dashboards.
+The model catalog is normalized by native provider adapters. Availability and capabilities depend on provider and authentication route. Local usage estimates cover Octran Code requests only, not provider dashboards.
 
-Google OAuth requires JevCode's own Desktop OAuth client ID and a Cloud project with the Generative Language API enabled. Set `googleOAuthClientId` in the user's application `config.json`; do not add a client secret. Google Account OAuth does not imply Code Assist, AI Pro/Ultra, or Vertex AI access. API-key authentication remains a separate route.
+Google OAuth requires Octran Code's own Desktop OAuth client ID and a Cloud project with the Generative Language API enabled. Set `googleOAuthClientId` in the user's application `config.json`; do not add a client secret. Google Account OAuth does not imply Code Assist, AI Pro/Ultra, or Vertex AI access. API-key authentication remains a separate route.
 
 ## Security and data
 
 - API keys and OAuth tokens stay in the OS credential store; the renderer receives safe account metadata only.
 - Rust commands scope project file operations to the selected workspace and validate paths. The explorer loads folders as needed and respects ignore rules.
 - Tool schemas, workspace bounds, risk rules, and user permission policy are checked before execution. Shell commands run as the current OS user; approval is not a sandbox.
-- Logs omit prompts, provider response bodies, and credential values. Projects, sessions, settings, and local usage live in SQLite under the OS app-data directory; JevCode does not encrypt this database.
+- Logs omit prompts, provider response bodies, and credential values. Projects, sessions, settings, and local usage live in SQLite under the OS app-data directory; Octran Code does not encrypt this database.
 - Jev is a separate optional decision service. It cannot execute tools or grant permissions. Its enabled modes send the task request; additional Shadow signals send only the bounded fields described in [the data notes](docs/jev-evaluation.md). Stage 2 paths/names and Stage 4 cross-task paths stay local.
 - MCP servers are not trusted just because they are configured. Their tools pass through the permission and audit flow.
 

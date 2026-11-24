@@ -31,11 +31,11 @@ export const initialGoogleAuthFlow: GoogleAuthFlow = {
 export function googleAuthFailureMessage(reason: GoogleAuthFailureReason | null): string {
   switch (reason) {
     case 'browser_unavailable':
-      return 'JevCode could not open your browser. Check your default browser and try again.';
+      return 'Octran Code could not open your browser. Check your default browser and try again.';
     case 'permission_denied':
       return 'Google sign-in was denied. This account may be unsupported or restricted by your Workspace administrator; try another account or ask your administrator.';
     case 'network_error':
-      return 'JevCode could not reach Google. Check your connection and try sign-in again.';
+      return 'Octran Code could not reach Google. Check your connection and try sign-in again.';
     case 'provider_outage':
       return 'Google sign-in is temporarily unavailable. Your account is unchanged; try again later.';
     default:
@@ -63,14 +63,14 @@ export function googleAuthStartErrorMessage(code: string): string {
     case 'system_browser_unavailable':
       return googleAuthFailureMessage('browser_unavailable');
     case 'auth_callback_unavailable':
-      return 'JevCode could not start the local sign-in listener. Restart the app and try again.';
+      return 'Octran Code could not start the local sign-in listener. Restart the app and try again.';
     case 'google_oauth_not_configured':
-      return 'Google account sign-in is not configured. Register a Desktop OAuth client ID for JevCode, or use a Gemini API key for model requests.';
+      return 'Google account sign-in is not configured. Register a Desktop OAuth client ID for Octran Code, or use a Gemini API key for model requests.';
     case 'google_cloud_project_required':
     case 'google_gemini_project_required':
       return 'Choose a Google Cloud project for Gemini API quota and billing before selecting Google Account access.';
     case 'google_gemini_api_scope_required':
-      return 'Reconnect Google and approve the Gemini API permissions requested by JevCode.';
+      return 'Reconnect Google and approve the Gemini API permissions requested by Octran Code.';
     case 'google_reconnect_required':
       return 'This Google account needs reconnecting. Start sign-in again to restore access.';
     case 'network_error':
@@ -78,9 +78,9 @@ export function googleAuthStartErrorMessage(code: string): string {
     case 'provider_outage':
       return googleAuthFailureMessage('provider_outage');
     case 'desktop_required':
-      return 'Run JevCode as a desktop app to connect a Google account.';
+      return 'Run Octran Code as a desktop app to connect a Google account.';
     default:
-      return 'JevCode could not start Google sign-in. Check your connection and try again.';
+      return 'Octran Code could not start Google sign-in. Check your connection and try again.';
   }
 }
 
@@ -93,7 +93,7 @@ export function googleAuthFlowReducer(state: GoogleAuthFlow, action: GoogleAuthF
       return {
         phase: 'waiting',
         attemptId: action.attemptId,
-        feedback: { tone: 'info', message: 'Your browser has been opened. Complete sign-in there; JevCode is waiting for authentication.' },
+        feedback: { tone: 'info', message: 'Your browser has been opened. Complete sign-in there; Octran Code is waiting for authentication.' },
       };
     case 'begin-cancel':
       if (state.phase !== 'waiting') return state;
@@ -157,7 +157,7 @@ export function googleProviderErrorMessage(code: string, message: string): strin
     case 'quota_exhausted':
       return 'The Gemini account has reached its usage limit.';
     case 'network_error':
-      return 'JevCode could not reach Google. Check your connection and try again.';
+      return 'Octran Code could not reach Google. Check your connection and try again.';
     case 'provider_outage':
       return 'Google is temporarily unavailable. Try again later.';
     case 'permission_denied':

@@ -192,7 +192,7 @@ pub fn export_markdown(plan: &TaskPlan) -> String {
         format!("\n\n## Open review comments\n\n{}", notes.join("\n"))
     };
     format!(
-        "# {}\n\n{}{}\n\n---\nPlan version {} from task {}. Exported from JevCode. This file grants no permissions.\n",
+        "# {}\n\n{}{}\n\n---\nPlan version {} from task {}. Exported from Octran Code. This file grants no permissions.\n",
         plan.title, plan.markdown, notes, plan.version, plan.source_session_id
     )
 }

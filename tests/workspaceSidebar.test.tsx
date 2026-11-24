@@ -17,7 +17,7 @@ describe('workspace sidebar header', () => {
     const header = headerOf(renderSidebar(false));
 
     expect(header).toContain('aria-label="Collapse sidebar"');
-    expect(header).not.toContain('JevCode');
+    expect(header).not.toContain('Octran Code');
   });
 
   it('offers the expand control when the sidebar is collapsed', () => {

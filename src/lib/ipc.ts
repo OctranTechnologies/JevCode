@@ -168,7 +168,7 @@ export async function command<K extends keyof Commands>(name: K, args: Commands[
   try {
     const result: unknown = await invoke(name, args);
     const parsed = responses[name].safeParse(result);
-    if (!parsed.success) throw new DesktopError('ipc_contract', 'The desktop service returned unexpected data. Restart JevCode.');
+    if (!parsed.success) throw new DesktopError('ipc_contract', 'The desktop service returned unexpected data. Restart Octran Code.');
     return parsed.data as Commands[K]['result'];
   } catch (error) { throw normalizeError(error); }
 }

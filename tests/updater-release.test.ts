@@ -4,7 +4,7 @@ import { URL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseUpdaterManifest, requiredUpdaterTargets, validateUpdaterRelease } from '../scripts/validate-updater-release.mjs';
 
-const repository = 'OctranTechnologies/JevCode';
+const repository = 'OctranTechnologies/OctranCode';
 const tag = 'v0.1.1';
 const apiUrl = `https://api.github.com/repos/${repository}/releases/assets`;
 
@@ -21,11 +21,11 @@ function makeRelease() {
     platforms[baseTarget] = platforms[preferredTarget];
   }
   const expectedNames: Record<string, string> = {
-    'windows-x86_64-msi': 'JevCode_0.1.1_x64_en-US.msi',
-    'windows-x86_64-nsis': 'JevCode_0.1.1_x64-setup.exe',
+    'windows-x86_64-msi': 'Octran Code_0.1.1_x64_en-US.msi',
+    'windows-x86_64-nsis': 'Octran Code_0.1.1_x64-setup.exe',
     'linux-x86_64-appimage': 'jevcode_0.1.1_amd64.AppImage',
-    'linux-x86_64-deb': 'JevCode_0.1.1_amd64.deb',
-    'linux-x86_64-rpm': 'JevCode-0.1.1-1.x86_64.rpm',
+    'linux-x86_64-deb': 'Octran Code_0.1.1_amd64.deb',
+    'linux-x86_64-rpm': 'Octran Code-0.1.1-1.x86_64.rpm',
   };
   const targetForUrl = new Map<string, string>();
   for (const target of requiredUpdaterTargets) {

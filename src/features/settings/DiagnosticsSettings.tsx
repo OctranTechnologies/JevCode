@@ -31,7 +31,7 @@ export function DiagnosticsSettings({ online, onError }: { online: boolean; onEr
     setBusy('copy');
     setNotice(null);
     const summary = [
-      `JevCode ${details.appVersion}`,
+      `Octran Code ${details.appVersion}`,
       `Platform: ${details.operatingSystem} ${details.architecture}`,
       `Projects: ${details.projectCount} · Tasks: ${details.taskCount}`,
       `Connected providers: ${details.connectedProviderCount} · Needs attention: ${details.providerAttentionCount}`,

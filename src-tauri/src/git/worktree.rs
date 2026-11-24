@@ -492,7 +492,7 @@ pub async fn commit(
         ));
     }
     let message = format!(
-        "JevCode task: {}",
+        "Octran Code task: {}",
         session
             .title
             .chars()
@@ -687,7 +687,7 @@ mod tests {
             &root,
             &["config", "user.email", "jevcode-test@example.invalid"],
         );
-        git(&root, &["config", "user.name", "JevCode Test"]);
+        git(&root, &["config", "user.name", "Octran Code Test"]);
         std::fs::write(root.join("src.txt"), "base\n").unwrap();
         git(&root, &["add", "src.txt"]);
         git(&root, &["commit", "--quiet", "-m", "initial"]);

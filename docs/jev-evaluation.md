@@ -155,7 +155,7 @@ or a calibrated confidence score.
 TypeSafe's resolved model ID is stored separately from the selected alias so
 results can be compared across model updates. Re-run the same suite after
 changing the selected model or when the resolved version changes. Do not infer
-quality improvements from one run; compare a set of representative JevCode
+quality improvements from one run; compare a set of representative Octran Code
 tasks and actual outcomes before enabling any new assisted behavior.
 
 ## Safety boundaries

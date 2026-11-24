@@ -59,30 +59,30 @@ export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
 
   return <section className="settings-content updates-settings" aria-labelledby="updates-title">
     <div className="settings-heading-row">
-      <div><h1 id="updates-title">Updates</h1><p className="page-description">Choose when JevCode checks and downloads signed releases.</p></div>
+      <div><h1 id="updates-title">Updates</h1><p className="page-description">Choose when Octran Code checks and downloads signed releases.</p></div>
     </div>
 
     <section className="updates-preferences" aria-label="Update preferences">
       <UpdateSwitch
         title="Automatically check for updates"
-        description="Check in the background after JevCode opens, then periodically."
+        description="Check in the background after Octran Code opens, then periodically."
         checked={preferences.automaticallyCheck}
         disabled={!desktopAvailable || saving}
         onChange={value => void save({ ...preferences, automaticallyCheck: value })}
       />
       <UpdateSwitch
         title="Automatically download updates"
-        description="Download available releases in the background. JevCode waits for you before installing or restarting."
+        description="Download available releases in the background. Octran Code waits for you before installing or restarting."
         checked={preferences.automaticallyDownload}
         disabled={!desktopAvailable || saving}
         onChange={value => void save({ ...preferences, automaticallyDownload: value })}
       />
-      <div className="update-channel-row"><div><strong>Update channel</strong><span>Receive stable JevCode releases.</span></div><span className="update-channel-value">Stable</span></div>
+      <div className="update-channel-row"><div><strong>Update channel</strong><span>Receive stable Octran Code releases.</span></div><span className="update-channel-value">Stable</span></div>
     </section>
 
     <section className="update-version-section" aria-labelledby="update-status-heading">
       <div className="permission-section-heading">
-        <div><h2 id="update-status-heading">Release status</h2><p>JevCode verifies each signed package before installation.</p></div>
+        <div><h2 id="update-status-heading">Release status</h2><p>Octran Code verifies each signed package before installation.</p></div>
         <ShieldCheck size={16} aria-hidden="true" />
       </div>
       <dl className="about-version-details">
@@ -102,7 +102,7 @@ export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
 
       {(update.deferredVersion || update.skippedVersion) && <div className="update-deferral-row" role="status">
         <div><strong>{update.skippedVersion ? `v${update.skippedVersion} is skipped` : `Reminder set for v${update.deferredVersion}`}</strong>
-          <span>{update.skippedVersion ? 'This version will stay hidden until you ask to see it again.' : `JevCode will remind you after ${formatReminderDate(update.remindAfter)}.`}</span>
+          <span>{update.skippedVersion ? 'This version will stay hidden until you ask to see it again.' : `Octran Code will remind you after ${formatReminderDate(update.remindAfter)}.`}</span>
         </div>
         <button type="button" className="account-button quiet" onClick={() => void showUpdateAgain()}>Show this update now</button>
       </div>}
@@ -112,7 +112,7 @@ export function UpdatesSettings({ preferences, online, agentActive, onSaved }: {
         <progress max={100} value={progress ?? undefined} aria-label="Update download progress" />
       </div>}
 
-      {update.phase === 'ready' && agentActive && <p className="updates-restart-hold" role="status">Your task is still active. Finish it before installing and restarting JevCode.</p>}
+      {update.phase === 'ready' && agentActive && <p className="updates-restart-hold" role="status">Your task is still active. Finish it before installing and restarting Octran Code.</p>}
       {update.phase === 'restart_required' && agentActive && <p className="updates-restart-hold" role="status">Your task is still active. Restart when the task is finished.</p>}
 
       <div className="about-update-actions">
@@ -143,13 +143,13 @@ function UpdateSwitch({ title, description, checked, disabled, onChange }: {
 function statusCopy(update: UpdateSnapshot, supported: boolean, online: boolean): { title: string; description: string } {
   switch (update.phase) {
     case 'disabled': return { title: 'Updates unavailable in development', description: 'Run an installed release build to check for signed updates.' };
-    case 'checking': return { title: 'Checking for updates', description: 'JevCode is checking the stable release channel in the background.' };
+    case 'checking': return { title: 'Checking for updates', description: 'Octran Code is checking the stable release channel in the background.' };
     case 'available': return { title: `Version ${update.availableVersion} is available`, description: 'Update now, or choose Remind Me Later from the update notice.' };
-    case 'downloading': return { title: 'Downloading update', description: 'The download runs in the background. JevCode will wait for your confirmation before installation.' };
+    case 'downloading': return { title: 'Downloading update', description: 'The download runs in the background. Octran Code will wait for your confirmation before installation.' };
     case 'ready': return { title: 'Update ready', description: 'The signed package is downloaded. Installing requires an explicit action and an idle agent.' };
     case 'installing': return { title: 'Installing update', description: 'The verified package is being applied.' };
-    case 'restart_required': return { title: 'Restart required', description: 'The update is installed. Restart JevCode when your work is ready.' };
-    case 'restarting': return { title: 'Restarting JevCode', description: 'The update is installed and the application is restarting.' };
+    case 'restart_required': return { title: 'Restart required', description: 'The update is installed. Restart Octran Code when your work is ready.' };
+    case 'restarting': return { title: 'Restarting Octran Code', description: 'The update is installed and the application is restarting.' };
     case 'completed': return { title: 'Update installed', description: 'The signed update package was installed successfully.' };
     case 'error': return { title: 'Update check failed', description: update.error ?? 'Couldn’t connect to the update server. Try again later.' };
     case 'up_to_date': return { title: 'You’re up to date', description: 'You have the latest version on the stable channel.' };

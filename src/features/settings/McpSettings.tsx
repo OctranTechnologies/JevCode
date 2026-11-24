@@ -79,7 +79,7 @@ export function McpSettings({ project, onError }: { project?: Project; onError: 
       const endpoint = server.config.transport.type === 'stdio'
         ? `${server.config.transport.command}\n${server.config.transport.args.join(' ')}`
         : server.config.transport.url;
-      const confirmed = window.confirm(`Trust and start “${server.config.name}”?\n\n${endpoint}\n\nThis external server can execute its own tools. JevCode will still ask for task permissions.`);
+      const confirmed = window.confirm(`Trust and start “${server.config.name}”?\n\n${endpoint}\n\nThis external server can execute its own tools. Octran Code will still ask for task permissions.`);
       if (!confirmed) return;
     }
     const key = getKey(server);
@@ -121,7 +121,7 @@ export function McpSettings({ project, onError }: { project?: Project; onError: 
       <button className="mcp-quiet-action" onClick={() => void reload(true)} disabled={refreshing} title="Refresh MCP status">{refreshing ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}Refresh</button>
     </div>
 
-    <div className="mcp-security-note"><ShieldAlert size={15} /><span>MCP tools run outside JevCode’s built-in tool sandbox. Calls still require the active task’s permission checks and appear in its timeline. Server output is treated as untrusted.</span></div>
+    <div className="mcp-security-note"><ShieldAlert size={15} /><span>MCP tools run outside Octran Code’s built-in tool sandbox. Calls still require the active task’s permission checks and appear in its timeline. Server output is treated as untrusted.</span></div>
 
     <section className="mcp-server-section" aria-labelledby="mcp-server-heading">
       <div className="mcp-section-title"><div><h2 id="mcp-server-heading">Servers</h2><p>User configuration is private to this app. Project configuration lives in <code>.jevcode/mcp.json</code>.</p></div>
@@ -169,7 +169,7 @@ export function McpSettings({ project, onError }: { project?: Project; onError: 
         <footer><span><ShieldAlert size={13} />Saving disables the server and clears its previous trust.</span><button className="mcp-cancel-button" onClick={() => setDraft(null)}>Cancel</button><button className="mcp-save-button" onClick={() => void save()} disabled={saving || !draft.name.trim() || !draft.id.trim()}>{saving ? <LoaderCircle size={14} className="spin" /> : <ShieldCheck size={14} />}Save configuration</button></footer>
       </section>
     </div>}
-    {!desktopAvailable && <div className="mcp-browser-note">MCP server management is available in the JevCode desktop application.</div>}
+    {!desktopAvailable && <div className="mcp-browser-note">MCP server management is available in the Octran Code desktop application.</div>}
   </section>;
 }
 

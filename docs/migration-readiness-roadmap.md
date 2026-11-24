@@ -1,20 +1,20 @@
-# JevCode migration and parity roadmap
+# Octran Code migration and parity roadmap
 
 **Research checked:** 15 November 2026  
 **Implementation status:** Progress is tracked in the status section at the end of this document. Work continues on the `improvement` branch.
 
 ## Product goal
 
-Make it practical to move an existing codebase and its working habits into JevCode without losing project guidance, reusable procedures, task safety, or reviewability. JevCode should interoperate with other agents while preserving its local-first model: imported instructions are visible, imported credentials are never silently trusted, and planning cannot acquire write access by prompt wording alone.
+Make it practical to move an existing codebase and its working habits into Octran Code without losing project guidance, reusable procedures, task safety, or reviewability. Octran Code should interoperate with other agents while preserving its local-first model: imported instructions are visible, imported credentials are never silently trusted, and planning cannot acquire write access by prompt wording alone.
 
-Feature parity is not a goal by itself. Preserve JevCode's useful differences—native provider adapters, local SQLite task history, OS-keychain credentials, task-scoped diff/revert, and optional Git worktrees—while closing the gaps that make migration confusing or unsafe.
+Feature parity is not a goal by itself. Preserve Octran Code's useful differences—native provider adapters, local SQLite task history, OS-keychain credentials, task-scoped diff/revert, and optional Git worktrees—while closing the gaps that make migration confusing or unsafe.
 
 ## Current baseline
 
 | Area | Available in source | Remaining limitation |
 | --- | --- | --- |
-| Providers and accounts | OpenAI, Anthropic, Gemini, and OpenCode Zen/Go adapters; native account and key handling | JevCode invokes its own provider adapters; it is not yet a general launcher/control plane for installed coding-agent harnesses |
-| Tasks | Local persistence, streaming, stop/follow-up, user questions, archive/rename/fork/duplicate, interrupted-run recovery | External transcripts and saved plans do not yet become first-class JevCode task artifacts |
+| Providers and accounts | OpenAI, Anthropic, Gemini, and OpenCode Zen/Go adapters; native account and key handling | Octran Code invokes its own provider adapters; it is not yet a general launcher/control plane for installed coding-agent harnesses |
+| Tasks | Local persistence, streaming, stop/follow-up, user questions, archive/rename/fork/duplicate, interrupted-run recovery | External transcripts and saved plans do not yet become first-class Octran Code task artifacts |
 | Repository context | Project instructions plus root `AGENTS.md` and `CLAUDE.md`; the new Context from other agents panel identifies additional files and lets users review and copy selected content into project instructions | Imported scoped rules become project-wide; nested instructions and native skills are not resolved at runtime; no exact effective-context view |
 | Tools and trust | Bounded file/Git tools, patch operations, shell commands, MCP, permission prompts/rules, project policy | Approval decisions do not contain subprocess filesystem or network authority; commands run with the user's OS authority |
 | Review and isolation | Task change diffs, accept/revert, optional task worktrees, branch controls | Direct tasks can overlap in one checkout; there is no complete cross-task ownership/conflict workflow |
@@ -27,20 +27,20 @@ The migration panel also warns about likely secrets, scopes, and unsupported fil
 
 | Product | Documented workflow | Roadmap implication |
 | --- | --- | --- |
-| Codex | Instruction discovery is layered from global guidance through the repository path, with override/fallback names. Its read-only setting still permits commands inside an OS sandbox; sandbox capability and approval policy are separate controls. [AGENTS.md discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md) · [approvals and security](https://developers.openai.com/codex/agent-approvals-security) | Implement native, path-aware context resolution. Keep approval prompts distinct from actual process containment. JevCode's current Plan tool allowlist is narrower than Codex's read-only sandbox command surface. |
+| Codex | Instruction discovery is layered from global guidance through the repository path, with override/fallback names. Its read-only setting still permits commands inside an OS sandbox; sandbox capability and approval policy are separate controls. [AGENTS.md discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md) · [approvals and security](https://developers.openai.com/codex/agent-approvals-security) | Implement native, path-aware context resolution. Keep approval prompts distinct from actual process containment. Octran Code's current Plan tool allowlist is narrower than Codex's read-only sandbox command surface. |
 | Claude Code | `CLAUDE.md` and `AGENTS.md` can provide session guidance; `.claude/rules` scopes guidance to files. The `plan` permission mode reads and may permit classifier-approved commands when auto mode is available. [Memory and rules](https://code.claude.com/docs/en/memory) · [permission modes](https://code.claude.com/docs/en/permission-modes) | Support the file conventions without claiming identical mode semantics. Preserve scoped-rule metadata instead of flattening it into global instructions. |
 | Google Antigravity | Planning mode researches the codebase, creates structured plan artifacts/task groups, and exposes an artifact review policy before implementation continues. [Artifact review](https://antigravity.google/docs/artifact-review) | Add durable reviewable plans and a deliberate implementation handoff. The cited docs establish a review workflow, not an OS-level security guarantee. |
 | Cursor | Plan mode asks questions, researches the codebase, produces an editable plan, and lets the user choose when to build; plans can be saved to the workspace. [Plan mode](https://cursor.com/docs/agent/plan-mode) | Treat a plan as a reviewable artifact with source task, edits, and an explicit new Agent task—not as a prompt prefix. |
 | T3 Code | The product page describes a control plane for Codex, Claude Code, Antigravity, OpenCode, Cursor and other harnesses; it advertises per-thread branches, subagents, remote machines, inline diff review and GitHub PR workflows. [T3 Code](https://t3.codes/) | Validate demand for harness orchestration, per-task ownership and delivery workflows. Adopt the useful workflow, but keep provider credentials and remote execution boundaries explicit. |
 | Gemini CLI and GitHub Copilot | Their documented project context includes `GEMINI.md`/skills and repository instruction files, respectively. [Gemini context](https://geminicli.com/docs/cli/gemini-md/) · [Copilot repository instructions](https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions) | Treat these formats as migration inputs, even before adding first-class harness adapters. |
 
-These pages describe vendor-supported workflows. They are not independent tests of competitor security, reliability, or quality. The implications above are product inferences from those documented workflows and the current JevCode source.
+These pages describe vendor-supported workflows. They are not independent tests of competitor security, reliability, or quality. The implications above are product inferences from those documented workflows and the current Octran Code source.
 
 ## Phased implementation plan
 
 ### Phase 0 — Make migration visible and planning actually read-only (implemented locally)
 
-1. **Project context discovery:** identify common instruction/rule/skill/procedure files; label each as loaded, importable, imported, unsupported or skipped; show scope and warnings; preview before explicit import; re-scan natively at import time; block likely secrets; keep imports in JevCode's own project settings.
+1. **Project context discovery:** identify common instruction/rule/skill/procedure files; label each as loaded, importable, imported, unsupported or skipped; show scope and warnings; preview before explicit import; re-scan natively at import time; block likely secrets; keep imports in Octran Code's own project settings.
 2. **Plan capability boundary:** persist task mode; allow only a built-in read-only tool set; deny extension/MCP, edits, shell and unknown tools before normal approvals; recheck queued, resumed and parallel calls; retain existing read permissions; make the UI say that implementation starts in a new Agent task.
 
 **Release gate:** add automated coverage for migration scanning/import and the Plan denial boundary, including symlinks, path traversal, secret masking, legacy sessions, pending approvals, parallel calls and unknown future tools. Exercise the actual desktop UI on supported Windows/Linux builds. Confirm no imported content or credentials are emitted in diagnostics. These gates are planned; they have not been run as part of this integration.
@@ -69,7 +69,7 @@ These pages describe vendor-supported workflows. They are not independent tests 
 
 - Implement Agent Skills-compatible discovery for project and user scopes, beginning with `.agents/skills` and `.claude/skills`, then adding documented Gemini/Antigravity locations.
 - Index validated `name` and `description` metadata, load a skill body only when selected or relevant, and offer explicit skill search/invocation from the composer.
-- Keep `allowed-tools` metadata informational until JevCode has a separately reviewed capability model. Skill scripts run only through existing command permissions; reading a skill never grants tool access.
+- Keep `allowed-tools` metadata informational until Octran Code has a separately reviewed capability model. Skill scripts run only through existing command permissions; reading a skill never grants tool access.
 - Offer a preview-and-convert path for supported custom commands/workflows. Preserve source metadata and require confirmation for behavior changes; never execute imported command text automatically.
 
 **Acceptance criteria**
@@ -84,10 +84,10 @@ These pages describe vendor-supported workflows. They are not independent tests 
 
 **Deliverables**
 
-- Add a guided setup path that distinguishes JevCode-native provider login from connecting an installed external harness. Detect availability; never assume a provider's CLI, IDE and app are interchangeable.
+- Add a guided setup path that distinguishes Octran Code-native provider login from connecting an installed external harness. Detect availability; never assume a provider's CLI, IDE and app are interchangeable.
 - Add versioned project profile export/import for instructions, model preferences and selected project settings. Exclude OAuth tokens, API keys, machine-specific paths, permission grants, and trusted MCP decisions.
 - Add explicit MCP-config import for supported formats: parse to a preview, validate commands and environment-variable names, move secret values directly to the OS credential store when appropriate, and keep every imported server disabled/untrusted until user review.
-- For unsupported credential formats, show which provider must be reconnected in JevCode rather than attempting token extraction.
+- For unsupported credential formats, show which provider must be reconnected in Octran Code rather than attempting token extraction.
 
 **Acceptance criteria**
 
@@ -103,7 +103,7 @@ These pages describe vendor-supported workflows. They are not independent tests 
 
 - Persist a first-class plan artifact linked to its read-only Plan task, separate from chat text; support edit, save, version history, review comments and export to Markdown.
 - Add **Start Agent task from plan**. Create a new task with the approved plan, source-task link and chosen workspace; do not carry pending calls, one-time/session permission grants, MCP approvals or write authority from the Plan task.
-- Support importing external Markdown/text transcripts as clearly marked reference context. Do not deserialize external tool calls into executable JevCode history. Add safe export for JevCode tasks, diffs and activity, omitting tokens, credential values and sensitive tool arguments.
+- Support importing external Markdown/text transcripts as clearly marked reference context. Do not deserialize external tool calls into executable Octran Code history. Add safe export for Octran Code tasks, diffs and activity, omitting tokens, credential values and sensitive tool arguments.
 
 **Acceptance criteria**
 
@@ -189,7 +189,7 @@ Each item below was implemented and committed on its own. Rust tests, clippy, fo
 | --- | --- | --- | --- |
 | 0 | Mostly done | Scanner tests (symlinks, secret blocking and masking, oversized and non-UTF-8 files, selection safety); one Plan denial rule (`TaskMode::permits`) on every execution path, tested; the `.test.tsx` files now run; runtime tests for approvals inside a batch of parallel calls, denial, and a gated call after automatic reads | Desktop flow checks on Windows and Linux |
 | 1 | Done | Ancestor guidance inside the repository, outermost first; nested folder guidance and path-scoped rules (`.claude/rules`, `.cursor/rules`, `.github/instructions`) applied when a matching path is touched, with the activity log naming the rule; effective context view with budget, changes since start, and masked previews; `AGENTS.override.md` precedence as a project setting; an 80 KiB per-task guidance budget; a versioned resolver recorded with each task; a root guidance setting that chooses AGENTS.md, AGENTS.override.md, GEMINI.md, or the repository's Copilot instructions, and lists the other files as not used; isolated tasks read guidance from their own workspace | None. A worktree task still needs a manual check in the desktop app |
-| 2 | Largely done | Agent Skills discovery in `.agents/skills`, `.claude/skills`, and `.gemini/skills`, with Gemini CLI and Antigravity user folders, project and user scope; validated names and descriptions; bodies read only on invocation, with source, version, and fingerprint recorded; `allowed-tools` shown as informational; a composer picker that searches when more than five skills are available; Antigravity skills read from parent folders up to the repository root; Claude Code and Antigravity commands previewed and converted into skills, with behavior changes listed, confirmation required, and no overwrites | Gemini CLI commands are listed as not converted, because JevCode has no TOML parser yet |
+| 2 | Largely done | Agent Skills discovery in `.agents/skills`, `.claude/skills`, and `.gemini/skills`, with Gemini CLI and Antigravity user folders, project and user scope; validated names and descriptions; bodies read only on invocation, with source, version, and fingerprint recorded; `allowed-tools` shown as informational; a composer picker that searches when more than five skills are available; Antigravity skills read from parent folders up to the repository root; Claude Code and Antigravity commands previewed and converted into skills, with behavior changes listed, confirmation required, and no overwrites | Gemini CLI commands are listed as not converted, because Octran Code has no TOML parser yet |
 | 3 | Largely done | Versioned profile export and import (instructions, preferred model, precedence); no credentials, grants, trust decisions, or machine paths; unknown and repeated fields rejected; newer versions refused; import previews and writes only on apply; MCP servers imported from `.mcp.json`, Cursor, VS Code, and Gemini CLI settings, saved disabled and untrusted, with literal values in the OS credential store; harness detection on PATH, with guidance on which sign-in belongs to which tool | Launching or connecting external harnesses (Phase 6); detecting IDE or desktop apps; VS Code files with comments are not read |
 | 4 | Done | Plans saved from finished Plan tasks, edited with bounded history, exported to Markdown; "Start Agent task from plan" creates a fresh task that cites the plan and its source; a Task-tab Markdown export of the conversation, tool names, activity, and diff, without tool outputs, tool arguments, system instructions, or credential-like lines; review comments that travel with the plan's export and handoff; imported transcripts labeled as external reference, never parsed into history | Importing a transcript as structured history; transcripts are text only |
 | 5 | Not started | Containment is designed in this document only | OS-level containment for subprocesses, hooks, Git helpers, and MCP children; task-to-branch ownership display |

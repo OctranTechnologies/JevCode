@@ -28,17 +28,17 @@ export function AboutSettings({ online, agentActive }: { online: boolean; agentA
 
   return <section className="settings-content about-settings" aria-labelledby="about-title">
     <div className="settings-heading-row">
-      <div><h1 id="about-title">About</h1><p className="page-description">JevCode desktop application and signed release updates.</p></div>
+      <div><h1 id="about-title">About</h1><p className="page-description">Octran Code desktop application and signed release updates.</p></div>
     </div>
 
     <div className="about-identity">
       <Brand />
-      <div><strong>JevCode</strong><span>AI coding workspace</span></div>
+      <div><strong>Octran Code</strong><span>AI coding workspace</span></div>
       <span className="about-current-version">{update.currentVersion ? `v${update.currentVersion}` : 'Version unavailable'}</span>
     </div>
 
     <section className="about-update-section" aria-labelledby="about-updates-title">
-      <div className="about-section-heading"><div><h2 id="about-updates-title">Software updates</h2><p>Release packages are verified with JevCode’s updater signing key before installation.</p></div></div>
+      <div className="about-section-heading"><div><h2 id="about-updates-title">Software updates</h2><p>Release packages are verified with Octran Code’s updater signing key before installation.</p></div></div>
       <dl className="about-version-details">
         <div><dt>Current version</dt><dd>{update.currentVersion ? `v${update.currentVersion}` : '—'}</dd></div>
         <div><dt>Latest version</dt><dd>{latestVersion ? `v${latestVersion}` : '—'}</dd></div>
@@ -71,7 +71,7 @@ export function AboutSettings({ online, agentActive }: { online: boolean; agentA
           <button className="account-button quiet" onClick={() => void openRelease()}><ExternalLink size={14} />Release page</button>
         </>}
         {(update.phase === 'ready' || update.phase === 'restart_required') && <button className="account-button connect" onClick={() => void (update.phase === 'ready' ? updateService.installDownloadedUpdate() : updateService.restartApplication())} disabled={agentActive}><RefreshCw size={14} />Restart and Update</button>}
-        {(update.phase === 'ready' || update.phase === 'restart_required') && agentActive && <p className="updates-restart-hold">Finish the active task before installing or restarting JevCode.</p>}
+        {(update.phase === 'ready' || update.phase === 'restart_required') && agentActive && <p className="updates-restart-hold">Finish the active task before installing or restarting Octran Code.</p>}
       </div>
       {releaseError && <p className="about-update-error" role="alert">{releaseError}</p>}
       {supported && !online && <p className="about-help">Reconnect to check for or download an update.</p>}
@@ -89,7 +89,7 @@ function statusTitle(update: UpdateSnapshot): string {
     case 'ready': return 'Update ready to install';
     case 'installing': return 'Installing update';
     case 'completed': return 'Update installed';
-    case 'restarting': return 'Restarting JevCode';
+    case 'restarting': return 'Restarting Octran Code';
     case 'restart_required': return 'Restart required';
     case 'error': return 'Update couldn’t be completed';
     case 'up_to_date': return 'You’re up to date';
@@ -101,7 +101,7 @@ function statusDescription(update: UpdateSnapshot, online: boolean, supported: b
   if (update.phase === 'error') return update.error ?? 'The update service could not be reached. Try again later.';
   if (update.phase === 'available') return 'A signed release is ready to download.';
   if (update.phase === 'ready') return 'The signed update has been downloaded and can now be installed.';
-  if (update.phase === 'restart_required') return 'The update is installed. Close and reopen JevCode to finish.';
+  if (update.phase === 'restart_required') return 'The update is installed. Close and reopen Octran Code to finish.';
   if (update.phase === 'restarting') return 'The update is installed. The application is restarting.';
   if (update.phase === 'completed') return 'The update package was installed successfully.';
   if (update.phase === 'checking') return 'Contacting the signed release manifest…';

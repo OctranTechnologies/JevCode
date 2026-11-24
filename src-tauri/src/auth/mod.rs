@@ -591,7 +591,7 @@ pub fn openai_auth_status(
     openai::OpenAIAuthManager::new(provider.clone())?.status(credentials, database, stored)
 }
 
-/// Metadata describes flows JevCode can show without silently enabling unregistered OAuth.
+/// Metadata describes flows Octran Code can show without silently enabling unregistered OAuth.
 pub fn available_methods(provider_id: &str) -> Vec<ProviderAuthMethodOption> {
     let mut methods = vec![ProviderAuthMethodOption {
         method: ProviderAuthMethod::ApiKey,

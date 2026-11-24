@@ -1,7 +1,7 @@
-# JevCode + Jev: Product Roadmap
+# Octran Code + Jev: Product Roadmap
 
 This document expands the researched ideas for making TypeSafe Jev a more useful
-decision assistant inside JevCode. It is a proposal, not a statement that these
+decision assistant inside Octran Code. It is a proposal, not a statement that these
 features have already been implemented.
 
 ## Product direction
@@ -31,7 +31,7 @@ preserves those boundaries.
    task activity. Provide an easy way to disable it.
 5. **Measure before steering.** Initially record recommendations in shadow mode
    and compare them with outcomes. Promote a feature to Assisted behavior only
-   after it performs well on JevCode tasks.
+   after it performs well on Octran Code tasks.
 6. **Bound the decision.** Use short option lists, explicit “none” or “ask the
    user” choices where appropriate, timeouts, request limits, and deterministic
    fallbacks.
@@ -44,7 +44,7 @@ preserves those boundaries.
 behavior was never implemented or verified. A final paragraph alone does not
 show which parts of the request are supported by the work.
 
-**Experience:** At the end of a task, JevCode shows the original requirements as
+**Experience:** At the end of a task, Octran Code shows the original requirements as
 a checklist. Each item can be marked:
 
 - **Verified** — supported by a successful, relevant check or directly inspected
@@ -84,7 +84,7 @@ relevant. A Jev confidence value is not a test pass.
 make edits without learning anything new. This wastes time and can make a simple
 environment issue look like a coding problem.
 
-**Experience:** JevCode notices concrete signs of a loop, such as the same
+**Experience:** Octran Code notices concrete signs of a loop, such as the same
 normalized command failing repeatedly, repeated searches with no new results, or
 multiple tool calls without a meaningful change. The timeline explains the
 reason for the recovery suggestion. Jev can recommend a bounded next step:
@@ -117,9 +117,9 @@ deterministic repetition detector alone before enabling Jev steering.
 The user may only notice the expansion during diff review.
 
 **Experience:** When the plan or changed-file set starts to extend beyond the
-request, JevCode shows a small notice such as “This task is now touching provider
+request, Octran Code shows a small notice such as “This task is now touching provider
 authentication, which was not part of the requested toolbar change.” The user
-can continue, narrow the scope, or ask JevCode to explain why the extra work is
+can continue, narrow the scope, or ask Octran Code to explain why the extra work is
 needed.
 
 **Jev's role:** Compare a concise objective with candidate work items or changed
@@ -141,7 +141,7 @@ areas.
 **User problem:** Running every test after every small edit can be slow, while
 running too few tests can miss regressions.
 
-**Experience:** JevCode first uses local dependency and project metadata to build
+**Experience:** Octran Code first uses local dependency and project metadata to build
 a shortlist of tests likely to cover the changed files. Jev can rank that
 shortlist or identify which test area best matches the change. The task shows
 which tests ran and why. A final or release check can still run the full required
@@ -158,7 +158,7 @@ checks are never skipped because Jev says they are unnecessary.
 
 **How to evaluate it:** Compare test time saved with regressions missed against
 the full-suite baseline. Include flaky tests and dependency changes in the
-evaluation. Do not assume results from another codebase transfer to JevCode.
+evaluation. Do not assume results from another codebase transfer to Octran Code.
 
 ### 5. Better file and context selection
 
@@ -188,7 +188,7 @@ prompt is not a success if it drops a required instruction.
 **User problem:** Useful conventions and decisions are rediscovered across tasks,
 but a memory system can become stale or silently preserve a mistaken assumption.
 
-**Experience:** JevCode can offer durable project notes such as “run the
+**Experience:** Octran Code can offer durable project notes such as “run the
 frontend checks with `npm run check`” or “provider requests are implemented in
 the native adapter.” Each note shows where it came from and when it was last
 checked. Users can review, edit, pin, or delete notes. Notes whose source has
@@ -216,9 +216,9 @@ incorrect or sensitive memories.
 **User problem:** As projects connect more MCP servers and tools, the agent may
 see a long list of irrelevant actions, making tool choice slower and less clear.
 
-**Experience:** JevCode filters the visible list to tools already enabled and
+**Experience:** Octran Code filters the visible list to tools already enabled and
 trusted for the current project, then orders a small relevant subset. The UI
-continues to show which tools are connected and why. JevCode can explicitly
+continues to show which tools are connected and why. Octran Code can explicitly
 recommend no external tool when built-in project tools are sufficient.
 
 **Jev's role:** Rank short tool descriptions against the task or choose a
@@ -240,7 +240,7 @@ tool descriptions in security tests.
 or summaries may not. Users may want a choice between speed, quality, and cost.
 
 **Experience:** The user defines an allowed model pool and an optional task
-budget. JevCode may recommend a model for a phase such as planning, implementation,
+budget. Octran Code may recommend a model for a phase such as planning, implementation,
 or verification. The interface shows the chosen provider, model, and
 authentication/billing route before a request. Users can lock a model or approve
 a proposed switch.
@@ -257,14 +257,14 @@ and approved them.
 
 **How to evaluate it:** Compare cost, latency, completion quality, retry rate,
 and user overrides against a fixed-model baseline. Do not promise savings or
-quality improvements until measurements on JevCode workloads support them.
+quality improvements until measurements on Octran Code workloads support them.
 
 ### 9. Coordination between simultaneous tasks
 
 **User problem:** Two tasks can work in separate sessions but still touch the
 same files, duplicate work, or conflict when their changes are applied.
 
-**Experience:** Before edits, JevCode detects direct path overlap and shows
+**Experience:** Before edits, Octran Code detects direct path overlap and shows
 possible semantic overlap such as two tasks both changing provider selection.
 It can suggest sequencing the work, using separate worktrees, or asking the user
 which task should own the area. Active worktrees remain visible under the
@@ -288,7 +288,7 @@ conflicts during apply, duplicate work, and false overlap warnings.
 solutions, but comparing them from descriptions alone can miss compatibility or
 test failures.
 
-**Experience:** As an explicit, higher-cost option, JevCode runs two approaches
+**Experience:** As an explicit, higher-cost option, Octran Code runs two approaches
 in isolated worktrees. It runs the same relevant checks for each and presents
 the diffs, test outcomes, and a short comparison. The user chooses which result
 to keep or asks for another iteration.
@@ -321,11 +321,11 @@ compute.
 ## Evaluation and rollout requirements
 
 Before a feature changes agent behavior, evaluate it on a small, versioned set
-of representative JevCode tasks. Include successful tasks, failed tests,
+of representative Octran Code tasks. Include successful tasks, failed tests,
 missing tools, ambiguous requests, pre-existing user changes, permission
 prompts, and project instructions. Compare at least:
 
-- the current JevCode behavior with Jev disabled;
+- the current Octran Code behavior with Jev disabled;
 - Jev recommendations recorded but not acted upon (shadow mode); and
 - the proposed assisted behavior with the same task inputs.
 
@@ -337,7 +337,7 @@ provider usage.
 
 Confidence needs careful interpretation. For Choice questions it is derived
 from the answer distribution; it is not a calibrated probability that code is
-correct. Tune thresholds against JevCode's own data and keep a fallback for
+correct. Tune thresholds against Octran Code's own data and keep a fallback for
 ambiguous results. For Score questions, perform arithmetic and exact threshold
 checks in Rust rather than relying on Jev for precise numeric work.
 
@@ -455,7 +455,7 @@ with Jev. The Stage 4 rollout gate remains open.
 ## Research references
 
 These sources informed the patterns above. Vendor cookbook results are examples
-from their own experiments; they are not JevCode benchmark results.
+from their own experiments; they are not Octran Code benchmark results.
 
 - [TypeSafe: Jev for coding agents](https://docs.typesafe.ai/introduction/coding-agents) — Jev's role as a structured decision model within a coding agent.
 - [TypeSafe: Jev primitives](https://docs.typesafe.ai/primitives) — Choice, Score, and Noul decision types.
@@ -471,7 +471,7 @@ from their own experiments; they are not JevCode benchmark results.
 - [Anthropic: Effective context engineering for AI agents](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents) — keeping context focused and preserving useful state.
 - [Meta Engineering: Predictive test selection](https://engineering.fb.com/2018/11/21/developer-tools/predictive-test-selection/) — test ranking based on historical change and test outcomes; results need local validation.
 - [RouteLLM](https://github.com/lm-sys/RouteLLM) — evaluating model routing as a cost/quality tradeoff.
-- [LangChain: Time travel](https://docs.langchain.com/oss/python/langgraph/frontend/time-travel) — checkpoint branching as inspiration for comparing alternatives; JevCode does not need to adopt LangGraph.
+- [LangChain: Time travel](https://docs.langchain.com/oss/python/langgraph/frontend/time-travel) — checkpoint branching as inspiration for comparing alternatives; Octran Code does not need to adopt LangGraph.
 
 ## First recommendation
 

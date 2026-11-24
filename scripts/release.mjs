@@ -239,7 +239,7 @@ function releaseCommand(releaseType, dryRun) {
 
   let committed = false;
   try {
-    console.log(`Validating JevCode ${nextVersion} before creating the release tag...`);
+    console.log(`Validating Octran Code ${nextVersion} before creating the release tag...`);
     run('npm', ['run', 'check'], { inherit: true });
     assertOnlyVersionFilesChanged();
     run('git', ['add', '--', ...VERSION_PATHS]);
@@ -254,7 +254,7 @@ function releaseCommand(releaseType, dryRun) {
     throw error;
   }
 
-  run('git', ['tag', '--annotate', tag, '--message', `JevCode ${tag}`]);
+  run('git', ['tag', '--annotate', tag, '--message', `Octran Code ${tag}`]);
   run('git', ['push', 'origin', 'main'], { inherit: true });
   try {
     run('git', ['push', 'origin', tag], { inherit: true });

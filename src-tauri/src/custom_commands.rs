@@ -1,5 +1,5 @@
 //! Commands and workflows that other agents keep in the project, converted into
-//! JevCode skills. Each one is listed with what a skill cannot keep, previewed as
+//! Octran Code skills. Each one is listed with what a skill cannot keep, previewed as
 //! the SKILL.md it would become, and written only after confirmation. The command
 //! text is never run, and conversion never overwrites an existing skill or writes
 //! through a link.
@@ -160,7 +160,7 @@ fn inspect(
 fn convert_plan(project_root: &Path, id: &str, format: CommandFormat) -> Result<Converted, String> {
     if format == CommandFormat::GeminiCommand {
         return Err(
-            "Gemini CLI commands are TOML files. JevCode converts Markdown commands only."
+            "Gemini CLI commands are TOML files. Octran Code converts Markdown commands only."
                 .to_owned(),
         );
     }
@@ -168,7 +168,7 @@ fn convert_plan(project_root: &Path, id: &str, format: CommandFormat) -> Result<
     let metadata = std::fs::symlink_metadata(&path)
         .map_err(|_| "This command could not be read.".to_owned())?;
     if metadata.file_type().is_symlink() {
-        return Err("Symbolic link. JevCode does not follow links for commands.".to_owned());
+        return Err("Symbolic link. Octran Code does not follow links for commands.".to_owned());
     }
     if metadata.is_dir() {
         return Err("Commands in subfolders are not converted yet.".to_owned());
@@ -316,7 +316,7 @@ fn source_of(id: &str) -> AppResult<CommandFormat> {
         .ok_or_else(|| {
             AppError::new(
                 "invalid_input",
-                "That command is not in a folder JevCode reads.",
+                "That command is not in a folder Octran Code reads.",
             )
         })
 }
@@ -363,7 +363,7 @@ fn ensure_plain_folders(project_root: &Path, folder: &Path) -> AppResult<()> {
         {
             return Err(AppError::new(
                 "skill_unavailable",
-                "A link is in the way of the skill folder. JevCode does not write through links.",
+                "A link is in the way of the skill folder. Octran Code does not write through links.",
             ));
         }
     }

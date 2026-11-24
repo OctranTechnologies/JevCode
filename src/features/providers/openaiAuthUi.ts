@@ -31,33 +31,33 @@ export const initialOpenAIAuthFlow: OpenAIAuthFlow = {
 export function openAIAuthFailureMessage(reason: OpenAIAuthFailureReason | null): string {
   switch (reason) {
     case 'browser_unavailable':
-      return 'JevCode could not open your browser. Check your default browser and try again.';
+      return 'Octran Code could not open your browser. Check your default browser and try again.';
     case 'permission_denied':
-      return 'OpenAI sign-in was denied. Allow JevCode’s requested access to connect this account.';
+      return 'OpenAI sign-in was denied. Allow Octran Code’s requested access to connect this account.';
     case 'network_error':
-      return 'JevCode could not reach OpenAI. Check your connection and try sign-in again.';
+      return 'Octran Code could not reach OpenAI. Check your connection and try sign-in again.';
     case 'provider_outage':
       return 'OpenAI sign-in is temporarily unavailable. Your account is unchanged; try again later.';
     case 'callback_rejected':
-      return 'The sign-in response did not match this login attempt. Start a fresh sign-in from JevCode.';
+      return 'The sign-in response did not match this login attempt. Start a fresh sign-in from Octran Code.';
     case 'authorization_code_rejected':
-      return 'OpenAI rejected this sign-in code because it may have expired or already been used. Start a fresh sign-in from JevCode.';
+      return 'OpenAI rejected this sign-in code because it may have expired or already been used. Start a fresh sign-in from Octran Code.';
     case 'authorization_exchange_rejected':
-      return 'OpenAI rejected the sign-in exchange. Start a fresh sign-in; if this repeats, JevCode may need an app configuration update.';
+      return 'OpenAI rejected the sign-in exchange. Start a fresh sign-in; if this repeats, Octran Code may need an app configuration update.';
     case 'identity_verification_failed':
-      return 'JevCode could not verify the identity returned by OpenAI. Start a fresh sign-in; your saved accounts are unchanged.';
+      return 'Octran Code could not verify the identity returned by OpenAI. Start a fresh sign-in; your saved accounts are unchanged.';
     case 'invalid_response':
-      return 'OpenAI returned a sign-in response JevCode could not validate. Start a fresh sign-in; if it repeats, update JevCode and retry.';
+      return 'OpenAI returned a sign-in response Octran Code could not validate. Start a fresh sign-in; if it repeats, update Octran Code and retry.';
     case 'local_failure':
-      return 'JevCode hit a local error while finishing sign-in. Check application diagnostics and retry; existing accounts are unchanged.';
+      return 'Octran Code hit a local error while finishing sign-in. Check application diagnostics and retry; existing accounts are unchanged.';
     case 'secure_storage_unavailable':
-      return 'JevCode could not save the OpenAI session in your OS credential store. Check that Windows Credential Manager is available, or unlock Keychain/Secret Service if locked, then retry.';
+      return 'Octran Code could not save the OpenAI session in your OS credential store. Check that Windows Credential Manager is available, or unlock Keychain/Secret Service if locked, then retry.';
     case 'account_mismatch':
       return 'OpenAI returned a different account than the one selected. Choose the intended account and retry.';
     case 'account_already_connected':
       return 'This OpenAI account is already connected. Select it in the account list instead.';
     case 'configuration_error':
-      return 'OpenAI could not validate JevCode’s sign-in configuration. Update JevCode and try again.';
+      return 'OpenAI could not validate Octran Code’s sign-in configuration. Update Octran Code and try again.';
     case 'subscription_unavailable':
       return 'OpenAI could not authorize this account right now. Try again later.';
     default:
@@ -85,7 +85,7 @@ export function openAIAuthStartErrorMessage(code: string): string {
     case 'system_browser_unavailable':
       return openAIAuthFailureMessage('browser_unavailable');
     case 'auth_callback_unavailable':
-      return 'JevCode could not start the local sign-in listener. Restart the app and try again.';
+      return 'Octran Code could not start the local sign-in listener. Restart the app and try again.';
     case 'network_error':
       return openAIAuthFailureMessage('network_error');
     case 'provider_outage':
@@ -93,9 +93,9 @@ export function openAIAuthStartErrorMessage(code: string): string {
     case 'openai_reconnect_required':
       return 'This ChatGPT session needs to be reconnected. Choose Reconnect and sign in again.';
     case 'desktop_required':
-      return 'Run JevCode as a desktop app to connect an OpenAI account.';
+      return 'Run Octran Code as a desktop app to connect an OpenAI account.';
     default:
-      return 'JevCode could not start OpenAI sign-in. Check your connection and try again.';
+      return 'Octran Code could not start OpenAI sign-in. Check your connection and try again.';
   }
 }
 
@@ -108,7 +108,7 @@ export function openAIAuthFlowReducer(state: OpenAIAuthFlow, action: OpenAIAuthF
       return {
         phase: 'waiting',
         attemptId: action.attemptId,
-        feedback: { tone: 'info', message: 'Your browser was opened. Complete sign-in there; JevCode will verify the result.' },
+        feedback: { tone: 'info', message: 'Your browser was opened. Complete sign-in there; Octran Code will verify the result.' },
       };
     case 'begin-cancel':
       if (state.phase !== 'waiting') return state;

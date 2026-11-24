@@ -466,7 +466,7 @@ mod tests {
         ] {
             git(directory, &["init", "--quiet"]);
             git(directory, &["config", "user.email", "dev@example.test"]);
-            git(directory, &["config", "user.name", "JevCode Test"]);
+            git(directory, &["config", "user.name", "Octran Code Test"]);
             std::fs::write(directory.join(file), content).unwrap();
             git(directory, &["add", file]);
             git(directory, &["commit", "--quiet", "-m", "initial"]);

@@ -26,8 +26,8 @@ function HarnessSetup() {
       <h2 id="harness-setup-title">How sign-in works</h2>
       {desktopAvailable && <button type="button" className="harness-refresh" onClick={() => void detect()}>Check again</button>}
     </div>
-    <p><strong>JevCode providers</strong> are connected below. JevCode signs in to them and calls them directly. Keys and accounts stay on this device.</p>
-    <p><strong>External tools</strong> such as Codex CLI or Claude Code keep their own sign-in. JevCode only checks whether a tool’s command is on this computer’s PATH. It does not start the tool, read its sign-in, or copy it. An IDE or desktop app with the same name is not checked.</p>
+    <p><strong>Octran Code providers</strong> are connected below. Octran Code signs in to them and calls them directly. Keys and accounts stay on this device.</p>
+    <p><strong>External tools</strong> such as Codex CLI or Claude Code keep their own sign-in. Octran Code only checks whether a tool’s command is on this computer’s PATH. It does not start the tool, read its sign-in, or copy it. An IDE or desktop app with the same name is not checked.</p>
     {!desktopAvailable && <p className="harness-empty">Tool detection is available in the desktop application.</p>}
     {harnesses && <ul className="harness-list" aria-label="External coding-agent tools">{harnesses.map(harness => <li key={harness.id} className={`harness-item is-${harness.installed ? 'installed' : 'missing'}`}>
       <span className="harness-name">{harness.name}</span>
@@ -350,7 +350,7 @@ export function ProviderSettings({
     try {
       await copyOpenAIAuthLink(attemptId);
       setAuthLinkCopied(true);
-      setNotice('Sign-in link copied. Paste it into the browser you want to use, and keep JevCode open until sign-in finishes.');
+      setNotice('Sign-in link copied. Paste it into the browser you want to use, and keep Octran Code open until sign-in finishes.');
     } catch (cause) {
       setError(normalizeError(cause).message);
     } finally {
@@ -561,7 +561,7 @@ export function ProviderSettings({
     <div className="accounts-heading">
       <div>
         <h1>Accounts &amp; providers</h1>
-        <p className="page-description">Connect the model providers you use. JevCode tests keys in the desktop service and stores them in your OS credential manager.</p>
+        <p className="page-description">Connect the model providers you use. Octran Code tests keys in the desktop service and stores them in your OS credential manager.</p>
       </div>
       <span className="accounts-security"><ShieldCheck size={14} />Local credentials</span>
     </div>
@@ -606,7 +606,7 @@ export function ProviderSettings({
                     {connected ? 'Connected' : needsAttention ? 'Reconnect needed' : 'Not connected'}
                   </span>
                 </div>
-                <p>{showConnectionChoices ? 'Use your ChatGPT/OpenAI account to connect OpenAI models.' : 'Choose how JevCode authenticates OpenAI model requests.'}</p>
+                <p>{showConnectionChoices ? 'Use your ChatGPT/OpenAI account to connect OpenAI models.' : 'Choose how Octran Code authenticates OpenAI model requests.'}</p>
               </div>
             </div>
 
@@ -617,7 +617,7 @@ export function ProviderSettings({
               {selectedMethod === 'openai_chatgpt'
                 ? chatgptNeedsReconnect || chatgptAccounts.length === 0
                   ? 'ChatGPT OAuth is selected and needs reconnection. Requests pause until you reconnect or explicitly choose the API key.'
-                  : 'OpenAI requests use the selected ChatGPT account. JevCode will not switch to API-key billing automatically.'
+                  : 'OpenAI requests use the selected ChatGPT account. Octran Code will not switch to API-key billing automatically.'
                 : 'OpenAI requests use the API key. Select a ChatGPT account to route requests through your ChatGPT account.'}
             </div>}
 
@@ -631,7 +631,7 @@ export function ProviderSettings({
             </div>}
             {(openAIFlow.phase === 'waiting' || openAIFlow.phase === 'cancelling') && <div className="openai-auth-waiting" role="status">
               {openAIFlow.phase === 'cancelling' ? <LoaderCircle size={15} className="spin" /> : <ExternalLink size={15} />}
-              <div><strong>{openAIFlow.phase === 'cancelling' ? 'Cancelling sign-in…' : 'Waiting for login...'}</strong><span>Your browser was opened. Complete sign-in there; JevCode will verify the result.</span></div>
+              <div><strong>{openAIFlow.phase === 'cancelling' ? 'Cancelling sign-in…' : 'Waiting for login...'}</strong><span>Your browser was opened. Complete sign-in there; Octran Code will verify the result.</span></div>
               <button className="account-button quiet" onClick={() => void copyOpenAIChatGPTAuthLink()} disabled={openAIFlow.phase === 'cancelling' || copyingAuthLink}>
                 {authLinkCopied ? <Check size={13} /> : copyingAuthLink ? <LoaderCircle size={13} className="spin" /> : <Copy size={13} />}
                 {copyingAuthLink ? 'Copying…' : authLinkCopied ? 'Copied' : 'Copy sign-in link'}
@@ -820,7 +820,7 @@ export function ProviderSettings({
                 <span><small>Sign-in method</small><strong>Google Account</strong></span>
                 <span><small>Account</small><strong>{googleAccount.email ?? googleAccount.displayName ?? 'Google account'}</strong></span>
                 <span><small>Account type</small><strong>{googleAccount.accountType === 'workspace' ? 'Workspace / organization' : googleAccount.accountType === 'individual' ? 'Individual' : 'Unknown'}</strong></span>
-                <span><small>Code Assist access</small><strong>{googleStatus?.codeAssist.userTier ?? 'Separate; not used for JevCode requests'}</strong></span>
+                <span><small>Code Assist access</small><strong>{googleStatus?.codeAssist.userTier ?? 'Separate; not used for Octran Code requests'}</strong></span>
                 <span><small>Session</small><strong>{googleAccount.requiresReconnect ? 'Needs reconnection' : 'Stored securely on this device'}</strong></span>
               </div>}
 
@@ -912,7 +912,7 @@ export function ProviderSettings({
           {editing && <form className="account-connect-form" onSubmit={event => { event.preventDefault(); void connect(provider); }}>
             <div className="account-form-copy">
               <strong>{keyOption?.label ?? 'API key'}</strong>
-              <span>The key is checked first. JevCode saves it only after the provider accepts it.</span>
+              <span>The key is checked first. Octran Code saves it only after the provider accepts it.</span>
             </div>
             <label className="sr-only" htmlFor={`api-key-${provider.id}`}>API key for {provider.name}</label>
             <input id={`api-key-${provider.id}`} type="password" autoComplete="off" spellCheck={false} value={secret} onChange={event => setSecret(event.target.value)} placeholder="Paste an API key" disabled={busy} autoFocus />
@@ -936,7 +936,7 @@ export function ProviderSettings({
       })}
     </div>
 
-    <div className="accounts-policy-note"><ShieldCheck size={15} /><p>Anthropic uses Console API keys here; JevCode does not reuse Claude Code subscription credentials. OAuth tokens and API keys never enter SQLite, browser storage, or application logs.</p></div>
-    {!desktopAvailable && <p className="accounts-preview-note">Run JevCode as a desktop app to connect and test accounts.</p>}
+    <div className="accounts-policy-note"><ShieldCheck size={15} /><p>Anthropic uses Console API keys here; Octran Code does not reuse Claude Code subscription credentials. OAuth tokens and API keys never enter SQLite, browser storage, or application logs.</p></div>
+    {!desktopAvailable && <p className="accounts-preview-note">Run Octran Code as a desktop app to connect and test accounts.</p>}
   </section>;
 }

@@ -1,14 +1,14 @@
 # Context from other agents
 
 People arriving from another coding agent usually bring instruction files,
-rules, and skills with them. This page records what JevCode honors, how the
+rules, and skills with them. This page records what Octran Code honors, how the
 **Context from other agents** panel on a project's overview works, and what is
 still missing. Competitor behavior was checked against first-party
 documentation on 15 November 2026; links are listed at the end.
 
-## What JevCode loads
+## What Octran Code loads
 
-When a task starts, JevCode adds three sources to the system prompt:
+When a task starts, Octran Code adds three sources to the system prompt:
 
 1. The project instructions saved in the project's settings (SQLite, this device).
 2. The root `AGENTS.md`, if it is a regular, UTF-8 file of 64 KiB or less.
@@ -24,8 +24,8 @@ it finds:
 
 | Group | Meaning |
 | --- | --- |
-| Loaded by JevCode | Root `AGENTS.md`, root `CLAUDE.md`, and `.jevcode/mcp.json`. |
-| Ready to add | Instruction and rule files JevCode does not load, plus a skill index. |
+| Loaded by Octran Code | Root `AGENTS.md`, root `CLAUDE.md`, and `.jevcode/mcp.json`. |
+| Ready to add | Instruction and rule files Octran Code does not load, plus a skill index. |
 | Added to project instructions | Copied earlier; flagged when the source file has changed since. |
 | Not supported yet | Skills, custom commands, workflows, and agent settings files. |
 | Skipped | Symbolic links, files over 64 KiB, non-UTF-8 text, and unsupported names. |
@@ -50,7 +50,7 @@ Adding files (`import_project_context`) works like this:
   source again replaces its block. Project files are never written.
 - Frontmatter is removed. Rules that are scoped to some files or applied on
   demand in their own tool are marked with their original scope and a warning,
-  because JevCode applies them to every task.
+  because Octran Code applies them to every task.
 - Files with a likely credential cannot be added. The panel shows the line
   numbers but not the values, and previews hide those lines. A loaded
   `AGENTS.md` or `CLAUDE.md` with a likely credential gets a warning, because
@@ -63,7 +63,7 @@ Adding files (`import_project_context`) works like this:
 - Adding is blocked while the project settings have unsaved edits, and the
   result must stay within the 50,000-character instruction limit.
 - `@path` imports in Claude Code or Gemini CLI files are listed as warnings.
-  JevCode does not expand them.
+  Octran Code does not expand them.
 
 ## Remaining gaps
 

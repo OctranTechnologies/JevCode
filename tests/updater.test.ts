@@ -178,7 +178,7 @@ describe('UpdateService', () => {
 
     const result = await service.downloadAvailableUpdate();
 
-    expect(result).toMatchObject({ phase: 'error', error: 'The update signature was invalid. JevCode did not install it.' });
+    expect(result).toMatchObject({ phase: 'error', error: 'The update signature was invalid. Octran Code did not install it.' });
     expect(signedUpdate?.install).not.toHaveBeenCalled();
   });
 
@@ -191,7 +191,7 @@ describe('UpdateService', () => {
     const result = await service.downloadAvailableUpdate();
 
     expect(result.phase).toBe('error');
-    expect(result.error).toBe('Update download failed. JevCode did not install it. Try again later.');
+    expect(result.error).toBe('Update download failed. Octran Code did not install it. Try again later.');
     expect(update.install).not.toHaveBeenCalled();
   });
 
@@ -202,7 +202,7 @@ describe('UpdateService', () => {
 
     const result = await service.checkForUpdate();
 
-    expect(result).toMatchObject({ phase: 'error', error: 'The update information is invalid, so JevCode did not install it. Try again later.' });
+    expect(result).toMatchObject({ phase: 'error', error: 'The update information is invalid, so Octran Code did not install it. Try again later.' });
     expect(update.close).toHaveBeenCalledOnce();
     expect(update.download).not.toHaveBeenCalled();
   });
@@ -215,7 +215,7 @@ describe('UpdateService', () => {
 
       const result = await service.checkForUpdate();
 
-      expect(result).toMatchObject({ phase: 'error', error: 'The update information is invalid, so JevCode did not install it. Try again later.' });
+      expect(result).toMatchObject({ phase: 'error', error: 'The update information is invalid, so Octran Code did not install it. Try again later.' });
       expect(update.close).toHaveBeenCalledOnce();
       expect(update.download).not.toHaveBeenCalled();
     }

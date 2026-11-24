@@ -37,7 +37,7 @@ pub(super) fn google_method() -> ProviderAuthMethodOption {
         label: "Google Account + Gemini API (Cloud project)".into(),
         available: false,
         unavailable_reason: Some(
-            "Register a Desktop OAuth client ID and configure the Gemini API OAuth consent screen for JevCode.".into(),
+            "Register a Desktop OAuth client ID and configure the Gemini API OAuth consent screen for Octran Code.".into(),
         ),
     }
 }

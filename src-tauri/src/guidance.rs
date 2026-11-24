@@ -436,7 +436,7 @@ pub(crate) fn included_bytes(sources: &[TaskContextSource]) -> u64 {
 
 pub(crate) fn read_guidance(path: &Path, metadata: &std::fs::Metadata) -> Result<String, String> {
     if metadata.file_type().is_symlink() {
-        return Err("Symbolic link. JevCode does not follow links for guidance.".into());
+        return Err("Symbolic link. Octran Code does not follow links for guidance.".into());
     }
     if !metadata.is_file() {
         return Err("Not a regular file.".into());
@@ -840,7 +840,7 @@ mod tests {
             &repo,
             &["config", "user.email", "jevcode-test@example.invalid"],
         );
-        git(&repo, &["config", "user.name", "JevCode Test"]);
+        git(&repo, &["config", "user.name", "Octran Code Test"]);
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "--quiet", "-m", "guidance"]);
         let base = git(&repo, &["branch", "--show-current"]);

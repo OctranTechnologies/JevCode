@@ -128,7 +128,7 @@ describe('uncontained badge', () => {
 
 describe('blocked command wording', () => {
   it('uses one exact message for containment_unavailable', () => {
-    expect(CONTAINMENT_UNAVAILABLE_MESSAGE).toBe('Command execution is unavailable: JevCode cannot enforce this task’s containment profile on this system. File edits still work.');
+    expect(CONTAINMENT_UNAVAILABLE_MESSAGE).toBe('Command execution is unavailable: Octran Code cannot enforce this task’s containment profile on this system. File edits still work.');
     expect(normalizeError({ code: 'containment_unavailable', message: 'backend detail (containment_unavailable)' }).message).toBe(CONTAINMENT_UNAVAILABLE_MESSAGE);
   });
 });

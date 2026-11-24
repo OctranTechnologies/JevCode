@@ -1,4 +1,4 @@
-//! Agent Skills: folders that hold a `SKILL.md`. JevCode lists each skill's name
+//! Agent Skills: folders that hold a `SKILL.md`. Octran Code lists each skill's name
 //! and description so people can find it, and reads a skill's body only when a
 //! task invokes it. A skill can name the tools it expects, but listing or
 //! reading one grants no tool access; anything a skill's instructions run still
@@ -190,7 +190,7 @@ fn collect(found: &mut Vec<Found>, root: &Path, scope: SkillScope, display_root:
                 &folder,
                 source,
                 path,
-                "Symbolic link. JevCode does not follow links for skills.",
+                "Symbolic link. Octran Code does not follow links for skills.",
             ));
             continue;
         }
@@ -306,7 +306,7 @@ fn invalid(
 
 fn read_skill_file(path: &Path, metadata: &std::fs::Metadata) -> Result<String, String> {
     if metadata.file_type().is_symlink() {
-        return Err("Symbolic link. JevCode does not follow links for skills.".into());
+        return Err("Symbolic link. Octran Code does not follow links for skills.".into());
     }
     if !metadata.is_file() {
         return Err("Not a regular file.".into());

@@ -107,7 +107,7 @@ pub async fn checkpoint_before(
             if !live_matches(&existing)? {
                 return Err(AppError::new(
                     "file_changed_externally",
-                    "This file changed outside the task. Review it before JevCode edits it again.",
+                    "This file changed outside the task. Review it before Octran Code edits it again.",
                 ));
             }
             continue;

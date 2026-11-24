@@ -51,7 +51,7 @@ export function PermissionsSettings({
 
   return <section className="settings-content permissions-settings">
     <h1>Permissions</h1>
-    <p className="page-description">Choose how JevCode handles routine work. Sensitive actions keep their own review step.</p>
+    <p className="page-description">Choose how Octran Code handles routine work. Sensitive actions keep their own review step.</p>
 
     <section className="permission-mode-section" aria-labelledby="permission-mode-heading">
       <div className="permission-section-heading">
@@ -80,7 +80,7 @@ export function PermissionsSettings({
         </button>
       </div>
       {loading ? <div className="permission-rules-loading" role="status"><span /><span /><span /></div> : !desktopAvailable ?
-        <div className="permission-rules-empty"><ShieldCheck size={17} /><p>Persistent project rules are available in the JevCode desktop app.</p></div> : rules.length === 0 ?
+        <div className="permission-rules-empty"><ShieldCheck size={17} /><p>Persistent project rules are available in the Octran Code desktop app.</p></div> : rules.length === 0 ?
           <div className="permission-rules-empty"><ShieldCheck size={17} /><p>No persistent permission rules yet. Choose “Always allow for this project” from an approval request to add one.</p></div> :
           <ul className="permission-rule-list">{rules.map(rule => {
             const projectName = projects.find(project => project.id === rule.projectId)?.name ?? 'Unavailable project';

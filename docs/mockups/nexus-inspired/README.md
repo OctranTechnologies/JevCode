@@ -1,8 +1,8 @@
-# Nexus-inspired JevCode mockups
+# Nexus-inspired Octran Code mockups
 
 These concept images apply the visual language documented in the read-only
-`Octran-Nexus` reference repository to JevCode's existing product screens.
-They are design proposals, not screenshots of running JevCode. Task details,
+`Octran-Nexus` reference repository to Octran Code's existing product screens.
+They are design proposals, not screenshots of running Octran Code. Task details,
 provider connection states, model counts, repository status, and usage figures
 are illustrative.
 
@@ -17,7 +17,7 @@ The reference's defining cues are a matte near-black canvas (`#0b0b0c`),
 graphite surfaces (`#131315`), a slightly warm sidebar, thin technical
 dividers, compact Inter text, and small uppercase monospace labels. Orange
 (`#ff5e1a`) marks the primary action or selected location, while indigo is
-reserved for approval and governance states. The mockups keep JevCode's
+reserved for approval and governance states. The mockups keep Octran Code's
 project/sidebar, conversation, inspector, and settings architecture.
 
 Reference material was read from `Octran-Nexus/DESIGN.md`,

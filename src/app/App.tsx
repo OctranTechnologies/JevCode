@@ -497,7 +497,7 @@ export default function App() {
     for (const path of paths) {
       const normalized = path.replaceAll('\\', '/');
       if (!normalized.toLocaleLowerCase().startsWith(`${lowerRoot.replaceAll('\\', '/')}/`)) {
-        desktop.setError('Choose files inside the selected project so JevCode can read them safely.');
+        desktop.setError('Choose files inside the selected project so Octran Code can read them safely.');
         return;
       }
       relativePaths.push(normalized.slice(root.length + 1).replaceAll('\\', '/'));
@@ -656,7 +656,7 @@ export default function App() {
       { id: 'permissions', label: 'Manage permissions', detail: 'Set a permission mode and revoke project rules', group: 'Navigation', icon: <ShieldCheck size={15} />, run: () => setView('permissions') },
       { id: 'mcp', label: 'Manage MCP servers', detail: 'Configure external tools and trust settings', group: 'Navigation', icon: <Settings2 size={15} />, run: () => setView('mcp') },
       { id: 'diagnostics', label: 'Open diagnostics', detail: 'Application health, logs, and updates', group: 'Navigation', icon: <Activity size={15} />, run: () => setView('diagnostics') },
-      { id: 'about', label: 'About JevCode', detail: 'Version and update status', group: 'Navigation', icon: <CircleDot size={15} />, run: () => setView('about') },
+      { id: 'about', label: 'About Octran Code', detail: 'Version and update status', group: 'Navigation', icon: <CircleDot size={15} />, run: () => setView('about') },
       { id: 'usage', label: 'View usage', group: 'Navigation', icon: <CircleDot size={15} />, run: () => setView('usage') },
       { id: 'appearance-settings', label: 'Open appearance settings', group: 'Navigation', icon: <Eye size={15} />, run: () => setView('appearance') },
       { id: 'interface-mode', label: interfaceMode === 'simple' ? 'Switch to Maximum interface' : 'Switch to Simple interface', group: 'Appearance', icon: <SlidersHorizontal size={15} />, run: () => changeInterfaceMode(interfaceMode === 'simple' ? 'maximum' : 'simple') },
@@ -700,7 +700,7 @@ export default function App() {
   }, [busy, newTask, openFolder, sending, session?.status, stopTask, toggleTerminal, windowWidth]);
 
   if (desktop.loading) return <WorkspaceSkeleton />;
-  if (!data) return <main className="startup-error"><div className="startup-error-card"><AlertCircle size={24} /><h1>JevCode couldn’t open</h1><p>{desktop.error ?? 'The local workspace service could not be reached.'}</p><button className="button-primary" onClick={desktop.retry}>Try again</button></div></main>;
+  if (!data) return <main className="startup-error"><div className="startup-error-card"><AlertCircle size={24} /><h1>Octran Code couldn’t open</h1><p>{desktop.error ?? 'The local workspace service could not be reached.'}</p><button className="button-primary" onClick={desktop.retry}>Try again</button></div></main>;
 
   const isAgentView = view === 'agent';
   const isProjectView = view === 'overview';
@@ -721,7 +721,7 @@ export default function App() {
     {!sidebarCollapsed && <ResizeDivider label="Resize sidebar" width={sidebarWidth} min={210} max={340} onResize={setSidebarWidth} />}
 
     <main className="workbench-main">
-      {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} onProject={chooseProject} session={session} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} workspaceModeLocked={!!session || busy || sending} interfaceMode={interfaceMode} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>JevCode</span><strong>{isProjectView ? project?.name ?? 'Projects' : ['providers', 'decisions', 'updates', 'about', 'appearance'].includes(view) ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : view === 'diagnostics' ? 'Diagnostics' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
+      {isAgentView ? <WorkspaceHeader projects={projects} projectId={projectId} project={project} branch={branch} onProject={chooseProject} session={session} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} baseBranch={baseBranch} onBaseBranch={setBaseBranch} branches={projectBranches} canIsolate={!!project?.repositoryRoot} workspaceModeLocked={!!session || busy || sending} interfaceMode={interfaceMode} sidebarCollapsed={windowWidth < 840 ? !mobileSidebarOpen : sidebarCollapsed} onToggleSidebar={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(value => !value); } else setSidebarCollapsed(value => !value); }} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(value => !value)} darkMode={darkMode} onToggleTheme={() => setDarkMode(value => !value)} onSearch={() => setPaletteOpen(true)} askReads={askReads} onAskReads={setAskReads} /> : <header className="settings-toolbar"><button className="quiet-icon-button toolbar-sidebar-toggle" onClick={() => { if (windowWidth < 840) { setSidebarCollapsed(false); setMobileSidebarOpen(true); } else setSidebarCollapsed(value => !value); }} aria-label="Toggle sidebar">{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div><span>Octran Code</span><strong>{isProjectView ? project?.name ?? 'Projects' : ['providers', 'decisions', 'updates', 'about', 'appearance'].includes(view) ? 'Settings' : view === 'permissions' ? 'Permissions' : view === 'mcp' ? 'MCP' : view === 'diagnostics' ? 'Diagnostics' : 'Usage'}</strong></div><button className="quiet-icon-button theme-toggle" onClick={() => setDarkMode(value => !value)} aria-label="Toggle appearance">{darkMode ? <Sun size={15} /> : <Moon size={15} />}</button></header>}
       {desktop.error && <div className="workspace-error-banner" role="alert"><AlertCircle size={15} /><span>{desktop.error}</span><button onClick={() => desktop.setError(null)} aria-label="Dismiss error">Dismiss</button></div>}
       {!networkOnline && <div className="workspace-offline-banner" role="status"><WifiOff size={14} /><span>Offline. Local projects and saved tasks are still available; provider requests will retry when you reconnect.</span></div>}
       {pendingDelete && <div className="undo-delete-banner" role="status" key={pendingDelete.session.id}><span>Deleted “{pendingDelete.session.title}”</span><button type="button" onClick={undoDelete}>Undo</button><i aria-hidden="true" /></div>}
@@ -765,7 +765,7 @@ function ProjectEmpty({ opening, onOpen, onCreate }: { opening: boolean; onOpen:
   return <section className="project-empty-state">
     <div className="project-empty-mark"><FolderOpen size={20} /></div>
     <h1>Open a project to begin</h1>
-    <p>Choose a local folder or Git repository. JevCode keeps project details on this device and reads files through project-scoped commands.</p>
+    <p>Choose a local folder or Git repository. Octran Code keeps project details on this device and reads files through project-scoped commands.</p>
     <div><button className="project-primary-action" onClick={onOpen} disabled={opening}><FolderOpen size={14} />{opening ? 'Opening folder…' : 'Open folder or repository'}</button><button className="project-secondary-action" onClick={onCreate}><FolderPlus size={14} />Create project</button></div>
   </section>;
 }

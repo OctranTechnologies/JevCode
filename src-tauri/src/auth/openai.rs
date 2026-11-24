@@ -36,7 +36,7 @@ const OPENAI_MODELS_URL: &str = "https://api.openai.com/v1/models";
 const OPENAI_RESOURCE: &str = "https://api.openai.com/v1";
 const OPENAI_SCOPES: &str =
     "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
-const OPENAI_AGENT_NAME: &str = "JevCode";
+const OPENAI_AGENT_NAME: &str = "Octran Code";
 const OPENAI_REFRESH_SKEW: ChronoDuration = ChronoDuration::minutes(5);
 
 type RefreshLock = Arc<AsyncMutex<()>>;
@@ -545,12 +545,12 @@ fn code_exchange_error(status: StatusCode, error_code: Option<&str>) -> AppError
         ),
         Some("invalid_client") => AppError::new(
             "openai_client_configuration",
-            "OpenAI could not validate JevCode’s sign-in registration. Update the app or contact support.",
+            "OpenAI could not validate Octran Code’s sign-in registration. Update the app or contact support.",
         ),
         Some("invalid_request" | "unauthorized_client" | "unsupported_grant_type" | "invalid_scope") => {
             AppError::new(
                 "openai_client_configuration",
-                "OpenAI rejected JevCode’s sign-in request configuration. Update the app or contact support.",
+                "OpenAI rejected Octran Code’s sign-in request configuration. Update the app or contact support.",
             )
         }
         Some("server_error" | "temporarily_unavailable") => crate::auth::provider_outage(),
@@ -619,7 +619,7 @@ fn refresh_response_error(status: StatusCode, error_code: Option<&str>) -> AppEr
     } else if error_code == Some("invalid_client") {
         AppError::new(
             "openai_client_configuration",
-            "OpenAI could not validate JevCode’s sign-in registration. Update the app or contact support.",
+            "OpenAI could not validate Octran Code’s sign-in registration. Update the app or contact support.",
         )
     } else if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
         AppError::new(
@@ -642,7 +642,7 @@ fn refresh_response_error(status: StatusCode, error_code: Option<&str>) -> AppEr
 fn auth_network_error() -> AppError {
     AppError::new(
         "network_error",
-        "JevCode could not reach OpenAI. Check your connection and retry.",
+        "Octran Code could not reach OpenAI. Check your connection and retry.",
     )
 }
 
@@ -684,7 +684,7 @@ fn chatgpt_response_error_code(status: StatusCode, code: &str) -> AppError {
     match code {
         "subscription_sharing_usage_limit_exceeded" => AppError::new(
             "chatgpt_plan_usage_limit",
-            "Your ChatGPT plan usage limit for JevCode has been reached. Review ChatGPT Settings → Usage before retrying.",
+            "Your ChatGPT plan usage limit for Octran Code has been reached. Review ChatGPT Settings → Usage before retrying.",
         ),
         "subscription_sharing_usage_unavailable" => AppError::new(
             "provider_outage",
@@ -705,7 +705,7 @@ fn chatgpt_response_error_code(status: StatusCode, code: &str) -> AppError {
         | "refresh_token_reused" => openai_reconnect_error(),
         "subscription_sharing_route_not_supported" => AppError::new(
             "openai_route_unsupported",
-            "OpenAI did not accept this request route for ChatGPT plan usage. JevCode will not change the billing method.",
+            "OpenAI did not accept this request route for ChatGPT plan usage. Octran Code will not change the billing method.",
         ),
         "model_not_found" | "model_unavailable" => AppError::new(
             "openai_model_unavailable",
@@ -725,7 +725,7 @@ fn chatgpt_response_error_code(status: StatusCode, code: &str) -> AppError {
         ),
         _ => AppError::new(
             "provider_rejected",
-            "OpenAI rejected this ChatGPT plan request. JevCode did not switch to API-key billing.",
+            "OpenAI rejected this ChatGPT plan request. Octran Code did not switch to API-key billing.",
         ),
     }
 }
@@ -744,7 +744,7 @@ fn auth_http_error(status: StatusCode) -> AppError {
     } else if status == StatusCode::FORBIDDEN {
         AppError::new(
             "subscription_unavailable",
-            "This OpenAI account could not authorize JevCode.",
+            "This OpenAI account could not authorize Octran Code.",
         )
     } else if status.is_server_error() {
         AppError::new(
@@ -1091,7 +1091,7 @@ fn openai_reconnect_error() -> AppError {
 fn chatgpt_plan_access_error() -> AppError {
     AppError::new(
         "chatgpt_plan_unavailable",
-        "This ChatGPT account did not grant JevCode access to ChatGPT plan requests. Reconnect OpenAI and approve the requested model access.",
+        "This ChatGPT account did not grant Octran Code access to ChatGPT plan requests. Reconnect OpenAI and approve the requested model access.",
     )
 }
 
@@ -2447,7 +2447,7 @@ mod tests {
                 "nbf": Utc::now().timestamp() as u64,
                 "email": "verified@example.test",
                 "email_verified": true,
-                "name": "JevCode Test Account"
+                "name": "Octran Code Test Account"
             }),
             key,
         )
@@ -2956,7 +2956,7 @@ mod tests {
         assert_eq!(account.email.as_deref(), Some("verified@example.test"));
         assert_eq!(
             account.display_name.as_deref(),
-            Some("JevCode Test Account")
+            Some("Octran Code Test Account")
         );
         assert!(account
             .granted_scopes
@@ -3259,7 +3259,7 @@ mod tests {
         );
         assert_eq!(
             pairs.get("agent_name_hint").map(|value| value.as_ref()),
-            Some("JevCode")
+            Some("Octran Code")
         );
         assert_eq!(
             pairs.get("ext_agent_host_id").map(|value| value.as_ref()),

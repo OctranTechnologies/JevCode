@@ -1,4 +1,4 @@
-# JevCode
+# Octran Code
 
 <!-- impeccable:product-schema 1 -->
 
@@ -34,7 +34,7 @@ provider validation are future scope.
 
 ## Brand Commitments
 
-Name: JevCode. Familiar project-sidebar and conversation interaction was
+Name: Octran Code. Familiar project-sidebar and conversation interaction was
 explicitly selected by the user. The user selected mockup-first design.
 
 ## Open Decisions

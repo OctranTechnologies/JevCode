@@ -400,7 +400,7 @@ fn blocked_error(reason: BlockReason) -> AppError {
     AppError::new(
         BlockReason::ContainmentUnavailable.code(),
         format!(
-            "Command execution is unavailable: JevCode cannot enforce this task's containment profile on this system ({}). File edits still work.",
+            "Command execution is unavailable: Octran Code cannot enforce this task's containment profile on this system ({}). File edits still work.",
             reason.code()
         ),
     )

@@ -50,7 +50,7 @@ impl OpenAIProvider {
                 {
                     return Err(AppError::new(
                         "openai_route_unsupported",
-                        "ChatGPT sign-in can only be used with OpenAI’s public Responses API host. JevCode will not change the billing method.",
+                        "ChatGPT sign-in can only be used with OpenAI’s public Responses API host. Octran Code will not change the billing method.",
                     ));
                 }
                 Ok((

@@ -21,7 +21,7 @@ function csvCell(value: string | number | boolean | null) {
 }
 
 function exportUsage(records: UsageRecord[], decisionRecords: DecisionUsageRecord[], format: ExportFormat) {
-  const notice = 'Local Agent Usage only. These records cover requests made by JevCode and do not represent complete provider-account usage or provider invoices.';
+  const notice = 'Local Agent Usage only. These records cover requests made by Octran Code and do not represent complete provider-account usage or provider invoices.';
   const orderedRecords = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const orderedDecisions = [...decisionRecords].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const body = format === 'json'
@@ -91,7 +91,7 @@ export function UsageView({ records, providers, projects, sessions }: {
       <div>
         <div className="usage-kicker"><Activity size={12} /> APPLICATION TELEMETRY</div>
         <h1 id="usage-title">Usage</h1>
-        <p className="page-description">Local Agent Usage measures requests made by JevCode. Estimated spend is based on token counts and the local model-pricing registry.</p>
+        <p className="page-description">Local Agent Usage measures requests made by Octran Code. Estimated spend is based on token counts and the local model-pricing registry.</p>
       </div>
       <div className="usage-export-actions" aria-label="Export usage">
         <button type="button" onClick={() => handleExport('csv')}><Download size={13} /> CSV</button>
@@ -137,7 +137,7 @@ export function UsageView({ records, providers, projects, sessions }: {
 
     <section className="usage-account-card">
       <div className="usage-account-heading"><div><span className="usage-overline">SEPARATE SOURCE</span><h2>Provider Account Usage</h2></div><span className="usage-not-imported"><X size={11} /> Not imported</span></div>
-      <p>Provider-reported billing is not connected to this dashboard. Check each provider’s account for subscription or account-wide usage; those totals may include requests made outside JevCode.</p>
+      <p>Provider-reported billing is not connected to this dashboard. Check each provider’s account for subscription or account-wide usage; those totals may include requests made outside Octran Code.</p>
     </section>
 
     <section className="usage-history-section">

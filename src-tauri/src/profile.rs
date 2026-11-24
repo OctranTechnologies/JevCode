@@ -85,10 +85,13 @@ pub fn parse(bytes: &[u8]) -> AppResult<ProjectProfile> {
     }
     let text =
         std::str::from_utf8(bytes).map_err(|_| invalid("This profile is not UTF-8 text."))?;
-    let profile: ProjectProfile = serde_json::from_str(text)
-        .map_err(|error| invalid(&format!("This is not a valid JevCode profile: {error}.")))?;
+    let profile: ProjectProfile = serde_json::from_str(text).map_err(|error| {
+        invalid(&format!(
+            "This is not a valid Octran Code profile: {error}."
+        ))
+    })?;
     if profile.format != FORMAT {
-        return Err(invalid("This file is not a JevCode project profile."));
+        return Err(invalid("This file is not an Octran Code project profile."));
     }
     if profile.version == 0 {
         return Err(invalid("The profile version must be 1 or later."));
@@ -97,7 +100,7 @@ pub fn parse(bytes: &[u8]) -> AppResult<ProjectProfile> {
         return Err(AppError::new(
             "profile_version",
             format!(
-                "This profile uses version {}. This JevCode reads version {VERSION} and older; update JevCode to import it.",
+                "This profile uses version {}. Octran Code reads version {VERSION} and older; update Octran Code to import it.",
                 profile.version
             ),
         ));
@@ -155,7 +158,7 @@ impl<'de> Visitor<'de> for ProfileVisitor {
     type Value = ProjectProfile;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a JevCode project profile")
+        formatter.write_str("an Octran Code project profile")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ProjectProfile, A::Error> {
@@ -181,7 +184,7 @@ impl<'de> Visitor<'de> for ProfileVisitor {
                 "guidancePrecedence" => precedence = Some(map.next_value::<GuidancePrecedence>()?),
                 other => {
                     return Err(de::Error::custom(format!(
-                        "The field `{other}` is not part of a JevCode profile."
+                        "The field `{other}` is not part of an Octran Code profile."
                     )))
                 }
             }
@@ -264,7 +267,7 @@ mod tests {
         let error = parse(newer.as_bytes()).unwrap_err();
 
         assert_eq!(error.code, "profile_version");
-        assert!(error.message.contains("update JevCode"));
+        assert!(error.message.contains("update Octran Code"));
     }
 
     #[test]

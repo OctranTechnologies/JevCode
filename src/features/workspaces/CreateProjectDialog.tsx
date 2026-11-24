@@ -40,7 +40,7 @@ export function CreateProjectDialog({ open: visible, busy, onClose, onCreate, on
       <form onSubmit={event => void submit(event)}>
         <label>Project name<input autoFocus value={name} onChange={event => setName(event.target.value)} maxLength={100} placeholder="e.g. Atlas" disabled={!desktopAvailable || busy} /></label>
         <div className="project-parent-picker"><div><span>Parent folder</span><p title={parentPath}>{parentPath || 'Choose where the new folder should live'}</p></div><button type="button" className="project-secondary-action" onClick={() => void chooseParent()} disabled={!desktopAvailable || pickerBusy || busy}>{pickerBusy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />}{parentPath ? 'Change' : 'Choose'}</button></div>
-        <p className="project-create-note">JevCode creates one new folder inside the selected location. It won’t overwrite an existing folder.</p>
+        <p className="project-create-note">Octran Code creates one new folder inside the selected location. It won’t overwrite an existing folder.</p>
         <footer><button type="button" className="project-text-action" onClick={onOpenExisting} disabled={!desktopAvailable}>Open an existing folder or Git repository</button><span /><button type="button" className="project-secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="project-primary-action" type="submit" disabled={!desktopAvailable || !name.trim() || !parentPath || busy}>{busy ? <LoaderCircle size={13} className="spin" /> : <Plus size={13} />}{busy ? 'Creating' : 'Create project'}</button></footer>
       </form>
     </section>

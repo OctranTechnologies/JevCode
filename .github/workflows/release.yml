@@ -91,8 +91,8 @@ jobs:
           if [[ "$count" -eq 0 ]]; then
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$RELEASE_TAG" \
-              -f name="JevCode $RELEASE_TAG" \
-              -f body="Installers and signed updater packages for JevCode $RELEASE_TAG." \
+              -f name="Octran Code $RELEASE_TAG" \
+              -f body="Installers and signed updater packages for Octran Code $RELEASE_TAG." \
               -F draft=true \
               -F prerelease=false > /dev/null
           elif [[ "$count" -eq 1 ]] && [[ "$(jq -r '.[0].draft' <<< "$matching")" == "true" ]] && [[ "$(jq -r '.[0].prerelease' <<< "$matching")" == "false" ]]; then
@@ -190,8 +190,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: JevCode ${{ github.ref_name }}
-          releaseBody: Installers and signed updater packages for JevCode ${{ github.ref_name }}.
+          releaseName: Octran Code ${{ github.ref_name }}
+          releaseBody: Installers and signed updater packages for Octran Code ${{ github.ref_name }}.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
@@ -311,4 +311,4 @@ jobs:
 
       - name: Report published release
         if: success()
-        run: echo "Published JevCode ${{ github.ref_name }} after validating every platform artifact and updater manifest."
+        run: echo "Published Octran Code ${{ github.ref_name }} after validating every platform artifact and updater manifest."

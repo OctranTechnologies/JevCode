@@ -24,14 +24,14 @@ async fn output(
     let process = command.spawn().map_err(|_| {
         AppError::new(
             "git_unavailable",
-            "Git is unavailable. Install Git and restart JevCode.",
+            "Git is unavailable. Install Git and restart Octran Code.",
         )
     })?;
     match tokio::time::timeout(timeout, crate::containment::collect_output(process)).await {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(_)) => Err(AppError::new(
             "git_unavailable",
-            "Git is unavailable. Install Git and restart JevCode.",
+            "Git is unavailable. Install Git and restart Octran Code.",
         )),
         Err(_) => Err(AppError::new("timeout", "Git took too long to respond.")),
     }
@@ -142,7 +142,7 @@ pub async fn status(policy: SpawnPolicy, root: &Path) -> AppResult<String> {
     let process = command.spawn().map_err(|_| {
         AppError::new(
             "git_unavailable",
-            "Git is unavailable. Install Git and restart JevCode.",
+            "Git is unavailable. Install Git and restart Octran Code.",
         )
     })?;
     let output = match tokio::time::timeout(
@@ -154,7 +154,7 @@ pub async fn status(policy: SpawnPolicy, root: &Path) -> AppResult<String> {
         Ok(result) => result.map_err(|_| {
             AppError::new(
                 "git_unavailable",
-                "Git is unavailable. Install Git and restart JevCode.",
+                "Git is unavailable. Install Git and restart Octran Code.",
             )
         })?,
         Err(_) => return Err(AppError::new("timeout", "Git status timed out.")),
@@ -335,7 +335,7 @@ mod tests {
         let root = directory.path();
         run_git(root, &["init", "--quiet"]);
         run_git(root, &["config", "user.email", "dev@example.test"]);
-        run_git(root, &["config", "user.name", "JevCode Test"]);
+        run_git(root, &["config", "user.name", "Octran Code Test"]);
         std::fs::write(root.join("README.md"), "start\n").unwrap();
         run_git(root, &["add", "README.md"]);
         run_git(root, &["commit", "--quiet", "-m", "initial"]);

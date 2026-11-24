@@ -94,7 +94,7 @@ pub fn encode_chatgpt_streaming(request: &ProviderRequest<'_>) -> AppResult<(Str
         payload["tools"] = json!([{
             "type": "namespace",
             "name": "jevcode_workspace",
-            "description": "Local project and repository tools executed by JevCode after permission checks.",
+            "description": "Local project and repository tools executed by Octran Code after permission checks.",
             "tools": functions
         }]);
     }

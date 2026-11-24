@@ -1,7 +1,7 @@
 //! Read-only discovery of instruction, rule, skill, and configuration files
 //! written for other coding agents. Nothing here writes to the project. The
 //! only change it supports is an explicit, user-confirmed addition to
-//! JevCode's own project instructions, which are stored in local SQLite.
+//! Octran Code's own project instructions, which are stored in local SQLite.
 //! Agent settings and MCP files are reported by name only and never read,
 //! because they commonly hold commands, environment values, or credentials.
 use crate::{
@@ -287,7 +287,7 @@ fn discover(root: &Path, project_instructions: &str) -> Discovery {
                     ContextItemKind::Rule,
                     &[Cursor],
                     ContextItemStatus::Skipped,
-                    "Cursor ignores plain .md files in .cursor/rules, so JevCode does too.",
+                    "Cursor ignores plain .md files in .cursor/rules, so Octran Code does too.",
                 ));
             }
         }
@@ -305,7 +305,7 @@ fn discover(root: &Path, project_instructions: &str) -> Discovery {
                 "workflows"
             };
             discovery.items.push(item(directory, *kind, agents, ContextItemStatus::Unsupported, &format!(
-                "{} file(s). JevCode has no {noun} yet; describe the steps in your request or project instructions instead.",
+                "{} file(s). Octran Code has no {noun} yet; describe the steps in your request or project instructions instead.",
                 files.len()
             )));
         }
@@ -318,7 +318,7 @@ fn discover(root: &Path, project_instructions: &str) -> Discovery {
     }
     if exists(root, ".jevcode/mcp.json") {
         discovery.items.push(item(".jevcode/mcp.json", ContextItemKind::Settings, &[Jevcode], ContextItemStatus::Loaded,
-            "JevCode lists these MCP servers in Settings → MCP. Each one runs only after you trust it, and its tools still need permission."));
+            "Octran Code lists these MCP servers in Settings → MCP. Each one runs only after you trust it, and its tools still need permission."));
     }
 
     if discovery.items.len() > MAX_ITEMS {
@@ -424,7 +424,7 @@ fn add_text_file(
             let (frontmatter, body) = split_frontmatter(&text);
             let (scope, project_wide) = rule_scope(flavor, &frontmatter);
             if !project_wide {
-                warnings.push("JevCode has no file-scoped or on-demand rules. Adding it applies this text to every task.".into());
+                warnings.push("Octran Code has no file-scoped or on-demand rules. Adding it applies this text to every task.".into());
             }
             let note = (!project_wide).then(|| format!("Originally scoped: {scope}"));
             (body.trim().to_owned(), Some(scope), note)
@@ -448,11 +448,11 @@ fn add_text_file(
         agents,
         status,
         match status {
-            ContextItemStatus::Imported => "Added to this project's JevCode instructions.",
+            ContextItemStatus::Imported => "Added to this project's Octran Code instructions.",
             ContextItemStatus::ImportedStale => {
                 "Added earlier, but the file has changed since. Update to use the current text."
             }
-            _ => "Not loaded by JevCode. You can add a copy to this project's instructions.",
+            _ => "Not loaded by Octran Code. You can add a copy to this project's instructions.",
         },
     );
     entry.scope = scope;
@@ -572,7 +572,7 @@ fn add_skills(root: &Path, discovery: &mut Discovery, markers: &[(String, String
             let description = truncate_chars(&description, MAX_SKILL_DESCRIPTION_CHARS);
             let secret = !secret_line_numbers(&format!("{name}\n{description}")).is_empty();
             let mut entry = item(&path, ContextItemKind::Skill, agents, ContextItemStatus::Unsupported,
-                "JevCode does not load skills automatically. Add the skill index so the agent can read this SKILL.md when a task matches it.");
+                "Octran Code does not load skills automatically. Add the skill index so the agent can read this SKILL.md when a task matches it.");
             entry.scope = (!description.is_empty()).then(|| description.clone());
             entry.size_bytes = Some(text.len() as u64);
             if description.is_empty() {
@@ -595,7 +595,7 @@ fn add_skills(root: &Path, discovery: &mut Discovery, markers: &[(String, String
     if skills.is_empty() {
         return;
     }
-    let mut body = String::from("These skills were written for other coding agents. JevCode does not run them automatically. When a task clearly matches a description, read that SKILL.md with the file tools and follow it within the active permissions. Commands a skill mentions still need normal approval; tool allowances in skill metadata are not honored.\n");
+    let mut body = String::from("These skills were written for other coding agents. Octran Code does not run them automatically. When a task clearly matches a description, read that SKILL.md with the file tools and follow it within the active permissions. Commands a skill mentions still need normal approval; tool allowances in skill metadata are not honored.\n");
     for skill in &skills {
         let description = if skill.description.is_empty() {
             "No description."
@@ -615,7 +615,7 @@ fn add_skills(root: &Path, discovery: &mut Discovery, markers: &[(String, String
         if skills.len() == 1 { "skill" } else { "skills" }
     );
     let mut entry = item(&label, ContextItemKind::SkillIndex, &[Codex, ClaudeCode, GeminiCli, Antigravity], status, match status {
-        ContextItemStatus::Imported => "Added to this project's JevCode instructions.",
+        ContextItemStatus::Imported => "Added to this project's Octran Code instructions.",
         ContextItemStatus::ImportedStale => "The skills changed since the index was added. Update to use the current list.",
         _ => "Adds each skill's name, description, and path to project instructions. The agent reads a skill only when a task matches it.",
     });
@@ -692,7 +692,9 @@ fn has_symlink_component(root: &Path, relative: &str) -> bool {
 
 fn read_text(root: &Path, relative: &str) -> Result<String, String> {
     if has_symlink_component(root, relative) {
-        return Err("Symbolic link. JevCode does not follow links for project guidance.".into());
+        return Err(
+            "Symbolic link. Octran Code does not follow links for project guidance.".into(),
+        );
     }
     let path = join(root, relative);
     let metadata = std::fs::metadata(&path).map_err(|_| "Could not be checked.".to_owned())?;
@@ -853,7 +855,7 @@ pub(crate) fn frontmatter_value(pairs: &[(String, String)], key: &str) -> Option
 }
 
 /// Describe how the source agent activates a rule and whether that matches
-/// JevCode's only mode: always included.
+/// Octran Code's only mode: always included.
 fn rule_scope(flavor: RuleFlavor, pairs: &[(String, String)]) -> (String, bool) {
     let value = |key: &str| frontmatter_value(pairs, key);
     let description = value("description").map(|text| truncate_chars(&text, 160));
@@ -917,7 +919,7 @@ fn rule_scope(flavor: RuleFlavor, pairs: &[(String, String)]) -> (String, bool) 
     }
 }
 
-/// Claude Code and Gemini CLI expand `@path` imports; JevCode does not.
+/// Claude Code and Gemini CLI expand `@path` imports; Octran Code does not.
 fn import_reference_warnings(root: &Path, path: &str, text: &str) -> Vec<String> {
     let base = path
         .rsplit_once('/')
@@ -979,11 +981,11 @@ fn import_reference_warnings(root: &Path, path: &str, text: &str) -> Vec<String>
             });
             let loaded = relative.as_deref().is_some_and(|relative| LOADED_INSTRUCTION_FILES.contains(&relative));
             if loaded {
-                format!("References @{target}. JevCode does not expand @ imports, but already loads that file.")
+                format!("References @{target}. Octran Code does not expand @ imports, but already loads that file.")
             } else if present {
-                format!("References @{target}. JevCode does not expand @ imports, so that file's text is not included.")
+                format!("References @{target}. Octran Code does not expand @ imports, so that file's text is not included.")
             } else {
-                format!("References @{target}. JevCode does not expand @ imports, and the file is outside the project or missing.")
+                format!("References @{target}. Octran Code does not expand @ imports, and the file is outside the project or missing.")
             }
         })
         .collect()
@@ -1100,7 +1102,7 @@ fn start_marker(source: &str) -> String {
     format!("<!-- jevcode:import source=\"{source}\"")
 }
 
-/// `(source, sha256)` pairs for blocks JevCode previously added.
+/// `(source, sha256)` pairs for blocks Octran Code previously added.
 fn import_markers(instructions: &str) -> Vec<(String, String)> {
     instructions
         .lines()
@@ -1127,7 +1129,7 @@ fn import_status(
 
 fn agent_name(agent: ContextAgent) -> &'static str {
     match agent {
-        Jevcode => "JevCode",
+        Jevcode => "Octran Code",
         Codex => "Codex",
         ClaudeCode => "Claude Code",
         Cursor => "Cursor",

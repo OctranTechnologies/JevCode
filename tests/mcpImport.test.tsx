@@ -10,7 +10,7 @@ const importable: McpImportServer = {
   transport: 'Command: npx -y @example/github',
   envNames: ['DEBUG', 'GITHUB_TOKEN'],
   storedEnvNames: ['GITHUB_TOKEN'],
-  warnings: ['Add values for DEBUG in JevCode before connecting.'],
+  warnings: ['Add values for DEBUG in Octran Code before connecting.'],
   blocked: null,
 };
 const blocked: McpImportServer = { ...importable, key: '.cursor/mcp.json#legacy', name: 'legacy', serverId: null, transport: null, envNames: [], storedEnvNames: [], warnings: [], blocked: 'SSE servers are not supported yet.' };
@@ -23,7 +23,7 @@ describe('MCP import rows', () => {
     expect(html).toContain('Command: npx -y @example/github');
     expect(html).toContain('Imported as <code>github</code>');
     expect(html).toContain('Environment: DEBUG, GITHUB_TOKEN · 1 stored in the OS credential store');
-    expect(html).toContain('Add values for DEBUG in JevCode before connecting.');
+    expect(html).toContain('Add values for DEBUG in Octran Code before connecting.');
     expect(html).not.toContain('disabled=""');
   });
 

@@ -27,7 +27,7 @@ const SOURCES: [(&str, &str); 4] = [
 const MAX_SOURCE_BYTES: u64 = 256 * 1024;
 /// The largest literal value the credential store takes, as saving a server enforces.
 const MAX_SECRET_BYTES: usize = 16_384;
-/// Fields JevCode reads. Any other field is listed as not imported.
+/// Fields Octran Code reads. Any other field is listed as not imported.
 const KNOWN_FIELDS: [&str; 7] = [
     "type", "command", "args", "env", "url", "headers", "disabled",
 ];
@@ -98,7 +98,7 @@ pub fn scan(project_root: &Path, project_id: &str) -> AppResult<Vec<McpImportSou
 
 /// Saves the selected servers. Each is read from its file again, so a key that no
 /// longer names a server is refused. Saving disables the server and revokes any
-/// trust, so it must be reviewed and trusted in JevCode before it runs.
+/// trust, so it must be reviewed and trusted in Octran Code before it runs.
 pub async fn import(
     manager: &McpManager,
     database: &Database,
@@ -183,7 +183,7 @@ fn read_json(path: &Path) -> Result<Option<Value>, String> {
         return Ok(None);
     };
     if metadata.file_type().is_symlink() {
-        return Err("Symbolic link. JevCode does not follow links for MCP files.".to_owned());
+        return Err("Symbolic link. Octran Code does not follow links for MCP files.".to_owned());
     }
     if !metadata.is_file() {
         return Err("Not a regular file.".to_owned());
@@ -237,7 +237,7 @@ fn parse_server(
             if !needs_value.is_empty() {
                 let names: Vec<&str> = needs_value.iter().map(|name| name.as_str()).collect();
                 server.warnings.push(format!(
-                    "Add values for {} in JevCode before connecting.",
+                    "Add values for {} in Octran Code before connecting.",
                     names.join(", ")
                 ));
             }
@@ -259,7 +259,7 @@ fn parse_server(
     }
 }
 
-/// Reads a server definition in any of the supported shapes. Anything JevCode
+/// Reads a server definition in any of the supported shapes. Anything Octran Code
 /// cannot represent is refused, never approximated.
 fn build(
     project_id: &str,
@@ -305,7 +305,7 @@ fn build(
                 .is_some_and(|headers| !headers.is_empty());
             if has_headers {
                 warnings.push(
-                    "Headers are not imported. Set HTTP authentication in JevCode before connecting."
+                    "Headers are not imported. Set HTTP authentication in Octran Code before connecting."
                         .to_owned(),
                 );
             }
@@ -350,7 +350,7 @@ fn build(
 }
 
 /// Environment names, and the literal values to store. A value that is empty or
-/// refers to another variable is not stored; the user supplies it in JevCode.
+/// refers to another variable is not stored; the user supplies it in Octran Code.
 fn environment(value: Option<&Value>) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
     let Some(value) = value else {
         return Ok((Vec::new(), BTreeMap::new()));

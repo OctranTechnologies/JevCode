@@ -125,8 +125,8 @@ Default: **Block agent command execution** until the probe verifies a profile. I
 
 Process-only is `ReducedSafety`: process-tree limits, environment filtering, kill-on-close and no orphans. It does **not** prevent filesystem writes outside the workspace, credential reads or network access. It is off by default, enabled per project with a typed confirmation, and a machine-level switch disables it everywhere. Plan cannot use it. Approvals cannot enable it.
 
-- Blocked: "Command execution is unavailable: JevCode cannot enforce this task's containment profile on this system (reason). File edits still work. **Run diagnostics** · **Containment settings**"
-- Reduced: "**Reduced safety is on.** Commands can read and write anything your user account can reach and can use the network. JevCode is not containing them. Continue only for repositories you trust. **Turn off**"
+- Blocked: "Command execution is unavailable: Octran Code cannot enforce this task's containment profile on this system (reason). File edits still work. **Run diagnostics** · **Containment settings**"
+- Reduced: "**Reduced safety is on.** Commands can read and write anything your user account can reach and can use the network. Octran Code is not containing them. Continue only for repositories you trust. **Turn off**"
 - Badge: "Uncontained" in the task list and timeline, plus an activity event.
 
 If containment cannot be created for a spawn, the spawn fails; it never runs uncontained. `rg` may fall back to the in-process walker.

@@ -1,8 +1,8 @@
-# JevCode inventory, comparison, and Plan safety implementation
+# Octran Code inventory, comparison, and Plan safety implementation
 
 Reviewed 2026-11-15 against local base `e03a707`. This report describes source present in this checkout, not a verified installer release. Competitor statements below come from first-party pages retrieved during this task; they are documentation claims, not independently exercised guarantees.
 
-## 1. JevCode feature inventory
+## 1. Octran Code feature inventory
 
 | Area | Present in source | Evidence / limits |
 | --- | --- | --- |
@@ -21,13 +21,13 @@ Reviewed 2026-11-15 against local base `e03a707`. This report describes source p
 
 ## 2. Sourced competitor comparison
 
-| Product | Documented behavior | Implication for JevCode (inference) |
+| Product | Documented behavior | Implication for Octran Code (inference) |
 | --- | --- | --- |
 | Codex | Separates OS-enforced sandbox capabilities from approval policy; read-only permits inspection and sandbox-contained commands, with escalation depending on policy. [Official security documentation](https://developers.openai.com/codex/agent-approvals-security) | A prompt alone is insufficient. This patch implements a narrower tool boundary; it does not provide Codex-style OS isolation. |
-| Claude Code | Permission modes include Plan; it reads/explores without editing source, with read-only commands and, depending on availability/settings, classifier-reviewed commands or command approval prompts. Modes can change during a session. [Permission modes](https://code.claude.com/docs/en/permission-modes). Hooks cannot simply approve non-read-only file edits while still planning. [Permissions](https://code.claude.com/docs/en/permissions) | Do not equate every product's Plan label with identical semantics. JevCode deliberately blocks every arbitrary command/MCP call and requires a new Agent task. |
+| Claude Code | Permission modes include Plan; it reads/explores without editing source, with read-only commands and, depending on availability/settings, classifier-reviewed commands or command approval prompts. Modes can change during a session. [Permission modes](https://code.claude.com/docs/en/permission-modes). Hooks cannot simply approve non-read-only file edits while still planning. [Permissions](https://code.claude.com/docs/en/permissions) | Do not equate every product's Plan label with identical semantics. Octran Code deliberately blocks every arbitrary command/MCP call and requires a new Agent task. |
 | Google Antigravity | Planning mode researches and creates implementation-plan artifacts/task groups. Artifact review pauses for review; `/plan` waits for approval, and the docs describe how prompts/review settings affect continuation. [Artifact review](https://antigravity.google/docs/artifact-review/) | Reviewable plan artifacts and an explicit implementation handoff are useful workflow gaps. The cited page does not establish a persisted read-only runtime guarantee. |
-| T3 Code | First-party product page describes orchestrating multiple coding harnesses with existing credentials, switching models mid-thread, branch-based work, inline diff review, and generated draft/stack PR workflows. [Official product page](https://t3.codes/) | JevCode has native provider adapters and local task review; comparable harness orchestration and PR lifecycle features were not found. T3's page is product material, not proof of Plan enforcement. |
-| Cursor | Plan mode asks questions, researches the codebase, creates a reviewable/editable plan, and offers a build action; plans can be saved to the workspace. [Plan mode documentation](https://cursor.com/docs/agent/plan-mode) | A durable plan artifact plus a deliberate new Agent-task handoff would improve JevCode. The cited page does not prove an OS sandbox or universal tool denial. |
+| T3 Code | First-party product page describes orchestrating multiple coding harnesses with existing credentials, switching models mid-thread, branch-based work, inline diff review, and generated draft/stack PR workflows. [Official product page](https://t3.codes/) | Octran Code has native provider adapters and local task review; comparable harness orchestration and PR lifecycle features were not found. T3's page is product material, not proof of Plan enforcement. |
+| Cursor | Plan mode asks questions, researches the codebase, creates a reviewable/editable plan, and offers a build action; plans can be saved to the workspace. [Plan mode documentation](https://cursor.com/docs/agent/plan-mode) | A durable plan artifact plus a deliberate new Agent-task handoff would improve Octran Code. The cited page does not prove an OS sandbox or universal tool denial. |
 
 No measured quality, speed, security superiority, or exhaustive feature parity is claimed. No undocumented competitor feature is treated as absent.
 

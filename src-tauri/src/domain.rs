@@ -1305,7 +1305,7 @@ pub struct GoogleCodeAssistStatus {
     pub cloud_project_id: Option<String>,
     /// Google does not expose this tier through the documented OAuth identity flow.
     pub user_tier: Option<String>,
-    /// JevCode deliberately keeps this false until Google documents a supported
+    /// Octran Code deliberately keeps this false until Google documents a supported
     /// third-party Code Assist inference API.
     pub inference_available: bool,
 }

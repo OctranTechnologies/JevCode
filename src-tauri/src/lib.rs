@@ -91,7 +91,10 @@ pub fn run() {
                     }
                 }
             }
-            tracing::info!(version = env!("CARGO_PKG_VERSION"), "JevCode initialized");
+            tracing::info!(
+                version = env!("CARGO_PKG_VERSION"),
+                "Octran Code initialized"
+            );
             app.manage(state);
             Ok(())
         })
@@ -209,7 +212,7 @@ pub fn run() {
             commands::review_all_action
         ])
         .run(tauri::generate_context!())
-        .expect("JevCode could not start; check configuration and application logs");
+        .expect("Octran Code could not start; check configuration and application logs");
 }
 
 fn prune_old_logs(directory: &Path) {

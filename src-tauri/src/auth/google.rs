@@ -491,7 +491,7 @@ impl GoogleAuthManager {
             api_key_connected,
             oauth_available,
             unavailable_reason: (!oauth_available).then(|| {
-                "Google account sign-in requires a Desktop OAuth client ID registered for JevCode.".into()
+                "Google account sign-in requires a Desktop OAuth client ID registered for Octran Code.".into()
             }),
         })
     }
@@ -565,7 +565,7 @@ impl GoogleAuthManager {
             GoogleAuthType::VertexAdc => {
                 return Err(AppError::new(
                     "google_auth_method_unavailable",
-                    "Vertex AI authentication is not available in JevCode yet.",
+                    "Vertex AI authentication is not available in Octran Code yet.",
                 ));
             }
         };
@@ -629,7 +629,7 @@ impl GoogleAuthManager {
         if !self.oauth_configured() {
             return Err(AppError::new(
                 "google_oauth_not_configured",
-                "Google sign-in needs a Desktop OAuth client ID registered for JevCode.",
+                "Google sign-in needs a Desktop OAuth client ID registered for Octran Code.",
             ));
         }
         validate_redirect_uri(redirect_uri)?;
@@ -965,7 +965,7 @@ impl GoogleAuthManager {
                 label: "Google Account + Gemini API (Cloud project)".into(),
                 available: self.oauth_configured(),
                 unavailable_reason: (!self.oauth_configured())
-                    .then(|| "Register a Desktop OAuth client ID and configure the Gemini API OAuth consent screen for JevCode.".into()),
+                    .then(|| "Register a Desktop OAuth client ID and configure the Gemini API OAuth consent screen for Octran Code.".into()),
             },
         ]
     }
@@ -1541,7 +1541,7 @@ async fn read_google_json<T: for<'de> Deserialize<'de>>(
         if code.as_deref() == Some("invalid_client") {
             return Err(AppError::new(
                 "google_oauth_configuration",
-                "Google rejected JevCode's OAuth client configuration. Check the registered Desktop client ID.",
+                "Google rejected Octran Code's OAuth client configuration. Check the registered Desktop client ID.",
             ));
         }
         return Err(google_provider_error(status));
@@ -1617,7 +1617,7 @@ fn google_token_error() -> AppError {
 fn google_scope_error() -> AppError {
     AppError::new(
         "google_scope_denied",
-        "Google did not grant all permissions JevCode needs for Gemini API access. Review the requested permissions and try again.",
+        "Google did not grant all permissions Octran Code needs for Gemini API access. Review the requested permissions and try again.",
     )
 }
 
@@ -1932,7 +1932,7 @@ mod tests {
             "nonce": nonce,
             "email": "verified@example.test",
             "email_verified": true,
-            "name": "JevCode Test Account"
+            "name": "Octran Code Test Account"
         });
         if let Some(hosted_domain) = hosted_domain {
             claims
@@ -2385,7 +2385,7 @@ mod tests {
         assert_eq!(account.account_type, GoogleAccountType::Individual);
         assert_eq!(
             account.display_name.as_deref(),
-            Some("JevCode Test Account")
+            Some("Octran Code Test Account")
         );
         assert!(account.connected);
         let exchange = oauth

@@ -122,7 +122,7 @@ export function ProjectOverview({
   async function exportProfile() {
     if (!desktopAllowed) return;
     try {
-      const path = await save({ defaultPath: `${project.name}.jevcode.json`, filters: [{ name: 'JevCode profile', extensions: ['json'] }] });
+      const path = await save({ defaultPath: `${project.name}.jevcode.json`, filters: [{ name: 'Octran Code profile', extensions: ['json'] }] });
       if (!path) return;
       await command('export_project_profile', { input: { projectId: project.id, path } });
       onError(null);
@@ -132,7 +132,7 @@ export function ProjectOverview({
   async function previewProfile() {
     if (!desktopAllowed) return;
     try {
-      const selected = await open({ multiple: false, directory: false, filters: [{ name: 'JevCode profile', extensions: ['json'] }] });
+      const selected = await open({ multiple: false, directory: false, filters: [{ name: 'Octran Code profile', extensions: ['json'] }] });
       if (typeof selected !== 'string') return;
       const preview = await command('preview_project_profile', { input: { projectId: project.id, path: selected } });
       setProfilePreview({ path: selected, preview });

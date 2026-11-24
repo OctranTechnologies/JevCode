@@ -38,7 +38,7 @@ export function WindowTitleBarView({ maximized, onMinimize, onToggleMaximize, on
   return (
     <header className="window-titlebar" data-tauri-drag-region>
       <Brand />
-      <span className="window-titlebar-title">JevCode</span>
+      <span className="window-titlebar-title">Octran Code</span>
       <div className="window-controls">
         <button type="button" className="window-control" aria-label="Minimize" title="Minimize" onClick={onMinimize}><Minus size={14} /></button>
         <button type="button" className="window-control" aria-label={maximizeLabel} title={maximizeLabel} onClick={onToggleMaximize}>{maximized ? <Copy size={14} /> : <Square size={14} />}</button>

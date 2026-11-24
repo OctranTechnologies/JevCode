@@ -114,7 +114,7 @@ pub fn export_markdown(
         inline(&session.updated_at)
     );
     out.push_str(
-        "\nExported from JevCode. Tool arguments and outputs are not included, and lines that look like credentials are replaced.\n",
+        "\nExported from Octran Code. Tool arguments and outputs are not included, and lines that look like credentials are replaced.\n",
     );
 
     out.push_str("\n## Conversation\n");
@@ -144,7 +144,12 @@ fn conversation(out: &mut String, messages: &[AgentMessage]) {
         match message.role {
             MessageRole::User => section(out, "You", &message.created_at, &mask(&message.content)),
             MessageRole::Assistant => {
-                section(out, "JevCode", &message.created_at, &mask(&message.content));
+                section(
+                    out,
+                    "Octran Code",
+                    &message.created_at,
+                    &mask(&message.content),
+                );
                 if !message.tool_calls.is_empty() {
                     let names: Vec<String> = message
                         .tool_calls
@@ -348,7 +353,7 @@ mod tests {
             "Deploy with sk-abcdefghijklmnopqrstuvwxyz1234\nThen run the tests.",
         )];
 
-        let markdown = export_markdown(&session, "JevCode", &changes(vec![], 0, 0), &[]);
+        let markdown = export_markdown(&session, "Octran Code", &changes(vec![], 0, 0), &[]);
 
         assert!(markdown.contains(CREDENTIAL_NOTICE));
         assert!(markdown.contains("Then run the tests."));
@@ -380,7 +385,7 @@ mod tests {
             },
         ];
 
-        let markdown = export_markdown(&session, "JevCode", &changes(vec![], 0, 0), &[]);
+        let markdown = export_markdown(&session, "Octran Code", &changes(vec![], 0, 0), &[]);
 
         assert!(markdown.contains("Tools requested: `run_command`."));
         assert!(markdown.contains("- Tool `run_command` finished at"));
@@ -401,7 +406,7 @@ mod tests {
         )];
         session.worktree_path = Some("C:\\Users\\someone\\worktree".into());
 
-        let markdown = export_markdown(&session, "JevCode", &changes(vec![], 0, 0), &[]);
+        let markdown = export_markdown(&session, "Octran Code", &changes(vec![], 0, 0), &[]);
 
         assert!(!markdown.contains("internal codename"));
         assert!(!markdown.contains("someone"));
@@ -427,7 +432,7 @@ mod tests {
             conflicted: false,
         }];
 
-        let markdown = export_markdown(&session, "JevCode", &changes(files, 1, 0), &diffs);
+        let markdown = export_markdown(&session, "Octran Code", &changes(files, 1, 0), &diffs);
 
         assert!(markdown.contains("- 2026-01-01T00:00:01Z · Read the README"));
         assert!(markdown.contains("1 file changed: +1 -0."));
@@ -449,7 +454,7 @@ mod tests {
             conflicted: false,
         }];
 
-        let markdown = export_markdown(&session, "JevCode", &changes(vec![], 0, 0), &diffs);
+        let markdown = export_markdown(&session, "Octran Code", &changes(vec![], 0, 0), &diffs);
 
         assert!(markdown.contains("Diff shortened for the export size limit."));
         assert!(markdown.contains("````diff"));
@@ -468,7 +473,7 @@ mod tests {
             })
             .collect();
 
-        let markdown = export_markdown(&session, "JevCode", &changes(vec![], 0, 0), &diffs);
+        let markdown = export_markdown(&session, "Octran Code", &changes(vec![], 0, 0), &diffs);
 
         assert!(markdown.contains("### `generated/file-11.txt`"));
         assert!(markdown.contains("Diff omitted: the export reached its size limit."));

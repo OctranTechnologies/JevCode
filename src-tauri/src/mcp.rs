@@ -893,7 +893,7 @@ async fn connect_server(
     let initialize = json!({
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "capabilities": {},
-        "clientInfo": {"name":"JevCode","version":env!("CARGO_PKG_VERSION")}
+        "clientInfo": {"name":"Octran Code","version":env!("CARGO_PKG_VERSION")}
     });
     let initialized = connection.request("initialize", Some(initialize)).await?;
     if initialized["protocolVersion"].as_str() != Some(MCP_PROTOCOL_VERSION) {
