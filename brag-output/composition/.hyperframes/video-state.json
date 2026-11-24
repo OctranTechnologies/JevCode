@@ -1,0 +1,391 @@
+{
+  "version": 1,
+  "historyId": "912dfb90-ae61-4f06-b9b7-2e5dc9cceab2",
+  "currentRevision": "ef303305-7cc9-4bcb-9adb-249f75f05f60",
+  "pendingChanges": false,
+  "files": {
+    "assets/fonts/inter-latin-wght-normal.woff2": {
+      "hash": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\31\\3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+    },
+    "assets/sfx/impact/impactBell_heavy_000.ogg": {
+      "hash": "94b8bb5f2d43ab65e4bcc32b28562416e9bc2c51d9fd4be1e333660ee52f977f",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\94\\94b8bb5f2d43ab65e4bcc32b28562416e9bc2c51d9fd4be1e333660ee52f977f"
+    },
+    "assets/sfx/impact/impactSoft_medium_001.ogg": {
+      "hash": "7642a4fd43e547afe4f7adfadb3dabb681c0ff512f52c1674bae30a726841faf",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\76\\7642a4fd43e547afe4f7adfadb3dabb681c0ff512f52c1674bae30a726841faf"
+    },
+    "assets/sfx/impact/impactSoft_medium_004.ogg": {
+      "hash": "b0a4dea90eed47accf50b768beff1166f2f1486fb139e4d025b2427637624bca",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\b0\\b0a4dea90eed47accf50b768beff1166f2f1486fb139e4d025b2427637624bca"
+    },
+    "assets/sfx/interface/bong_001.ogg": {
+      "hash": "d21d0f0b782445db579d11e2506b24cd1ac9d664ee33aeaf807761aa7b6fd710",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\d2\\d21d0f0b782445db579d11e2506b24cd1ac9d664ee33aeaf807761aa7b6fd710"
+    },
+    "assets/sfx/interface/click_003.ogg": {
+      "hash": "2fa929138bc3a0f432696588f66eac94b8f6d463905ec8808c6461ce4b054292",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\2f\\2fa929138bc3a0f432696588f66eac94b8f6d463905ec8808c6461ce4b054292"
+    },
+    "assets/sfx/interface/drop_001.ogg": {
+      "hash": "692ee3a6f1821402ca649ff735bee9591dc4846c8098fc7d6a90fd15fa57c1af",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\69\\692ee3a6f1821402ca649ff735bee9591dc4846c8098fc7d6a90fd15fa57c1af"
+    },
+    "assets/sfx/interface/drop_002.ogg": {
+      "hash": "4ac4d1cef7e936965cbf795852ca2020300b9e2ba7daa59f2bf4f1f7bf416218",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\4a\\4ac4d1cef7e936965cbf795852ca2020300b9e2ba7daa59f2bf4f1f7bf416218"
+    },
+    "assets/sfx/keyboard/keypress-003.wav": {
+      "hash": "d67cf9547d99fc65c815c4c68fa9181e0af71419761cbb1d1f0a10eb8491a8d2",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\d6\\d67cf9547d99fc65c815c4c68fa9181e0af71419761cbb1d1f0a10eb8491a8d2"
+    },
+    "assets/sfx/keyboard/keypress-007.wav": {
+      "hash": "522834f471e6c2935fd1e6a28042c0864925556efbec32c36d7c7a98026d4bfc",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\52\\522834f471e6c2935fd1e6a28042c0864925556efbec32c36d7c7a98026d4bfc"
+    },
+    "assets/sfx/keyboard/keypress-011.wav": {
+      "hash": "72e79b249040bff166be863dd75f5c50d6e22bf904bd7e0adab1b30941e19968",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\72\\72e79b249040bff166be863dd75f5c50d6e22bf904bd7e0adab1b30941e19968"
+    },
+    "assets/sfx/keyboard/keypress-015.wav": {
+      "hash": "39df76e16d6daa76619f17b724ed4fdcfacc3d0c311103f6d45dc23ec3634678",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\39\\39df76e16d6daa76619f17b724ed4fdcfacc3d0c311103f6d45dc23ec3634678"
+    },
+    "assets/sfx/keyboard/keypress-019.wav": {
+      "hash": "9cdb32c0074eaa114f8740e80bdfc28b1b44b4c6789371e1ec872e185e92d49e",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\9c\\9cdb32c0074eaa114f8740e80bdfc28b1b44b4c6789371e1ec872e185e92d49e"
+    },
+    "assets/sfx/keyboard/keypress-023.wav": {
+      "hash": "b7395018288bc4842af0983a97d790e9db84ab65dc8ae57629dc6a9ba31ff62c",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\b7\\b7395018288bc4842af0983a97d790e9db84ab65dc8ae57629dc6a9ba31ff62c"
+    },
+    "assets/sfx/keyboard/keypress-027.wav": {
+      "hash": "c0376d2249a2c6d4e79d166445bb83ca6efbdcc09518b8323499644e393dd5ab",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\c0\\c0376d2249a2c6d4e79d166445bb83ca6efbdcc09518b8323499644e393dd5ab"
+    },
+    "assets/sfx/keyboard/keypress-031.wav": {
+      "hash": "df5718d60529e81769597226c5bce593b3a6fd6ae7aeb9b7249754059d0c464a",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\df\\df5718d60529e81769597226c5bce593b3a6fd6ae7aeb9b7249754059d0c464a"
+    },
+    "audio-data.js": {
+      "hash": "a7108a3e07381718ad6147bd4c06ec27adeebb92f34a7e6e449e93ebe69b4e95",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\a7\\a7108a3e07381718ad6147bd4c06ec27adeebb92f34a7e6e449e93ebe69b4e95"
+    },
+    "index.html": {
+      "hash": "f05b485ddc16c39780bae391001112ea9606e09536bf25d1746c11a774a60487",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\f0\\f05b485ddc16c39780bae391001112ea9606e09536bf25d1746c11a774a60487"
+    },
+    "assets/music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3": {
+      "hash": "5888d4bd2ba0119b87a94e502ae2cc401c08192945cc5e5c2f8e8a33aa47a0a1",
+      "content": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\58\\5888d4bd2ba0119b87a94e502ae2cc401c08192945cc5e5c2f8e8a33aa47a0a1"
+    }
+  },
+  "revisions": {
+    "06878449-59c4-4981-86e3-28600bc5b257": {
+      "actor": {
+        "kind": "outside",
+        "name": "Outside"
+      },
+      "label": "Changed outside the app",
+      "startedAt": 1793208552539,
+      "endedAt": 1793208552542,
+      "files": {
+        "index.html": {
+          "before": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\ff\\ff6f32c3fd41c74e53f017eb47568692e735c6584c9c8b8b36a6a28df00825e5",
+          "after": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\30\\30c6b1eaff230f2dc15313f135a794515589b8d4ae5e2bb303e0d0930caa16a0"
+        }
+      }
+    },
+    "a27798e1-59ff-45e2-9e57-0fedf4739dce": {
+      "actor": {
+        "kind": "outside",
+        "name": "Outside"
+      },
+      "label": "Changed outside the app",
+      "startedAt": 1793208575320,
+      "endedAt": 1793208575321,
+      "files": {
+        "index.html": {
+          "before": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\30\\30c6b1eaff230f2dc15313f135a794515589b8d4ae5e2bb303e0d0930caa16a0",
+          "after": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\e6\\e683130e28226b9ea535e370e48d148e0f62af6b0755ad8390a3175f3dceb101"
+        }
+      }
+    },
+    "ef303305-7cc9-4bcb-9adb-249f75f05f60": {
+      "actor": {
+        "kind": "outside",
+        "name": "Outside"
+      },
+      "label": "Changed outside the app",
+      "startedAt": 1793208594808,
+      "endedAt": 1793208594813,
+      "files": {
+        "index.html": {
+          "before": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\e6\\e683130e28226b9ea535e370e48d148e0f62af6b0755ad8390a3175f3dceb101",
+          "after": "C:\\Users\\KIIT\\.cache\\hyperframes\\history\\912dfb90-ae61-4f06-b9b7-2e5dc9cceab2\\blobs\\f0\\f05b485ddc16c39780bae391001112ea9606e09536bf25d1746c11a774a60487"
+        }
+      }
+    }
+  },
+  "checks": {
+    "latest": {
+      "revision": "ef303305-7cc9-4bcb-9adb-249f75f05f60",
+      "id": "3540c670-da34-4380-99e3-2733d7795a84"
+    },
+    "revisions": {
+      "06878449-59c4-4981-86e3-28600bc5b257": [
+        {
+          "id": "981d7f8e-3722-4378-a157-d9c78775281d",
+          "scope": "project",
+          "metadata": {
+            "ok": true,
+            "browserSkipped": false,
+            "options": {
+              "samples": 9,
+              "atTransitions": false,
+              "maxIssues": 80,
+              "collapseStatic": true,
+              "tolerance": 2,
+              "timeout": 10000,
+              "contrast": true,
+              "strict": false,
+              "snapshots": false,
+              "browserGpuMode": "auto"
+            }
+          },
+          "createdAt": 1793208560091,
+          "contentHash": "dc946dba697f915aa2f985ce6a71bc12aa375104628ae905b989173a70c1e69f",
+          "revision": "06878449-59c4-4981-86e3-28600bc5b257",
+          "inputFingerprint": "8d21b9ac9db2d11d9f910bd30e7db3532675b71b778d47329b67df7369c15db1",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision",
+          "status": "cleaned",
+          "cleanedAfterRender": "ebd548e6-0806-497a-8140-e822cafeb109"
+        }
+      ],
+      "ef303305-7cc9-4bcb-9adb-249f75f05f60": [
+        {
+          "id": "3540c670-da34-4380-99e3-2733d7795a84",
+          "scope": "project",
+          "report": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\composition\\.hyperframes\\artifacts\\checks\\3540c670-da34-4380-99e3-2733d7795a84.json",
+          "metadata": {
+            "ok": true,
+            "browserSkipped": false,
+            "options": {
+              "samples": 9,
+              "atTransitions": false,
+              "maxIssues": 80,
+              "collapseStatic": true,
+              "tolerance": 2,
+              "timeout": 10000,
+              "contrast": true,
+              "strict": false,
+              "snapshots": false,
+              "browserGpuMode": "auto"
+            }
+          },
+          "createdAt": 1793208604244,
+          "contentHash": "c1c90b1db64ba6d1036dfc44c4a2fa982d3b300af02f43e1dc93250415e1a3cd",
+          "revision": "ef303305-7cc9-4bcb-9adb-249f75f05f60",
+          "inputFingerprint": "b7f20f8b46218c60239d0dbedb276a733905f611422f212b8d4ac8246b36a665",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        }
+      ]
+    },
+    "unversioned": [
+      {
+        "id": "894f10aa-f277-48f4-9cda-04e879021e24",
+        "scope": "project",
+        "report": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\composition\\.hyperframes\\artifacts\\checks\\894f10aa-f277-48f4-9cda-04e879021e24.json",
+        "metadata": {
+          "ok": true,
+          "browserSkipped": false,
+          "options": {
+            "samples": 9,
+            "atTransitions": false,
+            "maxIssues": 80,
+            "collapseStatic": true,
+            "tolerance": 2,
+            "timeout": 10000,
+            "contrast": true,
+            "strict": false,
+            "snapshots": false,
+            "browserGpuMode": "auto"
+          }
+        },
+        "createdAt": 1793208415387,
+        "contentHash": "906251dee47406cb56cf4732e7cc8ffcf370661b57e465d676033b570332cdf6",
+        "revision": null,
+        "inputFingerprint": "b1730a23b0bc3b0e9a5adcd746834a056c473ac2890adb24e48cc0b9e256a68e",
+        "inputScope": "local-project-files",
+        "attribution": "unversioned"
+      }
+    ]
+  },
+  "snapshots": {
+    "latest": {
+      "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+      "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-6"
+    },
+    "revisions": {
+      "a27798e1-59ff-45e2-9e57-0fedf4739dce": [
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-0",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-00-at-2.6s.png",
+          "time": 2.6,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579311,
+          "contentHash": "ae50330492f82b39eb475a28607305847e7b656ae485579a5d297cca61ae7782",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        },
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-1",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-01-at-5.6s.png",
+          "time": 5.6,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579311,
+          "contentHash": "7e24631d9e858a4539ba1459fabf1612c1f2210ac0418298400caabaeaabf498",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        },
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-2",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-02-at-10.2s.png",
+          "time": 10.2,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579311,
+          "contentHash": "4d204ffd24a5f20cf75ea35ca96b9643411d0c18b7908849029225bfc978edf0",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        },
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-3",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-03-at-15.5s.png",
+          "time": 15.5,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579311,
+          "contentHash": "53b056616259f385a7538e75368c68d74b96070af8f76d5bd180c399f440e501",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        },
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-4",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-04-at-19.8s.png",
+          "time": 19.8,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579311,
+          "contentHash": "01412456c2fb601151b50a7a284c249b6d8081cc3fd79e1e52b4e4c16eeff9d3",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        },
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-5",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-05-at-23.8s.png",
+          "time": 23.8,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579311,
+          "contentHash": "2eb765ce7f2436ff044bc2eb1f299f7fe80c40274058bec91ead5b5834c5f0b3",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        },
+        {
+          "scope": "full",
+          "id": "190a95b9-4a50-4d89-a0a9-8070e4ebb477-6",
+          "image": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\snaps\\frame-06-at-24.35s.png",
+          "time": 24.35,
+          "metadata": {
+            "width": 1920,
+            "height": 1080,
+            "zoomScale": 1,
+            "browserGpuMode": "auto",
+            "warnings": [],
+            "partial": false
+          },
+          "createdAt": 1793208579312,
+          "contentHash": "4c96105a7e577ff07507f4c9fc98aebc616db9baba13f1cfaface6c7811f8617",
+          "revision": "a27798e1-59ff-45e2-9e57-0fedf4739dce",
+          "inputFingerprint": "9635f0c26ecb9f33ba334696357fc331f7a7bf2fb2a547a9d7e6939d33acc81d",
+          "inputScope": "local-project-files",
+          "attribution": "recorded-revision"
+        }
+      ]
+    },
+    "unversioned": []
+  },
+  "renders": {
+    "latest": {
+      "id": "ebd548e6-0806-497a-8140-e822cafeb109",
+      "completedAt": 1793208681503,
+      "output": "C:\\Users\\KIIT\\Documents\\GitHub\\JevCode\\brag-output\\brag.mp4",
+      "status": "completed",
+      "revision": "ef303305-7cc9-4bcb-9adb-249f75f05f60"
+    },
+    "retainedRevisions": [
+      "ef303305-7cc9-4bcb-9adb-249f75f05f60"
+    ]
+  },
+  "pendingArtifactCleanup": []
+}

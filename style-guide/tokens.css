@@ -1,0 +1,76 @@
+/* Octran public website tokens v1.0 · mirrors app/site.css */
+:root {
+  color-scheme: light;
+  --brand-paper: #fff;
+  --brand-paper-muted: #f4f4f5;
+  --brand-ink: #131315;
+  --brand-ink-soft: #1a1a1d;
+  --brand-rule: #e4e4e7;
+  --brand-muted: #55575e;
+  --brand-slate: #8a8f98;
+  --brand-orange: #FF5E1A;
+  --brand-orange-deep: #b9480f;
+  --brand-apricot: #fdc9a5;
+  --brand-peach: #fde0cc;
+  --brand-font: Inter, Helvetica, Arial, sans-serif;
+  --brand-font-editorial: Newsreader, Georgia, serif;
+  --brand-font-code: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --brand-rail-max: 1680px;
+  --brand-gutter: 20px;
+  --brand-reading-max: 65ch;
+  --brand-header: 64px;
+  --brand-announcement: 32px;
+  --brand-radius: 0;
+  --brand-rule-width: 1px;
+  --brand-target-min: 44px;
+  --brand-control-height: 48px;
+  --brand-blueprint-edge: 1.25px;
+  --brand-blueprint-construction: 0.75px;
+  --brand-blueprint-active: 2px;
+  --brand-blueprint-grid-opacity: 0.12;
+  --brand-blueprint-orbit: 32s;
+  --brand-blueprint-height: 330px;
+
+  /* Blueprint illustration (proposed) · STYLE_GUIDE.html Part 4. Line-only parts, no fills. */
+  --bp-ground: #131315;
+  --bp-panel: #1A1A1D;
+  --bp-paper: #FFFFFF;
+  --bp-line: #D5D6DA;
+  --bp-line-paper: #131315;
+  --bp-construct: #8A8F98;
+  --bp-signal: #FF5E1A;
+  --bp-callout: #FDC9A5;
+  --bp-line-width: 1.5px;
+  --bp-signal-width: 2px;
+  --bp-font-callout: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  /* Motion (proposed) · STYLE_GUIDE.html Part 3 */
+  --motion-out: cubic-bezier(.215, .61, .355, 1);
+  --motion-travel: cubic-bezier(.645, .045, .355, 1);
+  --motion-press: 150ms;
+  --motion-swap: 250ms;
+  --motion-beat: 350ms;
+  --motion-reveal: 800ms;
+  --grid-rule: rgb(138 143 152 / .14);
+  --grid-node: #FF5E1A;
+  --grid-node-size: 6px;
+
+  /* Grid, components and animations (proposed) · STYLE_GUIDE.html 1.4, Part 2 and Part 3 */
+  --panel-line: #2A2A2F;
+  --panel-gap: clamp(20px, 2.2vw, 32px);
+  --card-selected: #FF5E1A;
+  --dot-grid: radial-gradient(rgb(138 143 152 / .22) 1px, transparent 1.5px) 0 0 / 16px 16px;
+  --reveal-y: 8px;
+  --reveal-duration: 500ms;
+  --reveal-ease: cubic-bezier(.4, 0, .2, 1);
+  --fill: 0;
+}
+@media (min-width: 768px) {
+  :root { --brand-gutter: 32px; --brand-header: 72px; --brand-blueprint-height: 500px; }
+}
+@media (min-width: 1200px) {
+  :root { --brand-gutter: 48px; }
+}
+@media (min-width: 1600px) {
+  :root { --brand-gutter: 64px; }
+}

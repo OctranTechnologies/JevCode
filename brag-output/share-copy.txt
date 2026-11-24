@@ -1,0 +1,1 @@
+Every coding agent says "Task completed." JevCode makes a second model, Jev, check that claim against the real diffs and test runs, and flag when a task gets stuck, drifts off scope, or collides with another one. Jev recommends. Rust decides.

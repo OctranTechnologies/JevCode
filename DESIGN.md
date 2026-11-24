@@ -92,6 +92,8 @@ Dark mode uses graphite `#131315`, soft graphite `#1A1A1D`, panel lines `#2A2A2F
 
 Light mode keeps its warm canvas preference with paper surfaces and dividers. Use deep orange `#B9480F` for small accent text on light backgrounds, where the brighter signal orange needs more contrast. Orange never communicates a state by color alone; pair it with a label, icon, position, or shape.
 
+The canvas and sidebar tones carry a fine, static grain: a tiled noise layer drawn above the color, never a recolor. It is white at no more than 5% alpha in dark mode and warm umber at no more than 4% in light mode. Every text pair on a grained surface must meet the minimums below at the grain's peak, not only on the plain color.
+
 Keep body text and controls at least 4.5:1 contrast, large text at least 3:1, and UI boundaries at least 3:1. Verify pairs in both themes.
 
 ## Typography
@@ -112,7 +114,7 @@ Use 4–24px spacing steps. Establish hierarchy with whitespace and 1px rules. A
 
 ## Elevation & Depth
 
-The interface is flat. Use surface changes and 1px borders to separate panes, fields, disclosures, and dialogs. Do not add decorative shadows, blur, or gradients. Focus is a visible 2px orange outline with 4px offset.
+The interface is flat and matte. Use surface changes and 1px borders to separate panes, fields, disclosures, and dialogs. Do not add decorative shadows, blur, or gradients. The one permitted texture is the background grain (`--wb-grain`). It appears only on the canvas and sidebar surfaces: the window title bar, workbench, sidebar, main area, toolbars, status bar, project overview, and the loading and startup-error screens. It never appears on chips, controls, inputs, selected rows, the composer, cards, diffs, code, tool output, the inspector, popovers, the command palette, or dialogs, which keep opaque flat fills. The grain is static. It has no sheen, highlight, or vignette, and it is never animated, blended, or placed as an overlay above content. Focus is a visible 2px orange outline with 4px offset.
 
 ## Shapes
 
@@ -147,5 +149,6 @@ Settings pages use direct headings and divider-separated sections. Forms have vi
 - Preserve keyboard focus, reduced-motion behavior, and native button/select/disclosure semantics.
 - Keep errors, approvals, streaming status, and file review visible in every density mode.
 - Use mono type for code and measured data, not as decoration.
-- Do not add rounded cards, decorative grids, blur, gradients, or shadows.
+- Apply grain only as `background: var(--wb-grain, none), <surface color>` on canvas or sidebar surfaces; keep the color layer so the surface never turns transparent.
+- Do not add rounded cards, decorative grids, blur, gradients, shadows, or any texture other than the background grain; never animate the grain or put it over text, controls, or data.
 - Do not present conceptual blueprint artwork as a live application screen.
