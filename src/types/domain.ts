@@ -149,6 +149,17 @@ export interface UpdatePreferences { automaticallyCheck: boolean; automaticallyD
 export const defaultUpdatePreferences: UpdatePreferences = { automaticallyCheck: true, automaticallyDownload: false, channel: 'stable', deferredVersion: null, skippedVersion: null, remindAfter: null, downloadRequestedVersion: null };
 export interface QueuedFollowUp { id: string; content: string; createdAt: string }
 export interface TaskTerminalRun { id: string; command: string; output: string; status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out'; exitCode: number | null; startedAt: string; completedAt: string | null; previewPort: number | null }
+export type ScheduledTaskFrequency = 'once' | 'daily' | 'weekly';
+export type ScheduledTaskRunStatus = 'starting' | 'running' | 'waiting_for_permission' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled';
+export interface ScheduledTask {
+  id: string; name: string; projectId: string; providerId: string; modelId: string; prompt: string;
+  permissionPolicy: PermissionPolicy; workspaceMode: WorkspaceMode; baseBranch: string | null;
+  frequency: ScheduledTaskFrequency; nextRunAt: string; enabled: boolean; createdAt: string; updatedAt: string;
+}
+export interface ScheduledTaskRun {
+  id: string; scheduledTaskId: string; scheduledTaskName: string; scheduledFor: string; startedAt: string;
+  completedAt: string | null; sessionId: string | null; status: ScheduledTaskRunStatus; error: string | null;
+}
 export interface AgentSession {
   taskMode: 'agent' | 'plan';
   pinned?: boolean;

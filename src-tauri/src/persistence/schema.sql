@@ -99,4 +99,24 @@ CREATE TABLE IF NOT EXISTS session_file_checkpoints (
     PRIMARY KEY(session_id, path)
 );
 CREATE INDEX IF NOT EXISTS session_file_checkpoints_session ON session_file_checkpoints(session_id, path);
-PRAGMA user_version = 16;
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    next_run_at TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS scheduled_tasks_due ON scheduled_tasks(enabled, next_run_at);
+CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+    id TEXT PRIMARY KEY,
+    scheduled_task_id TEXT NOT NULL,
+    scheduled_task_name TEXT NOT NULL,
+    scheduled_for TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    session_id TEXT,
+    status TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS scheduled_task_runs_recent ON scheduled_task_runs(scheduled_for DESC);
+PRAGMA user_version = 19;

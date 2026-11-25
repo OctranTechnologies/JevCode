@@ -23,6 +23,7 @@ mod profile;
 mod project_memory;
 mod providers;
 mod review;
+mod scheduler;
 mod skills;
 mod state;
 mod tools;
@@ -96,6 +97,9 @@ pub fn run() {
                 "Octran Code initialized"
             );
             app.manage(state);
+            let scheduler_state = app.state::<state::SharedState>().inner().clone();
+            let scheduler_app = app.handle().clone();
+            tauri::async_runtime::spawn(scheduler::run(scheduler_state, scheduler_app));
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -159,6 +163,11 @@ pub fn run() {
             commands::start_task_preview,
             commands::stop_task_preview,
             commands::open_task_preview,
+            commands::create_scheduled_task,
+            commands::list_scheduled_tasks,
+            commands::list_scheduled_task_runs,
+            commands::set_scheduled_task_enabled,
+            commands::delete_scheduled_task,
             commands::project_branch,
             commands::project_task_worktrees,
             commands::task_worktree_diff,

@@ -2360,19 +2360,19 @@ pub async fn remove_task_worktree(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateSession {
     #[serde(default)]
-    task_mode: TaskMode,
-    project_id: String,
-    provider_id: String,
-    model_id: String,
-    permission_policy: PermissionPolicy,
+    pub(crate) task_mode: TaskMode,
+    pub(crate) project_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) model_id: String,
+    pub(crate) permission_policy: PermissionPolicy,
     #[serde(default)]
-    workspace_mode: WorkspaceMode,
+    pub(crate) workspace_mode: WorkspaceMode,
     #[serde(default)]
-    base_branch: Option<String>,
+    pub(crate) base_branch: Option<String>,
     #[serde(default)]
-    task_request: Option<String>,
+    pub(crate) task_request: Option<String>,
     #[serde(default)]
-    parent_session_id: Option<String>,
+    pub(crate) parent_session_id: Option<String>,
 }
 
 fn child_parent_branch(
@@ -2670,6 +2670,176 @@ pub async fn create_session(
         model_id: session.model_id.clone(),
     })?;
     Ok(session)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateScheduledTaskInput {
+    name: Option<String>,
+    project_id: String,
+    provider_id: String,
+    model_id: String,
+    prompt: String,
+    permission_policy: PermissionPolicy,
+    workspace_mode: WorkspaceMode,
+    frequency: ScheduledTaskFrequency,
+    scheduled_at: String,
+}
+
+#[tauri::command]
+pub async fn create_scheduled_task(
+    input: CreateScheduledTaskInput,
+    state: State<'_, SharedState>,
+) -> AppResult<ScheduledTask> {
+    let prompt = input.prompt.trim();
+    if prompt.is_empty() || prompt.len() > 32_768 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Enter a scheduled task prompt of up to 32 KiB.",
+        ));
+    }
+    if !context_migration::secret_line_numbers(prompt).is_empty() {
+        return Err(AppError::new(
+            "scheduled_task_secret_blocked",
+            "This prompt looks like it contains a credential. Read the value from a local environment variable instead.",
+        ));
+    }
+    let now = chrono::Utc::now();
+    let scheduled_at = chrono::DateTime::parse_from_rfc3339(&input.scheduled_at)
+        .map_err(|_| AppError::new("invalid_schedule", "Choose a valid date and time."))?
+        .with_timezone(&chrono::Utc);
+    if scheduled_at < now + chrono::Duration::minutes(1)
+        || scheduled_at > now + chrono::Duration::days(366)
+    {
+        return Err(AppError::new(
+            "invalid_schedule",
+            "Choose a start time from one minute to one year from now.",
+        ));
+    }
+    if input.frequency != ScheduledTaskFrequency::Once
+        && input.workspace_mode != WorkspaceMode::Isolated
+    {
+        return Err(AppError::new(
+            "scheduled_task_requires_isolation",
+            "Repeating tasks need an isolated Git workspace.",
+        ));
+    }
+    if input.permission_policy.max_tool_rounds == 0
+        || input.permission_policy.max_tool_rounds > state.config.max_tool_rounds
+    {
+        return Err(AppError::new(
+            "invalid_policy",
+            "The configured tool-round limit is invalid.",
+        ));
+    }
+    let project = state.database.project(&input.project_id)?;
+    let provider = state.config.provider(&input.provider_id)?;
+    if !models_for_provider(&state, provider)?
+        .iter()
+        .any(|model| model.id == input.model_id && model.status != ModelStatus::Unavailable)
+    {
+        return Err(AppError::new(
+            "unknown_model",
+            "This model is no longer available. Choose another model.",
+        ));
+    }
+    let inspect_policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+    let base_branch = if input.workspace_mode == WorkspaceMode::Isolated {
+        if project.repository_root.is_none() {
+            return Err(AppError::new(
+                "not_git_repository",
+                "Repeating tasks need a registered Git repository.",
+            ));
+        }
+        Some(
+            git::branch(inspect_policy, Path::new(&project.path))
+                .await?
+                .ok_or_else(|| {
+                    AppError::new(
+                        "no_base_branch",
+                        "Choose an existing local branch before scheduling this task.",
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let project_policy = &project.permissions;
+    let mut permission_policy = input.permission_policy;
+    permission_policy.read_files =
+        stricter_permission(permission_policy.read_files, project_policy.read_files);
+    permission_policy.git = stricter_permission(permission_policy.git, project_policy.git);
+    permission_policy.write_files =
+        stricter_permission(permission_policy.write_files, project_policy.write_files);
+    permission_policy.shell = stricter_permission(permission_policy.shell, project_policy.shell);
+    permission_policy.external_files = stricter_permission(
+        permission_policy.external_files,
+        project_policy.external_files,
+    );
+    permission_policy.max_tool_rounds = permission_policy
+        .max_tool_rounds
+        .min(project_policy.max_tool_rounds)
+        .min(state.config.max_tool_rounds);
+    let name = input
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| task_title(prompt));
+    if name.chars().count() > 100 || name.chars().any(char::is_control) {
+        return Err(AppError::new(
+            "invalid_title",
+            "Scheduled task names must contain at most 100 printable characters.",
+        ));
+    }
+    let created_at = now.to_rfc3339();
+    let task = ScheduledTask {
+        id: id(),
+        name,
+        project_id: input.project_id,
+        provider_id: input.provider_id,
+        model_id: input.model_id,
+        prompt: prompt.to_owned(),
+        permission_policy,
+        workspace_mode: input.workspace_mode,
+        base_branch,
+        frequency: input.frequency,
+        next_run_at: scheduled_at.to_rfc3339(),
+        enabled: true,
+        created_at: created_at.clone(),
+        updated_at: created_at,
+    };
+    state.database.create_scheduled_task(&task)?;
+    Ok(task)
+}
+
+#[tauri::command]
+pub fn list_scheduled_tasks(state: State<'_, SharedState>) -> AppResult<Vec<ScheduledTask>> {
+    state.database.scheduled_tasks()
+}
+
+#[tauri::command]
+pub fn list_scheduled_task_runs(state: State<'_, SharedState>) -> AppResult<Vec<ScheduledTaskRun>> {
+    state
+        .database
+        .scheduled_task_runs(SCHEDULED_TASK_RUN_HISTORY_LIMIT)
+}
+
+#[tauri::command]
+pub fn set_scheduled_task_enabled(
+    schedule_id: String,
+    enabled: bool,
+    state: State<'_, SharedState>,
+) -> AppResult<ScheduledTask> {
+    state
+        .database
+        .set_scheduled_task_enabled(&schedule_id, enabled)
+}
+
+#[tauri::command]
+pub fn delete_scheduled_task(schedule_id: String, state: State<'_, SharedState>) -> AppResult<()> {
+    state.database.delete_scheduled_task(&schedule_id)
 }
 
 fn task_branch(request: &str, session_id: &str) -> String {

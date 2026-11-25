@@ -69,9 +69,60 @@
 .task-inbox-empty { padding: 29px 0; border-top: 1px solid var(--wb-border); }
 .task-inbox-empty h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .task-inbox-empty p { max-width: 470px; margin: 8px 0 18px; color: var(--wb-muted); font-size: 13px; line-height: 1.55; }
+.task-inbox-heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.task-inbox-schedule-new { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 33px; padding: 0 10px; color: var(--wb-ink); background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 5px; font-size: 11px; font-weight: 550; white-space: nowrap; }
+.task-inbox-schedule-new:hover { background: var(--wb-surface-raised); }
+.scheduled-task-manager { margin: 0 0 29px; border: 1px solid var(--wb-border); border-radius: 7px; background: color-mix(in srgb, var(--wb-surface) 78%, transparent); }
+.scheduled-task-manager-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 14px; }
+.scheduled-task-manager-heading h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.scheduled-task-manager-heading p { margin: 4px 0 0; color: var(--wb-muted); font-size: 11px; line-height: 1.4; }
+.scheduled-task-manager-heading > span { color: var(--wb-muted); font-size: 10px; }
+.scheduled-task-empty { margin: 0; padding: 0 14px 13px; color: var(--wb-muted); font-size: 11px; }
+.scheduled-task-error { margin: 0; padding: 8px 14px; color: var(--wb-danger); font-size: 11px; border-top: 1px solid var(--wb-border); }
+.scheduled-task-form { display: grid; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--wb-border); background: var(--wb-surface); }
+.scheduled-task-form-heading { display: flex; align-items: center; justify-content: space-between; color: var(--wb-ink); font-size: 12px; }
+.scheduled-task-form-heading button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; color: var(--wb-muted); background: transparent; border: 0; border-radius: 4px; }
+.scheduled-task-form label { display: grid; gap: 5px; color: var(--wb-muted-strong); font-size: 10px; }
+.scheduled-task-form input, .scheduled-task-form select, .scheduled-task-form textarea { min-width: 0; width: 100%; padding: 7px 8px; color: var(--wb-ink); background: var(--wb-canvas); border: 1px solid var(--wb-border); border-radius: 4px; font: 11px var(--font-ui); }
+.scheduled-task-form textarea { min-height: 70px; resize: vertical; line-height: 1.45; }
+.scheduled-task-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.scheduled-task-policy-note { margin: 0; color: var(--wb-muted); font-size: 10px; line-height: 1.45; }
+.scheduled-task-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
+.scheduled-task-form-actions > button:first-child { min-height: 31px; padding: 0 10px; color: var(--wb-muted-strong); background: transparent; border: 1px solid var(--wb-border); border-radius: 5px; font-size: 11px; }
+.scheduled-task-form-actions .task-inbox-new { min-height: 31px; }
+.scheduled-task-form-actions button:disabled { opacity: .55; }
+.scheduled-task-list, .scheduled-run-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--wb-border); }
+.scheduled-task-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) minmax(170px, auto) auto; align-items: center; gap: 10px; padding: 10px 13px; border-bottom: 1px solid var(--wb-border); }
+.scheduled-task-row:last-child, .scheduled-run-list > li:last-child { border-bottom: 0; }
+.scheduled-task-state { width: 7px; height: 7px; border-radius: 50%; background: var(--wb-muted); opacity: .4; }
+.scheduled-task-state.is-enabled { background: var(--wb-accent); opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--wb-accent) 12%, transparent); }
+.scheduled-task-main, .scheduled-task-next { display: grid; min-width: 0; gap: 4px; }
+.scheduled-task-main strong { overflow: hidden; color: var(--wb-ink); font-size: 11px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-main > span, .scheduled-task-next > span { overflow: hidden; color: var(--wb-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-task-next { text-align: right; }
+.scheduled-task-next small { color: var(--wb-muted); font-size: 9px; }
+.scheduled-task-actions { display: flex; gap: 4px; }
+.scheduled-task-actions button { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px; color: var(--wb-muted-strong); background: transparent; border: 1px solid var(--wb-border); border-radius: 4px; }
+.scheduled-task-actions button:hover:not(:disabled) { color: var(--wb-ink); background: var(--wb-surface-raised); }
+.scheduled-task-actions button:disabled { opacity: .5; }
+.scheduled-run-history { margin: 0 0 30px; }
+.scheduled-run-list { border-top: 1px solid var(--wb-border); }
+.scheduled-run-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px 12px; padding: 9px 2px; border-bottom: 1px solid var(--wb-border); }
+.scheduled-run-list > li > div { display: grid; min-width: 0; gap: 4px; }
+.scheduled-run-list > li > div strong { overflow: hidden; color: var(--wb-ink); font-size: 11px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-run-list > li > div span, .scheduled-run-list > li > small { color: var(--wb-muted); font-size: 10px; }
+.scheduled-run-status { color: var(--wb-muted-strong); font-size: 10px; white-space: nowrap; }
+.scheduled-run-status.is-failed, .scheduled-run-status.is-waiting_for_permission, .scheduled-run-status.is-waiting_for_user { color: var(--wb-danger); }
+.scheduled-run-list > li > button { min-height: 25px; padding: 0 8px; color: var(--wb-muted-strong); background: transparent; border: 1px solid var(--wb-border); border-radius: 4px; font-size: 10px; }
 
 @media (max-width: 760px) {
   .task-inbox-content { padding-top: 25px; }
+  .scheduled-task-row { grid-template-columns: 8px minmax(0, 1fr) auto; }
+  .scheduled-task-next { grid-column: 2; text-align: left; }
+  .scheduled-task-actions { grid-column: 3; grid-row: 1 / span 2; }
+  .scheduled-run-list > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .scheduled-run-list > li > button { grid-column: 2; grid-row: 1 / span 2; }
+  .scheduled-run-list > li > small { grid-column: 1 / -1; }
   .task-inbox-open { grid-template-columns: minmax(0, 1fr) 16px; gap: 8px 10px; }
   .task-inbox-row-main { grid-column: 1; }
   .task-inbox-row-state { grid-column: 1; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 5px 9px; text-align: left; white-space: normal; }
@@ -85,6 +136,9 @@
   .task-inbox-heading h1 { font-size: 21px; }
   .task-inbox-heading p { max-width: 220px; font-size: 12px; }
   .task-inbox-new { min-height: 36px; padding-inline: 9px; }
+  .task-inbox-heading-actions { flex-direction: column-reverse; align-items: stretch; }
+  .task-inbox-schedule-new, .task-inbox-heading-actions .task-inbox-new { min-height: 32px; }
+  .scheduled-task-form-grid { grid-template-columns: minmax(0, 1fr); }
   .task-inbox-summary > div { display: grid; gap: 3px; padding: 10px 8px; }
   .task-inbox-summary dt { font-size: 10px; }
   .task-inbox-summary dd { font-size: 16px; }

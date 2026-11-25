@@ -2,7 +2,8 @@ use crate::{
     domain::*,
     error::{AppError, AppResult},
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 /// Old renderer Plan tasks carried only this exact marker in user messages.
@@ -80,6 +81,34 @@ pub struct SessionFileCheckpoint {
     pub reviewed: bool,
 }
 
+fn next_scheduled_task_time(
+    task: &ScheduledTask,
+    scheduled: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    let period_seconds = match &task.frequency {
+        ScheduledTaskFrequency::Once => return None,
+        ScheduledTaskFrequency::Daily => 86_400_i64,
+        ScheduledTaskFrequency::Weekly => 604_800_i64,
+    };
+    let elapsed = now.signed_duration_since(scheduled).num_seconds().max(0);
+    let occurrences = (elapsed / period_seconds).saturating_add(1);
+    let seconds = period_seconds.checked_mul(occurrences)?;
+    scheduled.checked_add_signed(ChronoDuration::seconds(seconds))
+}
+
+fn scheduled_task_run_status(status: &ScheduledTaskRunStatus) -> &'static str {
+    match status {
+        ScheduledTaskRunStatus::Starting => "starting",
+        ScheduledTaskRunStatus::Running => "running",
+        ScheduledTaskRunStatus::WaitingForPermission => "waiting_for_permission",
+        ScheduledTaskRunStatus::WaitingForUser => "waiting_for_user",
+        ScheduledTaskRunStatus::Completed => "completed",
+        ScheduledTaskRunStatus::Failed => "failed",
+        ScheduledTaskRunStatus::Cancelled => "cancelled",
+    }
+}
+
 pub struct Database(Mutex<Connection>);
 
 impl Database {
@@ -101,6 +130,7 @@ impl Database {
         Self::migrate_project_memories(&connection)?;
         Self::migrate_task_plans(&connection)?;
         Self::migrate_containment(&connection)?;
+        Self::migrate_scheduled_tasks(&connection)?;
         let database = Self(Mutex::new(connection));
         database.recover_interrupted()?;
         // Re-serialize legacy JSON rows once so newly added metadata survives the
@@ -363,6 +393,33 @@ impl Database {
         connection.execute_batch(
             "INSERT OR IGNORE INTO app_preferences(key, value) VALUES ('reduced_safety_allowed', 'true');
              PRAGMA user_version = 18;",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_scheduled_tasks(connection: &Connection) -> AppResult<()> {
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                 id TEXT PRIMARY KEY,
+                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                 next_run_at TEXT NOT NULL,
+                 enabled INTEGER NOT NULL DEFAULT 1,
+                 data TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS scheduled_tasks_due ON scheduled_tasks(enabled, next_run_at);
+             CREATE TABLE IF NOT EXISTS scheduled_task_runs (
+                 id TEXT PRIMARY KEY,
+                 scheduled_task_id TEXT NOT NULL,
+                 scheduled_task_name TEXT NOT NULL,
+                 scheduled_for TEXT NOT NULL,
+                 started_at TEXT NOT NULL,
+                 completed_at TEXT,
+                 session_id TEXT,
+                 status TEXT NOT NULL,
+                 data TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS scheduled_task_runs_recent ON scheduled_task_runs(scheduled_for DESC);
+             PRAGMA user_version = 19;",
         )?;
         Ok(())
     }
@@ -1090,7 +1147,7 @@ impl Database {
                 self.save_session(&session)?;
             }
         }
-        Ok(())
+        self.recover_interrupted_scheduled_task_runs()
     }
 
     pub fn projects(&self) -> AppResult<Vec<Project>> {
@@ -1257,6 +1314,202 @@ impl Database {
                 "Session not found. Start a new session.",
             ))
         })
+    }
+
+    pub fn scheduled_tasks(&self) -> AppResult<Vec<ScheduledTask>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT data FROM scheduled_tasks ORDER BY enabled DESC, next_run_at ASC")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    pub fn create_scheduled_task(&self, task: &ScheduledTask) -> AppResult<()> {
+        self.connection()?.execute(
+            "INSERT INTO scheduled_tasks (id, project_id, next_run_at, enabled, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![task.id, task.project_id, task.next_run_at, task.enabled, serde_json::to_string(task)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_scheduled_task_enabled(&self, id: &str, enabled: bool) -> AppResult<ScheduledTask> {
+        let now = Utc::now();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let data = transaction
+            .query_row(
+                "SELECT data FROM scheduled_tasks WHERE id = ?1",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::new("not_found", "Scheduled task not found."))?;
+        let mut task: ScheduledTask = serde_json::from_str(&data)?;
+        if enabled && task.frequency == ScheduledTaskFrequency::Once {
+            let has_run: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM scheduled_task_runs WHERE scheduled_task_id = ?1)",
+                [id],
+                |row| row.get(0),
+            )?;
+            if has_run {
+                return Err(AppError::new(
+                    "scheduled_task_finished",
+                    "A one-time task that has already run cannot be re-enabled.",
+                ));
+            }
+        }
+        if enabled {
+            if let Ok(next_run) = DateTime::parse_from_rfc3339(&task.next_run_at) {
+                if next_run <= now {
+                    if let Some(next) =
+                        next_scheduled_task_time(&task, next_run.with_timezone(&Utc), now)
+                    {
+                        task.next_run_at = next.to_rfc3339();
+                    } else {
+                        task.next_run_at = (now + ChronoDuration::minutes(1)).to_rfc3339();
+                    }
+                }
+            }
+        }
+        task.enabled = enabled;
+        task.updated_at = now.to_rfc3339();
+        transaction.execute(
+            "UPDATE scheduled_tasks SET next_run_at = ?1, enabled = ?2, data = ?3 WHERE id = ?4",
+            params![
+                task.next_run_at,
+                task.enabled,
+                serde_json::to_string(&task)?,
+                id
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(task)
+    }
+
+    pub fn delete_scheduled_task(&self, id: &str) -> AppResult<()> {
+        let removed = self
+            .connection()?
+            .execute("DELETE FROM scheduled_tasks WHERE id = ?1", [id])?;
+        if removed == 0 {
+            return Err(AppError::new("not_found", "Scheduled task not found."));
+        }
+        // Run records deliberately survive schedule deletion as task history.
+        Ok(())
+    }
+
+    pub fn scheduled_task_runs(&self, limit: usize) -> AppResult<Vec<ScheduledTaskRun>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT data FROM scheduled_task_runs ORDER BY scheduled_for DESC, started_at DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map(
+            [limit.min(SCHEDULED_TASK_RUN_HISTORY_LIMIT) as i64],
+            |row| row.get::<_, String>(0),
+        )?;
+        rows.map(|row| Ok(serde_json::from_str(&row?)?)).collect()
+    }
+
+    /// Claim a bounded set of due schedules in one write transaction. The next
+    /// occurrence is advanced before task startup, so a restart cannot launch
+    /// the same occurrence twice.
+    pub fn claim_due_scheduled_tasks(
+        &self,
+        now: DateTime<Utc>,
+    ) -> AppResult<Vec<(ScheduledTask, ScheduledTaskRun)>> {
+        let now_text = now.to_rfc3339();
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task_data = {
+            let mut statement = transaction.prepare(
+                "SELECT data FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?1 ORDER BY next_run_at ASC LIMIT 10",
+            )?;
+            let rows = statement.query_map([&now_text], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut claimed = Vec::new();
+        for data in task_data {
+            let mut task: ScheduledTask = serde_json::from_str(&data)?;
+            let scheduled_for = task.next_run_at.clone();
+            let run_at = DateTime::parse_from_rfc3339(&scheduled_for)
+                .map_err(|_| {
+                    AppError::new("invalid_schedule", "A saved schedule time is invalid.")
+                })?
+                .with_timezone(&Utc);
+            if run_at > now {
+                continue;
+            }
+            let run = ScheduledTaskRun {
+                id: id(),
+                scheduled_task_id: task.id.clone(),
+                scheduled_task_name: task.name.clone(),
+                scheduled_for,
+                started_at: now_text.clone(),
+                completed_at: None,
+                session_id: None,
+                status: ScheduledTaskRunStatus::Starting,
+                error: None,
+            };
+            if task.frequency == ScheduledTaskFrequency::Once {
+                task.enabled = false;
+            } else if let Some(next) = next_scheduled_task_time(&task, run_at, now) {
+                task.next_run_at = next.to_rfc3339();
+            } else {
+                task.enabled = false;
+            }
+            task.updated_at = now_text.clone();
+            transaction.execute(
+                "UPDATE scheduled_tasks SET next_run_at = ?1, enabled = ?2, data = ?3 WHERE id = ?4 AND enabled = 1",
+                params![task.next_run_at, task.enabled, serde_json::to_string(&task)?, task.id],
+            )?;
+            transaction.execute(
+                "INSERT INTO scheduled_task_runs (id, scheduled_task_id, scheduled_task_name, scheduled_for, started_at, completed_at, session_id, status, data) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7)",
+                params![run.id, run.scheduled_task_id, run.scheduled_task_name, run.scheduled_for, run.started_at, scheduled_task_run_status(&run.status), serde_json::to_string(&run)?],
+            )?;
+            claimed.push((task, run));
+        }
+        transaction.execute(
+            "DELETE FROM scheduled_task_runs WHERE id IN (
+                 SELECT id FROM scheduled_task_runs ORDER BY scheduled_for DESC, started_at DESC LIMIT -1 OFFSET ?1
+             )",
+            [SCHEDULED_TASK_RUN_HISTORY_LIMIT as i64],
+        )?;
+        transaction.commit()?;
+        Ok(claimed)
+    }
+
+    pub fn update_scheduled_task_run(&self, run: &ScheduledTaskRun) -> AppResult<()> {
+        let updated = self.connection()?.execute(
+            "UPDATE scheduled_task_runs SET session_id = ?1, completed_at = ?2, status = ?3, data = ?4 WHERE id = ?5",
+            params![run.session_id, run.completed_at, scheduled_task_run_status(&run.status), serde_json::to_string(run)?, run.id],
+        )?;
+        if updated == 0 {
+            return Err(AppError::new("not_found", "Scheduled task run not found."));
+        }
+        Ok(())
+    }
+
+    fn recover_interrupted_scheduled_task_runs(&self) -> AppResult<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let rows = {
+            let mut statement = transaction.prepare(
+                "SELECT data FROM scheduled_task_runs WHERE status = 'starting' AND session_id IS NULL",
+            )?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for data in rows {
+            let mut run: ScheduledTaskRun = serde_json::from_str(&data)?;
+            run.status = ScheduledTaskRunStatus::Failed;
+            run.error = Some("Octran Code closed before this scheduled task could start.".into());
+            run.completed_at = Some(now());
+            transaction.execute(
+                "UPDATE scheduled_task_runs SET completed_at = ?1, status = 'failed', data = ?2 WHERE id = ?3",
+                params![run.completed_at, serde_json::to_string(&run)?, run.id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn save_session(&self, session: &AgentSession) -> AppResult<()> {
@@ -2493,7 +2746,10 @@ mod tests {
         let version: u32 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 18, "the containment migration bumps user_version");
+        assert_eq!(
+            version, 19,
+            "the scheduled task migration bumps user_version"
+        );
         let value: String = connection
             .query_row(
                 "SELECT value FROM app_preferences WHERE key = 'reduced_safety_allowed'",
@@ -2548,5 +2804,144 @@ mod tests {
         assert!(project.repository_root.is_none());
         assert!(!project.reduced_safety_opt_in);
         assert_eq!(project.permissions.read_files, PermissionDecision::Allow);
+    }
+
+    #[test]
+    fn scheduled_tasks_claim_once_advance_recurrence_and_keep_run_history() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scheduled.sqlite");
+        let project = Project {
+            id: "scheduled-project".into(),
+            workspace_id: "local".into(),
+            name: "Scheduled project".into(),
+            path: root.path().display().to_string(),
+            repository_root: None,
+            active_branch: None,
+            last_opened_at: now(),
+            project_instructions: String::new(),
+            preferred_model: None,
+            permissions: PermissionPolicy::default(),
+            is_recent: true,
+            reduced_safety_opt_in: false,
+            guidance_precedence: GuidancePrecedence::default(),
+            created_at: now(),
+        };
+        let database = Database::open(&path).unwrap();
+        database.save_project(&project).unwrap();
+        let now_time = Utc::now();
+        let due = (now_time - ChronoDuration::days(3)).to_rfc3339();
+        let make_task = |id: &str, frequency| ScheduledTask {
+            id: id.into(),
+            name: format!("Schedule {id}"),
+            project_id: project.id.clone(),
+            provider_id: "openai".into(),
+            model_id: "gpt-test".into(),
+            prompt: "Summarize recent project changes".into(),
+            permission_policy: PermissionPolicy::default(),
+            workspace_mode: WorkspaceMode::Isolated,
+            base_branch: Some("main".into()),
+            frequency,
+            next_run_at: due.clone(),
+            enabled: true,
+            created_at: now(),
+            updated_at: now(),
+        };
+        let one_time = make_task("once", ScheduledTaskFrequency::Once);
+        let daily = make_task("daily", ScheduledTaskFrequency::Daily);
+        database.create_scheduled_task(&one_time).unwrap();
+        database.create_scheduled_task(&daily).unwrap();
+
+        let claimed = database.claim_due_scheduled_tasks(now_time).unwrap();
+        assert_eq!(claimed.len(), 2);
+        assert!(database
+            .claim_due_scheduled_tasks(now_time)
+            .unwrap()
+            .is_empty());
+        let schedules = database.scheduled_tasks().unwrap();
+        let once = schedules.iter().find(|task| task.id == "once").unwrap();
+        let daily = schedules.iter().find(|task| task.id == "daily").unwrap();
+        assert!(!once.enabled);
+        assert!(daily.enabled);
+        assert!(
+            DateTime::parse_from_rfc3339(&daily.next_run_at)
+                .unwrap()
+                .with_timezone(&Utc)
+                > now_time
+        );
+
+        for (_, mut run) in claimed {
+            run.status = ScheduledTaskRunStatus::Failed;
+            run.error = Some("provider unavailable".into());
+            run.completed_at = Some(now());
+            database.update_scheduled_task_run(&run).unwrap();
+        }
+        database.delete_scheduled_task("once").unwrap();
+        assert_eq!(database.scheduled_tasks().unwrap().len(), 1);
+        drop(database);
+
+        let reopened = Database::open(&path).unwrap();
+        let history = reopened.scheduled_task_runs(100).unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history
+            .iter()
+            .all(|run| run.status == ScheduledTaskRunStatus::Failed));
+    }
+
+    #[test]
+    fn startup_marks_a_claimed_scheduled_run_without_a_session_as_failed() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("interrupted-schedule.sqlite");
+        let project = Project {
+            id: "scheduled-project".into(),
+            workspace_id: "local".into(),
+            name: "Scheduled project".into(),
+            path: root.path().display().to_string(),
+            repository_root: None,
+            active_branch: None,
+            last_opened_at: now(),
+            project_instructions: String::new(),
+            preferred_model: None,
+            permissions: PermissionPolicy::default(),
+            is_recent: true,
+            reduced_safety_opt_in: false,
+            guidance_precedence: GuidancePrecedence::default(),
+            created_at: now(),
+        };
+        {
+            let database = Database::open(&path).unwrap();
+            database.save_project(&project).unwrap();
+            database
+                .create_scheduled_task(&ScheduledTask {
+                    id: "once".into(),
+                    name: "One time schedule".into(),
+                    project_id: project.id,
+                    provider_id: "openai".into(),
+                    model_id: "gpt-test".into(),
+                    prompt: "Review the current project".into(),
+                    permission_policy: PermissionPolicy::default(),
+                    workspace_mode: WorkspaceMode::Isolated,
+                    base_branch: Some("main".into()),
+                    frequency: ScheduledTaskFrequency::Once,
+                    next_run_at: (Utc::now() - ChronoDuration::minutes(1)).to_rfc3339(),
+                    enabled: true,
+                    created_at: now(),
+                    updated_at: now(),
+                })
+                .unwrap();
+            assert_eq!(
+                database
+                    .claim_due_scheduled_tasks(Utc::now())
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let reopened = Database::open(&path).unwrap();
+        let run = reopened.scheduled_task_runs(10).unwrap().remove(0);
+        assert_eq!(run.status, ScheduledTaskRunStatus::Failed);
+        assert!(run
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("closed")));
     }
 }

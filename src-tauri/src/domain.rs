@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const TASK_TERMINAL_RUN_HISTORY_LIMIT: usize = 12;
+pub const SCHEDULED_TASK_RUN_HISTORY_LIMIT: usize = 100;
 
 pub fn now() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -518,6 +519,59 @@ pub struct TaskTerminalRun {
     pub completed_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledTaskFrequency {
+    Once,
+    Daily,
+    Weekly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduledTaskRunStatus {
+    Starting,
+    Running,
+    WaitingForPermission,
+    WaitingForUser,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledTask {
+    pub id: String,
+    pub name: String,
+    pub project_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub prompt: String,
+    pub permission_policy: PermissionPolicy,
+    pub workspace_mode: WorkspaceMode,
+    pub base_branch: Option<String>,
+    pub frequency: ScheduledTaskFrequency,
+    pub next_run_at: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledTaskRun {
+    pub id: String,
+    pub scheduled_task_id: String,
+    pub scheduled_task_name: String,
+    pub scheduled_for: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub session_id: Option<String>,
+    pub status: ScheduledTaskRunStatus,
+    pub error: Option<String>,
 }
 
 /// Durable, user-visible task context. It contains summaries of observable
