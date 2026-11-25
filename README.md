@@ -30,6 +30,7 @@ Octran Code is a desktop workspace for asking AI agents to work in local reposit
 - Connect OpenAI, Anthropic, Google Gemini, OpenCode Zen, or OpenCode Go.
 - Review task-scoped diffs; accept or revert files while preserving earlier edits.
 - Choose direct project work or an isolated Git worktree.
+- Read GitHub pull request status, review decisions, and checks for task branches; create a draft PR only after confirming the complete diff.
 - See which instruction, rule, and skill files Octran Code loads from Codex, Claude Code, Cursor, Gemini CLI, Antigravity, and Copilot, then copy reviewed ones into project instructions. Project files are never changed. See [docs/context-migration.md](docs/context-migration.md).
 - Use native permission prompts for edits and terminal commands.
 - Track local request usage and estimated costs.

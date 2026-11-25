@@ -34,7 +34,10 @@ describe('typed Tauri command boundary', () => {
       platform: 'windows',
       projectOptedIn: true,
       machineAllowed: true,
-      profiles: [{ kind: 'inspect', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read'] } }],
+      profiles: [
+        { kind: 'inspect', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read'] } },
+        { kind: 'inspect_with_network', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read', 'network'] } },
+      ],
     };
     mockIPC((name, args) => {
       expect(name).toBe('containment_status');
@@ -53,6 +56,34 @@ describe('typed Tauri command boundary', () => {
 
     mockIPC(() => ({ ...status, platform: 'solaris' }));
     await expect(getContainmentStatus('project-1')).rejects.toMatchObject({ code: 'ipc_contract' });
+  });
+  it('returns a review fingerprint and requires confirmation details for a draft PR push', async () => {
+    const fingerprint = 'a'.repeat(64);
+    mockIPC((name, args) => {
+      expect(name).toBe('task_worktree_diff');
+      expect(args).toEqual({ sessionId: 'task-1' });
+      return { text: 'diff --git a/file b/file', fingerprint, truncated: false };
+    });
+    const { command } = await import('../src/lib/ipc');
+    await expect(command('task_worktree_diff', { sessionId: 'task-1' })).resolves.toEqual({
+      text: 'diff --git a/file b/file', fingerprint, truncated: false,
+    });
+
+    mockIPC((name, args) => {
+      expect(name).toBe('create_task_draft_pr');
+      expect(args).toEqual({
+        sessionId: 'task-1', title: 'Reviewed task', body: 'Summary',
+        reviewedDiffFingerprint: fingerprint, confirmPush: true,
+      });
+      return 'https://github.com/octran/example/pull/12';
+    });
+    await expect(command('create_task_draft_pr', {
+      sessionId: 'task-1', title: 'Reviewed task', body: 'Summary',
+      reviewedDiffFingerprint: fingerprint, confirmPush: true,
+    })).resolves.toBe('https://github.com/octran/example/pull/12');
+
+    mockIPC(() => ({ text: 'large diff', fingerprint, truncated: true }));
+    await expect(command('task_worktree_diff', { sessionId: 'task-1' })).rejects.toMatchObject({ code: 'ipc_contract' });
   });
   it('sets the machine-level reduced-safety switch through IPC', async () => {
     mockIPC((name, args) => {

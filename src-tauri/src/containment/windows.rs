@@ -674,7 +674,7 @@ Set-Content -LiteralPath '@RESULT@' -Value ('allocated=' + $allocated)
         fs::write(&gate, b"go").expect("open the helper gate");
 
         assert!(
-            wait_for_file(&result, Duration::from_secs(12)),
+            wait_for_content(&result, "allocated=False", Duration::from_secs(12)),
             "the job-memory helper did not report a result"
         );
         assert_eq!(

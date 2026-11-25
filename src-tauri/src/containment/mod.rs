@@ -215,12 +215,13 @@ impl Platform {
     }
 }
 
-/// The four immutable task profiles. Reduced safety is opt-in and is never
+/// The immutable task profiles. Reduced safety is opt-in and is never
 /// called contained: it carries only `process.limit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileKind {
     Inspect,
+    InspectWithNetwork,
     Edit,
     EditWithNetwork,
     ReducedSafety,
@@ -228,8 +229,9 @@ pub enum ProfileKind {
 
 impl ProfileKind {
     /// Every profile kind in table order, for status and diagnostics.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Inspect,
+        Self::InspectWithNetwork,
         Self::Edit,
         Self::EditWithNetwork,
         Self::ReducedSafety,
@@ -239,6 +241,7 @@ impl ProfileKind {
     pub fn name(self) -> &'static str {
         match self {
             Self::Inspect => "inspect",
+            Self::InspectWithNetwork => "inspect_with_network",
             Self::Edit => "edit",
             Self::EditWithNetwork => "edit_with_network",
             Self::ReducedSafety => "reduced_safety",
@@ -258,6 +261,13 @@ impl ProfileKind {
                 Capability::GitMetadata,
                 Capability::ProcessSpawn,
                 Capability::ProcessLimit,
+            ],
+            Self::InspectWithNetwork => vec![
+                Capability::WorkspaceRead,
+                Capability::GitMetadata,
+                Capability::ProcessSpawn,
+                Capability::ProcessLimit,
+                Capability::Network,
             ],
             Self::Edit => vec![
                 Capability::WorkspaceRead,
@@ -1318,7 +1328,7 @@ mod tests {
         assert_eq!(wire["projectOptedIn"], true);
         assert_eq!(wire["machineAllowed"], true);
         assert_eq!(wire["profiles"][0]["kind"], "inspect");
-        assert_eq!(wire["profiles"][3]["kind"], "reduced_safety");
+        assert_eq!(wire["profiles"][4]["kind"], "reduced_safety");
     }
 
     #[test]
@@ -1412,6 +1422,12 @@ mod tests {
                 Capability::ProcessSpawn,
                 Capability::ProcessLimit,
             ]
+        );
+        let mut inspect_with_network = ProfileKind::Inspect.capabilities();
+        inspect_with_network.push(Capability::Network);
+        assert_eq!(
+            ProfileKind::InspectWithNetwork.capabilities(),
+            inspect_with_network
         );
         assert_eq!(
             ProfileKind::Edit.capabilities(),
@@ -1509,7 +1525,11 @@ mod tests {
             }
         }
 
-        assert_eq!(covered, 3 * 2 * 2 * 4, "every combination must be covered");
+        assert_eq!(
+            covered,
+            platforms.len() * 2 * 2 * kinds.len(),
+            "every combination must be covered"
+        );
     }
 
     #[test]
@@ -1618,6 +1638,7 @@ mod tests {
     fn resolving_a_profile_never_widens_the_kind() {
         for kind in [
             ProfileKind::Inspect,
+            ProfileKind::InspectWithNetwork,
             ProfileKind::Edit,
             ProfileKind::EditWithNetwork,
             ProfileKind::ReducedSafety,

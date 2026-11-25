@@ -1221,6 +1221,14 @@ pub struct TaskPullRequestStatus {
     pub refreshed_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWorktreeDiff {
+    pub text: String,
+    pub fingerprint: Option<String>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalResult {

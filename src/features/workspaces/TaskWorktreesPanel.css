@@ -25,6 +25,7 @@
 .task-worktree-pr-form textarea { resize: vertical; }
 .task-worktree-pr-review { display: flex; align-items: center; gap: 6px; color: var(--wb-muted-strong); font-size: 11px; }
 .task-worktree-pr-review input { margin: 0; accent-color: var(--wb-accent); }
+.task-worktree-review-limit { margin: 8px 0 0; color: var(--wb-warning, #d39b38); font-size: 11px; line-height: 1.45; }
 .task-worktree-pr-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .task-worktree-pr-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 25px; padding: 0 7px; color: var(--wb-muted-strong); font-size: 11px; background: var(--wb-surface); border: 1px solid var(--wb-border); border-radius: 0; }
 .task-worktree-pr-actions button.is-primary { color: var(--wb-accent); background: var(--wb-accent-soft); border-color: color-mix(in srgb, var(--wb-accent) 22%, var(--wb-border)); }

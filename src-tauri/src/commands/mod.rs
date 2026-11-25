@@ -2250,7 +2250,7 @@ pub async fn project_task_worktrees(
 pub async fn task_worktree_diff(
     session_id: String,
     state: State<'_, SharedState>,
-) -> AppResult<String> {
+) -> AppResult<TaskWorktreeDiff> {
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
     let policy = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
@@ -2282,6 +2282,8 @@ pub async fn create_task_draft_pr(
     session_id: String,
     title: String,
     body: String,
+    reviewed_diff_fingerprint: String,
+    confirm_push: bool,
     state: State<'_, SharedState>,
 ) -> AppResult<String> {
     ensure_task_idle(&state, &session_id)?;
@@ -2294,6 +2296,8 @@ pub async fn create_task_draft_pr(
         &session,
         &title,
         &body,
+        &reviewed_diff_fingerprint,
+        confirm_push,
     )
     .await
 }
@@ -2306,7 +2310,11 @@ pub async fn task_worktree_pull_request_status(
     ensure_task_idle(&state, &session_id)?;
     let session = state.database.session(&session_id)?;
     let project = state.database.project(&session.project_id)?;
-    let policy = spawn_policy(&state, &project, containment::ProfileKind::EditWithNetwork)?;
+    let policy = spawn_policy(
+        &state,
+        &project,
+        containment::ProfileKind::InspectWithNetwork,
+    )?;
     git::worktree::pull_request_status(policy, &task_repository_root(&project)?, &session).await
 }
 

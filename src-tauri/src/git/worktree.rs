@@ -4,9 +4,11 @@ use crate::{
     domain::{
         now, AgentSession, ChangedFile, TaskCheckState, TaskPullRequestCheck,
         TaskPullRequestReviewState, TaskPullRequestState, TaskPullRequestStatus, TaskWorktree,
+        TaskWorktreeDiff,
     },
     error::{AppError, AppResult},
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -17,15 +19,62 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_DIFF_BYTES: usize = 2 * 1024 * 1024;
 const GH_TIMEOUT: Duration = Duration::from_secs(45);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GhAccess {
+    ReadOnly,
+    Write,
+}
+
+fn gh_access_allowed(kind: ProfileKind, access: GhAccess) -> bool {
+    match access {
+        GhAccess::ReadOnly => {
+            matches!(
+                kind,
+                ProfileKind::InspectWithNetwork | ProfileKind::EditWithNetwork
+            )
+        }
+        GhAccess::Write => kind == ProfileKind::EditWithNetwork,
+    }
+}
+
+fn valid_git_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn remote_branch_oid(output: &[u8], branch: &str) -> AppResult<Option<String>> {
+    let expected_ref = format!("refs/heads/{branch}");
+    let mut found = None;
+    for line in String::from_utf8_lossy(output).lines() {
+        let Some((oid, ref_name)) = line.split_once('\t') else {
+            continue;
+        };
+        if ref_name != expected_ref {
+            continue;
+        }
+        if !valid_git_oid(oid) || found.is_some() {
+            return Err(AppError::new(
+                "task_remote_branch_invalid",
+                "GitHub returned an unreadable task branch state. Refresh the workspace and retry.",
+            ));
+        }
+        found = Some(oid.to_ascii_lowercase());
+    }
+    Ok(found)
+}
+
 async fn gh_output(
     policy: SpawnPolicy,
     root: &Path,
     args: &[String],
+    access: GhAccess,
 ) -> AppResult<std::process::Output> {
-    if policy.kind != ProfileKind::EditWithNetwork {
+    if !gh_access_allowed(policy.kind, access) {
         return Err(AppError::new(
             "github_network_permission_required",
-            "Creating a draft pull request requires the project's network-enabled edit profile.",
+            match access {
+                GhAccess::ReadOnly => "Reading GitHub status requires the project's read-only network profile.",
+                GhAccess::Write => "Creating a draft pull request requires the project's network-enabled edit profile.",
+            },
         ));
     }
     let process = prepare_command(policy, "gh")?
@@ -550,7 +599,7 @@ pub async fn diff(
     policy: SpawnPolicy,
     repository_root: &Path,
     session: &AgentSession,
-) -> AppResult<String> {
+) -> AppResult<TaskWorktreeDiff> {
     let info = inspect(policy, repository_root, session).await?;
     if !info.available {
         return Err(AppError::new(
@@ -620,11 +669,16 @@ pub async fn diff(
         }
         diff_bytes.extend_from_slice(&added.stdout);
     }
-    let mut diff = String::from_utf8_lossy(&diff_bytes).into_owned();
+    let mut text = String::from_utf8_lossy(&diff_bytes).into_owned();
     if truncated {
-        diff.push_str("\n… diff truncated at 2 MiB …");
+        text.push_str("\n… diff truncated at 2 MiB …");
     }
-    Ok(diff)
+    let fingerprint = (!truncated).then(|| format!("{:x}", Sha256::digest(text.as_bytes())));
+    Ok(TaskWorktreeDiff {
+        text,
+        fingerprint,
+        truncated,
+    })
 }
 
 pub async fn commit(
@@ -701,8 +755,26 @@ pub async fn create_draft_pull_request(
     session: &AgentSession,
     title: &str,
     body: &str,
+    reviewed_diff_fingerprint: &str,
+    confirm_push: bool,
 ) -> AppResult<String> {
     let (title, body) = validated_pr_fields(title, body)?;
+    if !confirm_push {
+        return Err(AppError::new(
+            "github_push_confirmation_required",
+            "Confirm that you reviewed the diff and want to push this task branch.",
+        ));
+    }
+    if reviewed_diff_fingerprint.len() != 64
+        || !reviewed_diff_fingerprint
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(AppError::new(
+            "invalid_reviewed_diff_fingerprint",
+            "Review the complete task diff again before creating a draft pull request.",
+        ));
+    }
     if session.status != crate::domain::SessionStatus::Completed {
         return Err(AppError::new(
             "task_not_completed",
@@ -787,7 +859,73 @@ pub async fn create_draft_pull_request(
         ));
     }
 
-    let auth = gh_output(policy, &path, &git_args(&["auth", "status"])).await?;
+    let latest = inspect(policy, repository_root, session).await?;
+    if latest.dirty {
+        return Err(AppError::new(
+            "worktree_has_changes",
+            "The task workspace changed after review. Review the updated diff before pushing.",
+        ));
+    }
+    if !latest.conflicts.is_empty() {
+        return Err(AppError::new(
+            "worktree_conflicted",
+            "Resolve the task workspace conflicts before creating a pull request.",
+        ));
+    }
+    if !latest.has_committed_changes {
+        return Err(AppError::new(
+            "no_task_changes",
+            "This task has no committed changes to propose.",
+        ));
+    }
+    let head_before = output(
+        policy,
+        &path,
+        &git_args(&["rev-parse", "--verify", "HEAD"]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    let reviewed_diff = diff(policy, repository_root, session).await?;
+    if reviewed_diff.truncated {
+        return Err(AppError::new(
+            "task_diff_too_large_to_review",
+            "The task diff exceeds the review limit, so Octran Code cannot push it as a draft pull request.",
+        ));
+    }
+    let expected_fingerprint = reviewed_diff_fingerprint.to_ascii_lowercase();
+    if reviewed_diff.fingerprint.as_deref() != Some(expected_fingerprint.as_str()) {
+        return Err(AppError::new(
+            "task_diff_changed_after_review",
+            "The task diff changed after review. Reopen the updated diff and confirm the push again.",
+        ));
+    }
+    let head_after = output(
+        policy,
+        &path,
+        &git_args(&["rev-parse", "--verify", "HEAD"]),
+        Duration::from_secs(5),
+    )
+    .await?;
+    let reviewed_head = git_text(&head_before.stdout);
+    if !head_before.status.success()
+        || !head_after.status.success()
+        || reviewed_head.is_empty()
+        || reviewed_head != git_text(&head_after.stdout)
+        || !valid_git_oid(&reviewed_head)
+    {
+        return Err(AppError::new(
+            "task_commit_changed_after_review",
+            "The task commit changed during review. Reopen the updated diff before pushing.",
+        ));
+    }
+
+    let auth = gh_output(
+        policy,
+        &path,
+        &git_args(&["auth", "status"]),
+        GhAccess::ReadOnly,
+    )
+    .await?;
     if !auth.status.success() {
         return Err(AppError::new(
             "github_not_authenticated",
@@ -795,7 +933,7 @@ pub async fn create_draft_pull_request(
         ));
     }
     let view_args = gh_pr_view_args(branch);
-    let existing = gh_output(policy, &path, &view_args).await?;
+    let existing = gh_output(policy, &path, &view_args, GhAccess::ReadOnly).await?;
     if existing.status.success() {
         return pull_request_url(&existing.stdout).ok_or_else(|| {
             AppError::new(
@@ -805,12 +943,35 @@ pub async fn create_draft_pull_request(
         });
     }
 
-    let push_args = [
-        "push".into(),
-        "--set-upstream".into(),
-        "origin".into(),
-        branch.into(),
-    ];
+    let remote_ref = format!("refs/heads/{branch}");
+    let remote_status = output(
+        policy,
+        &path,
+        &git_args(&["ls-remote", "--heads", "origin", &remote_ref]),
+        GH_TIMEOUT,
+    )
+    .await?;
+    if !remote_status.status.success() {
+        return Err(AppError::new(
+            "task_remote_branch_check_failed",
+            "Git could not verify the remote task branch. Check your Git credentials and try again.",
+        ));
+    }
+    let remote_head = remote_branch_oid(&remote_status.stdout, branch)?;
+    if remote_head
+        .as_deref()
+        .is_some_and(|remote_head| remote_head != reviewed_head)
+    {
+        return Err(AppError::new(
+            "task_remote_branch_changed",
+            "The remote task branch already has a different commit. Fetch and review it before creating a pull request.",
+        ));
+    }
+
+    let reviewed_ref = format!("{reviewed_head}:refs/heads/{branch}");
+    let expected_remote_head = remote_head.unwrap_or_default();
+    let lease = format!("--force-with-lease={remote_ref}:{expected_remote_head}");
+    let push_args = ["push".into(), lease, "origin".into(), reviewed_ref];
     let push = output(policy, &path, &push_args, GH_TIMEOUT).await?;
     if !push.status.success() {
         return Err(AppError::new(
@@ -832,7 +993,7 @@ pub async fn create_draft_pull_request(
         "--head".into(),
         branch.into(),
     ];
-    let created = gh_output(policy, &path, &create_args).await?;
+    let created = gh_output(policy, &path, &create_args, GhAccess::Write).await?;
     if created.status.success() {
         return pull_request_url(&created.stdout).ok_or_else(|| {
             AppError::new(
@@ -843,7 +1004,7 @@ pub async fn create_draft_pull_request(
     }
 
     let view_args = gh_pr_view_args(branch);
-    let existing = gh_output(policy, &path, &view_args).await?;
+    let existing = gh_output(policy, &path, &view_args, GhAccess::ReadOnly).await?;
     if existing.status.success() {
         return pull_request_url(&existing.stdout).ok_or_else(|| {
             AppError::new(
@@ -896,7 +1057,13 @@ pub async fn pull_request_status(
             "The task branch name is invalid. Refresh the task workspace and try again.",
         ));
     }
-    let auth = gh_output(policy, &path, &git_args(&["auth", "status"])).await?;
+    let auth = gh_output(
+        policy,
+        &path,
+        &git_args(&["auth", "status"]),
+        GhAccess::ReadOnly,
+    )
+    .await?;
     if !auth.status.success() {
         return Err(AppError::new(
             "github_not_authenticated",
@@ -917,7 +1084,7 @@ pub async fn pull_request_status(
         "--jq".into(),
         ".[:1] | map({url,state,isDraft,reviewDecision,statusCheckRollup:(.statusCheckRollup[:20] // [])})".into(),
     ];
-    let result = gh_output(policy, &path, &args).await?;
+    let result = gh_output(policy, &path, &args, GhAccess::ReadOnly).await?;
     if !result.status.success() {
         return Err(AppError::new(
             "github_status_failed",
@@ -1192,6 +1359,65 @@ mod tests {
     }
 
     #[test]
+    fn github_access_profiles_keep_read_and_write_scopes_separate() {
+        assert!(gh_access_allowed(
+            ProfileKind::InspectWithNetwork,
+            GhAccess::ReadOnly
+        ));
+        assert!(!gh_access_allowed(
+            ProfileKind::InspectWithNetwork,
+            GhAccess::Write
+        ));
+        assert!(gh_access_allowed(
+            ProfileKind::EditWithNetwork,
+            GhAccess::ReadOnly
+        ));
+        assert!(gh_access_allowed(
+            ProfileKind::EditWithNetwork,
+            GhAccess::Write
+        ));
+        assert!(!gh_access_allowed(ProfileKind::Inspect, GhAccess::ReadOnly));
+        assert!(!gh_access_allowed(ProfileKind::Edit, GhAccess::Write));
+    }
+
+    #[test]
+    fn remote_branch_lookup_accepts_only_the_exact_ref_and_a_valid_object_id() {
+        let oid = "a".repeat(40);
+        assert_eq!(
+            remote_branch_oid(
+                format!("{oid}\trefs/heads/task/reviewed\n").as_bytes(),
+                "task/reviewed"
+            )
+            .unwrap(),
+            Some(oid.clone())
+        );
+        assert_eq!(
+            remote_branch_oid(
+                format!("{oid}\trefs/heads/task/other\n").as_bytes(),
+                "task/reviewed"
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            remote_branch_oid(b"bad\trefs/heads/task/reviewed\n", "task/reviewed")
+                .unwrap_err()
+                .code,
+            "task_remote_branch_invalid"
+        );
+        assert_eq!(
+            remote_branch_oid(
+                format!("{oid}\trefs/heads/task/reviewed\n{oid}\trefs/heads/task/reviewed\n")
+                    .as_bytes(),
+                "task/reviewed"
+            )
+            .unwrap_err()
+            .code,
+            "task_remote_branch_invalid"
+        );
+    }
+
+    #[test]
     fn pull_request_url_parser_accepts_https_pull_request_links_only() {
         assert_eq!(
             pull_request_url(b"https://github.com/octran/example/pull/42\n"),
@@ -1269,12 +1495,58 @@ mod tests {
                 &task,
                 "Draft review",
                 "Review the task diff.",
+                &"a".repeat(64),
+                true,
             )
             .await
             .unwrap_err()
             .code,
             "worktree_has_changes"
         );
+    }
+
+    #[tokio::test]
+    async fn draft_pull_request_requires_explicit_review_and_a_matching_diff_fingerprint() {
+        let temp = tempfile::tempdir_in(std::env::current_dir().unwrap().join("target")).unwrap();
+        let (repository, base) = repository(&temp);
+        let worktree = temp.path().join("draft-pr-reviewed-task");
+        let branch = "jevcode/draft-pr-reviewed-task";
+        create(test_policy(), &repository, &worktree, &base, branch)
+            .await
+            .unwrap();
+        std::fs::write(worktree.join("src.txt"), "reviewed task edit\n").unwrap();
+        git(&worktree, &["add", "src.txt"]);
+        git(
+            &worktree,
+            &["commit", "--quiet", "-m", "reviewed task edit"],
+        );
+        let task = session(&worktree, &base, branch);
+
+        let unconfirmed = create_draft_pull_request(
+            test_policy(),
+            &repository,
+            &task,
+            "Draft review",
+            "Review the task diff.",
+            "",
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unconfirmed.code, "github_push_confirmation_required");
+
+        let stale = create_draft_pull_request(
+            test_policy(),
+            &repository,
+            &task,
+            "Draft review",
+            "Review the task diff.",
+            &"0".repeat(64),
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(stale.code, "task_diff_changed_after_review");
     }
 
     #[tokio::test]
@@ -1317,8 +1589,13 @@ mod tests {
         assert!(info.changed_files.iter().any(|file| file.path == "src.txt"));
         assert!(info.changed_files.iter().any(|file| file.path == "new.txt"));
         let task_diff = diff(test_policy(), &repository, &task).await.unwrap();
-        assert!(task_diff.contains("task edit"));
-        assert!(task_diff.contains("new task file"));
+        assert!(task_diff.text.contains("task edit"));
+        assert!(task_diff.text.contains("new task file"));
+        assert!(!task_diff.truncated);
+        assert_eq!(
+            task_diff.fingerprint.as_deref(),
+            Some(format!("{:x}", Sha256::digest(task_diff.text.as_bytes())).as_str())
+        );
         assert_eq!(
             remove(test_policy(), &repository, &task)
                 .await

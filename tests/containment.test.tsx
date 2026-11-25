@@ -11,6 +11,7 @@ const noop = () => undefined;
 
 const blockedProfiles: ContainmentStatus['profiles'] = [
   { kind: 'inspect', enforcement: { state: 'blocked', reason: 'containment_unavailable' } },
+  { kind: 'inspect_with_network', enforcement: { state: 'blocked', reason: 'containment_unavailable' } },
   { kind: 'edit', enforcement: { state: 'blocked', reason: 'containment_unavailable' } },
   { kind: 'edit_with_network', enforcement: { state: 'blocked', reason: 'containment_unavailable' } },
   { kind: 'reduced_safety', enforcement: { state: 'blocked', reason: 'containment_unavailable' } },
@@ -33,6 +34,7 @@ const reduced: ContainmentStatus = {
   machineAllowed: true,
   profiles: [
     { kind: 'inspect', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read', 'git.metadata', 'process.spawn'] } },
+    { kind: 'inspect_with_network', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read', 'git.metadata', 'process.spawn', 'network'] } },
     { kind: 'edit', enforcement: { state: 'reduced_safety', unsupported: ['workspace.read', 'workspace.write', 'temp.write', 'git.metadata', 'process.spawn'] } },
     { kind: 'edit_with_network', enforcement: { state: 'reduced_safety', unsupported } },
     { kind: 'reduced_safety', enforcement: { state: 'reduced_safety', unsupported: [] } },
@@ -65,6 +67,7 @@ describe('project containment panel', () => {
     expect(html).toContain('Containment');
     expect(html).toContain('Agent commands');
     expect(html).toContain('Git and search');
+    expect(html).toContain('GitHub status');
     expect(html).toContain('New tasks');
     expect(html).toContain('This project is blocked until reduced safety is turned on for it.');
     expect(html).toContain('Unavailable');

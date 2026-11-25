@@ -91,12 +91,14 @@ export function ContainmentPanelView({ status, busy, error, onEnable, onDisable 
 }) {
   const condition = conditionOf(status);
   const inspect = profile(status, 'inspect');
+  const inspectWithNetwork = profile(status, 'inspect_with_network');
   const edit = profile(status, 'edit');
   const reduced = profile(status, 'reduced_safety');
   const unsupported = unsupportedCapabilities(status);
   const rows = [
     { label: 'Agent commands', value: rowValue(condition, edit) },
     { label: 'Git and search', value: rowValue(condition, inspect) },
+    { label: 'GitHub status', value: rowValue(condition, inspectWithNetwork) },
     { label: 'New tasks', value: rowValue(condition, combine(inspect, edit), true) },
   ];
   return <section className="project-containment-section" aria-labelledby="project-containment-heading">

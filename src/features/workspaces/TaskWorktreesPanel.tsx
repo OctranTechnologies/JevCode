@@ -18,6 +18,8 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [diffs, setDiffs] = useState<Record<string, string>>({});
+  const [diffFingerprints, setDiffFingerprints] = useState<Record<string, string | null>>({});
+  const [diffTruncated, setDiffTruncated] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Record<string, { message: string; conflicts: string[] }>>({});
   const [prFormFor, setPrFormFor] = useState<string | null>(null);
@@ -54,8 +56,10 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
     if (diffs[worktree.sessionId] !== undefined) return;
     setBusyId(worktree.sessionId);
     try {
-      const diff = await command('task_worktree_diff', { sessionId: worktree.sessionId });
-      setDiffs(current => ({ ...current, [worktree.sessionId]: diff }));
+      const result = await command('task_worktree_diff', { sessionId: worktree.sessionId });
+      setDiffs(current => ({ ...current, [worktree.sessionId]: result.text }));
+      setDiffFingerprints(current => ({ ...current, [worktree.sessionId]: result.fingerprint }));
+      setDiffTruncated(current => ({ ...current, [worktree.sessionId]: result.truncated }));
     } catch (error) { setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } })); }
     finally { setBusyId(null); }
   }
@@ -69,8 +73,10 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
     if (diffs[worktree.sessionId] !== undefined) return;
     setBusyId(worktree.sessionId);
     try {
-      const diff = await command('task_worktree_diff', { sessionId: worktree.sessionId });
-      setDiffs(current => ({ ...current, [worktree.sessionId]: diff }));
+      const result = await command('task_worktree_diff', { sessionId: worktree.sessionId });
+      setDiffs(current => ({ ...current, [worktree.sessionId]: result.text }));
+      setDiffFingerprints(current => ({ ...current, [worktree.sessionId]: result.fingerprint }));
+      setDiffTruncated(current => ({ ...current, [worktree.sessionId]: result.truncated }));
     } catch (error) {
       setPrFormFor(null);
       setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } }));
@@ -78,17 +84,38 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
   }
 
   async function createDraftPr(worktree: TaskWorktree) {
-    if (busyId || !prReviewed) return;
+    const reviewedDiffFingerprint = diffFingerprints[worktree.sessionId];
+    if (busyId || !prReviewed || !reviewedDiffFingerprint) return;
     setBusyId(worktree.sessionId);
     setFeedback(current => ({ ...current, [worktree.sessionId]: { message: '', conflicts: [] } }));
     onError(null);
     try {
-      const url = await command('create_task_draft_pr', { sessionId: worktree.sessionId, title: prTitle, body: prBody });
+      const url = await command('create_task_draft_pr', {
+        sessionId: worktree.sessionId,
+        title: prTitle,
+        body: prBody,
+        reviewedDiffFingerprint,
+        confirmPush: prReviewed,
+      });
       setPullRequestUrls(current => ({ ...current, [worktree.sessionId]: url }));
       setFeedback(current => ({ ...current, [worktree.sessionId]: { message: 'Draft pull request is ready.', conflicts: [] } }));
       setPrFormFor(null);
     } catch (error) {
-      setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } }));
+      const normalized = normalizeError(error);
+      if (['task_diff_changed_after_review', 'task_commit_changed_after_review', 'task_diff_too_large_to_review'].includes(normalized.code)) {
+        setPrReviewed(false);
+        try {
+          const latest = await command('task_worktree_diff', { sessionId: worktree.sessionId });
+          setDiffs(current => ({ ...current, [worktree.sessionId]: latest.text }));
+          setDiffFingerprints(current => ({ ...current, [worktree.sessionId]: latest.fingerprint }));
+          setDiffTruncated(current => ({ ...current, [worktree.sessionId]: latest.truncated }));
+          setFeedback(current => ({ ...current, [worktree.sessionId]: { message: 'The task diff changed after review. The latest diff is shown; review it and confirm the push again.', conflicts: [] } }));
+        } catch (refreshError) {
+          setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(refreshError).message, conflicts: [] } }));
+        }
+      } else {
+        setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalized.message, conflicts: [] } }));
+      }
     } finally { setBusyId(null); }
   }
 
@@ -122,6 +149,8 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
       if (result.worktree) setWorktrees(current => current.map(item => item.sessionId === worktree.sessionId ? result.worktree! : item));
       setFeedback(current => ({ ...current, [worktree.sessionId]: { message: result.message, conflicts: result.conflicts } }));
       setDiffs(current => { const next = { ...current }; delete next[worktree.sessionId]; return next; });
+      setDiffFingerprints(current => { const next = { ...current }; delete next[worktree.sessionId]; return next; });
+      setDiffTruncated(current => { const next = { ...current }; delete next[worktree.sessionId]; return next; });
       if (action === 'apply' && result.conflicts.length === 0) await onProjectGitUpdated();
     } catch (error) {
       setFeedback(current => ({ ...current, [worktree.sessionId]: { message: normalizeError(error).message, conflicts: [] } }));
@@ -160,14 +189,15 @@ export function TaskWorktreesPanel({ projectId, desktopAllowed, onSessionUpdated
             {expanded === worktree.sessionId && <div className="task-worktree-diff">
               <div><strong>Changes from {worktree.baseBranch}</strong><button type="button" aria-label="Copy task diff" disabled={!diff} onClick={() => diff && void navigator.clipboard.writeText(diff)}><Copy size={12} />Copy</button><button type="button" aria-label="Close task diff" onClick={() => setExpanded(null)}><ChevronDown size={12} /></button></div>
               {isBusy && !diff ? <p>Loading diff…</p> : <pre>{diff || 'No changes to show yet.'}</pre>}
+              {diffTruncated[worktree.sessionId] && <p className="task-worktree-review-limit" role="alert">This diff is too large to review in full, so pushing it as a draft PR is disabled.</p>}
             </div>}
             {prFormFor === worktree.sessionId && <form className="task-worktree-pr-form" onSubmit={event => { event.preventDefault(); void createDraftPr(worktree); }}>
               <strong>Review before creating a draft PR</strong>
-              <p>This pushes <code>{worktree.branch}</code> to <code>origin</code>. The pull request stays in draft.</p>
+              <p>This pushes the reviewed commit from <code>{worktree.branch}</code> to <code>origin</code>. Octran Code checks the diff again before pushing, and the pull request stays in draft.</p>
               <label>Title<input value={prTitle} maxLength={200} onChange={event => setPrTitle(event.target.value)} required /></label>
               <label>Description<textarea value={prBody} maxLength={10000} rows={4} onChange={event => setPrBody(event.target.value)} placeholder="Summarize the changes and note anything reviewers should check." /></label>
-              <label className="task-worktree-pr-review"><input type="checkbox" checked={prReviewed} onChange={event => setPrReviewed(event.target.checked)} />I reviewed the diff above.</label>
-              <div className="task-worktree-pr-actions"><button type="button" onClick={() => setPrFormFor(null)} disabled={isBusy}>Cancel</button><button type="submit" className="is-primary" disabled={!prReviewed || !prTitle.trim() || !!busyId}>{isBusy ? <LoaderCircle size={12} className="spin" /> : <GitPullRequest size={12} />}Push &amp; create draft</button></div>
+              <label className="task-worktree-pr-review"><input type="checkbox" checked={prReviewed} disabled={!diffFingerprints[worktree.sessionId]} onChange={event => setPrReviewed(event.target.checked)} />I reviewed the complete diff above.</label>
+              <div className="task-worktree-pr-actions"><button type="button" onClick={() => setPrFormFor(null)} disabled={isBusy}>Cancel</button><button type="submit" className="is-primary" disabled={!prReviewed || !diffFingerprints[worktree.sessionId] || !prTitle.trim() || !!busyId}>{isBusy ? <LoaderCircle size={12} className="spin" /> : <GitPullRequest size={12} />}Push &amp; create draft</button></div>
             </form>}
             {(prStatus || pullRequestUrls[worktree.sessionId]) && <div className="task-worktree-pr-status">
               <a className="task-worktree-pr-link" href={prStatus?.url ?? pullRequestUrls[worktree.sessionId]} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} />Open pull request</a>

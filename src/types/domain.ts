@@ -414,7 +414,7 @@ export interface Project {
   reducedSafetyOptIn: boolean;
   createdAt: string;
 }
-export type ContainmentProfileKind = 'inspect' | 'edit' | 'edit_with_network' | 'reduced_safety';
+export type ContainmentProfileKind = 'inspect' | 'inspect_with_network' | 'edit' | 'edit_with_network' | 'reduced_safety';
 export type ContainmentBlockReason = 'containment_unavailable' | 'containment_profile_unsupported' | 'containment_probe_failed' | 'capability_denied';
 export type ContainmentEnforcement =
   | { state: 'enforced' }
@@ -506,6 +506,7 @@ export type TaskPullRequestReviewState = 'approved' | 'changes_requested' | 'rev
 export type TaskPullRequestState = 'open' | 'closed' | 'merged';
 export interface TaskPullRequestCheck { name: string; state: TaskCheckState; url: string | null }
 export interface TaskPullRequestStatus { url: string; state: TaskPullRequestState; isDraft: boolean; reviewState: TaskPullRequestReviewState | null; checks: TaskPullRequestCheck[]; refreshedAt: string }
+export interface TaskWorktreeDiff { text: string; fingerprint: string | null; truncated: boolean }
 export interface TerminalResult { output: string; exitCode: number | null; timedOut: boolean }
 export interface UsageRecord {
   id: string;
