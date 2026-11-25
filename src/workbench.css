@@ -464,6 +464,16 @@ body.is-resizing-pane .workbench { transition: none; }
 .task-terminal-branch { min-width: 0; margin-left: auto; overflow: hidden; color: var(--wb-terminal-muted); font: 10px var(--font-mono); letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
 .task-terminal-panel .terminal-panel-heading button { margin-left: 0; }
 .task-terminal-explainer { padding: 8px 10px; color: var(--wb-terminal-muted); font-size: 10px; line-height: 1.5; border-bottom: 1px solid var(--wb-terminal-line); }
+.task-preview-controls { display: grid; gap: 6px; padding: 9px 10px; border-bottom: 1px solid var(--wb-terminal-line); }
+.task-preview-heading { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--wb-terminal-ink); font-size: 11px; }
+.task-preview-heading > strong { margin-right: auto; font-weight: 600; }
+.task-preview-heading code { overflow: hidden; color: var(--wb-terminal-accent); font: 10px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.task-preview-heading button, .task-preview-start-form button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 25px; padding: 0 7px; color: var(--wb-terminal-ink); font-size: 10px; background: color-mix(in srgb, var(--wb-terminal-ink) 8%, transparent); border: 1px solid var(--wb-terminal-line); }
+.task-preview-heading button:disabled, .task-preview-start-form button:disabled { color: var(--wb-terminal-muted); opacity: .6; }
+.task-preview-start-form { display: grid; grid-template-columns: minmax(0, 1fr) 58px auto; gap: 5px; }
+.task-preview-start-form input { min-width: 0; height: 26px; padding: 0 6px; color: var(--wb-terminal-ink); font: 10px var(--font-mono); background: color-mix(in srgb, var(--wb-terminal-ink) 5%, transparent); border: 1px solid var(--wb-terminal-line); }
+.task-preview-start-form input::placeholder { color: var(--wb-terminal-muted); }
+.task-preview-controls > p { margin: 0; color: var(--wb-terminal-muted); font-size: 9px; line-height: 1.45; }
 .task-terminal-history { flex: 1; min-height: 0; padding: 0 10px; overflow: auto; }
 .task-terminal-history > .terminal-preview-message { padding: 12px 0; }
 .task-terminal-run { padding: 9px 0 10px; border-bottom: 1px solid var(--wb-terminal-line); }

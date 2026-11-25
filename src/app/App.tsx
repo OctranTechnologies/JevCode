@@ -694,6 +694,25 @@ export default function App() {
     await command('cancel_session', { sessionId: session.id });
   }, [session]);
 
+  const startTaskPreview = useCallback(async (commandText: string, port: number) => {
+    if (!session || !desktopAvailable) throw new Error('A local preview is available only in the desktop app.');
+    const updated = await command('start_task_preview', { input: { sessionId: session.id, commandText, port } });
+    dispatch({ type: 'session', session: updated });
+    return updated;
+  }, [dispatch, session]);
+
+  const stopTaskPreview = useCallback(async () => {
+    if (!session) return;
+    const updated = await command('stop_task_preview', { sessionId: session.id });
+    dispatch({ type: 'session', session: updated });
+    return updated;
+  }, [dispatch, session]);
+
+  const openTaskPreview = useCallback(async () => {
+    if (!session) return;
+    await command('open_task_preview', { sessionId: session.id });
+  }, [session]);
+
   const toggleTerminal = useCallback(() => {
     setView('agent');
     if (inspectorOpen && inspectorTab === 'terminal') setInspectorOpen(false);
@@ -838,7 +857,7 @@ export default function App() {
 
     {isAgentView && <>
       {inspectorOpen && <ResizeDivider label="Resize task details" width={inspectorWidth} min={276} max={480} reverse onResize={setInspectorWidth} />}
-      <InspectorPanel project={project} branch={branch} session={session} sessions={allSessions} provider={provider} demo={activeTaskIsDemo} desktopAllowed={desktopAvailable} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult} usage={desktop.usage} onSelectFile={selectReviewFile} onStartPlan={plan => void startTaskFromPlan(plan)} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onSelectSession={selectSession} onRunTerminal={runTaskTerminal} onStopTerminal={stopTaskTerminal} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
+      <InspectorPanel project={project} branch={branch} session={session} sessions={allSessions} provider={provider} demo={activeTaskIsDemo} desktopAllowed={desktopAvailable} review={reviewChanges} reviewDiff={reviewDiff} selectedPath={selectedReviewPath} reviewBusy={reviewBusy || busy} reviewResult={reviewResult} usage={desktop.usage} onSelectFile={selectReviewFile} onStartPlan={plan => void startTaskFromPlan(plan)} onSessionUpdated={updated => dispatch({ type: 'session', session: updated })} onSelectSession={selectSession} onRunTerminal={runTaskTerminal} onStopTerminal={stopTaskTerminal} onStartPreview={startTaskPreview} onStopPreview={stopTaskPreview} onOpenPreview={openTaskPreview} onFileAction={(path, action) => void reviewFileAction(path, action)} onAllAction={action => void reviewAllAction(action)} open={inspectorOpen} onClose={() => setInspectorOpen(false)} tab={inspectorTab} onTab={setInspectorTab} />
     </>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
     <CreateProjectDialog open={createProjectOpen} busy={creatingProject} onClose={() => setCreateProjectOpen(false)} onCreate={createProject} onOpenExisting={() => { setCreateProjectOpen(false); void openFolder(); }} />

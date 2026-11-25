@@ -907,8 +907,8 @@ pub struct SpawnSite {
 }
 
 /// Inventory of the production spawn sites named in the Phase 5 coverage
-/// table. User-initiated terminals/openers, tests and the HTTP MCP transport
-/// are intentionally absent.
+/// table. User-initiated terminals, their process cleanup, browser openers,
+/// tests and the HTTP MCP transport are intentionally absent.
 pub const SPAWN_SITES: &[SpawnSite] = &[
     // Task-scoped generic seam: Git/rg run under Inspect, run_command under
     // Edit. The caller supplies the task's profile kind; Inspect is the floor.
@@ -1104,7 +1104,9 @@ mod tests {
     /// `ContainedCommand::new` do not count. Keep this in sync with
     /// [`SPAWN_SITES`].
     const PRODUCTION_SPAWN_ALLOWLIST: &[(&str, usize)] = &[
-        ("commands/mod.rs", 20),
+        // Includes the user-operated local preview launcher and its cleanup
+        // and browser opener; these are intentionally not agent spawn sites.
+        ("commands/mod.rs", 28),
         ("containment/windows.rs", 4),
         ("review.rs", 5),
     ];

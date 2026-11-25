@@ -28,6 +28,8 @@ pub struct AppState {
     pub mcp: Arc<McpManager>,
     pub extensions: ExtensionRegistry,
     pub runs: Mutex<HashMap<String, watch::Sender<bool>>>,
+    /// Cancellation handles for local preview servers, keyed by task ID.
+    pub task_previews: Mutex<HashMap<String, watch::Sender<bool>>>,
     openai_auth_attempts: Mutex<HashMap<String, OpenAiAuthAttempt>>,
     pub google_auth_attempts: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
@@ -43,6 +45,7 @@ impl AppState {
             mcp,
             extensions,
             runs: Mutex::new(Default::default()),
+            task_previews: Mutex::new(Default::default()),
             openai_auth_attempts: Mutex::new(Default::default()),
             google_auth_attempts: Mutex::new(Default::default()),
         }

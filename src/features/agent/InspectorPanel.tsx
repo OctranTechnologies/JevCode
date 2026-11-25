@@ -16,7 +16,7 @@ import './childTask.css';
 export type InspectorTab = 'changes' | 'diff' | 'terminal' | 'context' | 'task';
 
 export function InspectorPanel({
-  project, branch, session, sessions, provider, demo, desktopAllowed, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated, onSelectSession, onRunTerminal, onStopTerminal,
+  project, branch, session, sessions, provider, demo, desktopAllowed, open, onClose, tab, onTab, review, reviewDiff, selectedPath, reviewBusy, reviewResult, usage, onSelectFile, onFileAction, onAllAction, onStartPlan, onSessionUpdated, onSelectSession, onRunTerminal, onStopTerminal, onStartPreview, onStopPreview, onOpenPreview,
 }: {
   project?: Project;
   branch: string | null;
@@ -43,6 +43,9 @@ export function InspectorPanel({
   onSelectSession: (session: AgentSession) => void;
   onRunTerminal: (commandText: string) => Promise<AgentSession>;
   onStopTerminal: () => Promise<void>;
+  onStartPreview: (commandText: string, port: number) => Promise<AgentSession>;
+  onStopPreview: () => Promise<AgentSession | undefined>;
+  onOpenPreview: () => Promise<void>;
 }) {
   const tabs: { id: InspectorTab; label: string; icon: ReactNode; count?: string }[] = [
     { id: 'changes', label: 'Files', icon: <FileCode2 size={13} />, count: demo ? '2' : review?.files.length ? String(review.files.length) : undefined },
@@ -69,7 +72,7 @@ export function InspectorPanel({
       {demo && <div className="inspector-demo-note"><span className="demo-note-mark">i</span><span>Example data · not applied to files</span></div>}
       {tab === 'changes' && <ChangesPanel demo={demo} session={session} review={review} selectedPath={selectedPath} busy={reviewBusy} result={reviewResult} onSelect={path => { onSelectFile(path); switchTab('diff'); }} onFileAction={onFileAction} onAllAction={onAllAction} />}
       {tab === 'diff' && <DiffPanel demo={demo} selectedFile={selectedPath} selectedChange={review?.files.find(file => file.path === selectedPath)} reviewDiff={reviewDiff} reviewBusy={reviewBusy} onBack={() => switchTab('changes')} onFileAction={onFileAction} />}
-      {tab === 'terminal' && <TerminalPanel demo={demo} session={session} desktopAllowed={desktopAllowed} onRun={onRunTerminal} onStop={onStopTerminal} onSessionUpdated={onSessionUpdated} />}
+      {tab === 'terminal' && <TerminalPanel demo={demo} session={session} desktopAllowed={desktopAllowed} onRun={onRunTerminal} onStop={onStopTerminal} onStartPreview={onStartPreview} onStopPreview={onStopPreview} onOpenPreview={onOpenPreview} onSessionUpdated={onSessionUpdated} />}
       {tab === 'context' && <ContextPanel project={project} branch={branch} session={session} provider={provider} />}
       {tab === 'task' && <>
         <TaskPanel session={session} demo={demo} project={project} provider={provider} review={review} usage={usage} />
@@ -147,13 +150,18 @@ function DiffPanel({ demo, selectedFile, selectedChange, reviewDiff, reviewBusy,
   </div>;
 }
 
-function TerminalPanel({ demo, session, desktopAllowed, onRun, onStop, onSessionUpdated }: { demo: boolean; session?: AgentSession; desktopAllowed: boolean; onRun: (commandText: string) => Promise<AgentSession>; onStop: () => Promise<void>; onSessionUpdated: (session: AgentSession) => void }) {
+function TerminalPanel({ demo, session, desktopAllowed, onRun, onStop, onStartPreview, onStopPreview, onOpenPreview, onSessionUpdated }: { demo: boolean; session?: AgentSession; desktopAllowed: boolean; onRun: (commandText: string) => Promise<AgentSession>; onStop: () => Promise<void>; onStartPreview: (commandText: string, port: number) => Promise<AgentSession>; onStopPreview: () => Promise<AgentSession | undefined>; onOpenPreview: () => Promise<void>; onSessionUpdated: (session: AgentSession) => void }) {
   const [commandText, setCommandText] = useState('');
   const [pending, setPending] = useState(false);
+  const [previewCommand, setPreviewCommand] = useState('');
+  const [previewPort, setPreviewPort] = useState('5173');
+  const [previewPending, setPreviewPending] = useState(false);
+  const [previewActionPending, setPreviewActionPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (demo) return <div className="terminal-panel"><div className="terminal-panel-heading"><span className="terminal-live-dot" /> SAMPLE OUTPUT <button title="Copy output" aria-label="Copy terminal output" onClick={() => void navigator.clipboard?.writeText(demoTerminal)}><Copy size={13} /></button></div><pre>{demoTerminal}</pre><div className="terminal-footnote">Example command output · no command was run</div></div>;
   if (!session) return <div className="inspector-empty"><Terminal size={18} /><strong>No active task</strong><p>Select an isolated task to open its terminal.</p></div>;
-  const active = session.terminalRuns.find(run => run.status === 'running');
+  const active = session.terminalRuns.find(run => run.status === 'running' && run.previewPort === null);
+  const activePreview = session.terminalRuns.find(run => run.status === 'running' && run.previewPort !== null);
   const allowed = desktopAllowed
     && session.taskMode === 'agent'
     && session.workspaceMode === 'isolated'
@@ -177,10 +185,50 @@ function TerminalPanel({ demo, session, desktopAllowed, onRun, onStop, onSession
     try { await onStop(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }
+  async function startPreview() {
+    const port = Number(previewPort);
+    if (!allowed || !previewCommand.trim() || !Number.isInteger(port) || port < 1024 || port > 65535 || previewPending || activePreview) return;
+    setPreviewPending(true);
+    setError(null);
+    try {
+      onSessionUpdated(await onStartPreview(previewCommand.trim(), port));
+      setPreviewCommand('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally { setPreviewPending(false); }
+  }
+  async function stopPreview() {
+    setPreviewActionPending(true);
+    setError(null);
+    try {
+      const updated = await onStopPreview();
+      if (updated) onSessionUpdated(updated);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally { setPreviewActionPending(false); }
+  }
+  async function openPreview() {
+    setError(null);
+    try { await onOpenPreview(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+  }
   const history = [...session.terminalRuns].reverse();
   return <div className="terminal-panel task-terminal-panel">
     <div className="terminal-panel-heading"><span className={`terminal-live-dot${active ? ' is-running' : ''}`} /> TASK TERMINAL <span className="task-terminal-branch">{session.gitBranch ?? 'isolated worktree'}</span>{active && <button type="button" title="Stop command" aria-label="Stop terminal command" onClick={() => void stop()}><Square size={12} /></button>}</div>
-    <div className="task-terminal-explainer">Runs in this task's isolated worktree with your account permissions. Agent tools cannot access this terminal. Likely credential lines are hidden from saved output.</div>
+    <div className="task-terminal-explainer">Runs in this task’s isolated worktree with your account permissions. Agent tools cannot access this terminal. Likely credential lines are hidden from saved output.</div>
+    <section className="task-preview-controls" aria-label="Local task preview">
+      <div className="task-preview-heading"><strong>Local preview</strong>
+        {activePreview?.previewPort != null && <>
+          <code>http://127.0.0.1:{activePreview.previewPort}</code>
+          <button type="button" onClick={() => void openPreview()} disabled={previewActionPending}><ExternalLink size={12} />Open</button>
+          <button type="button" onClick={() => void stopPreview()} disabled={previewActionPending} aria-label="Stop preview server"><Square size={11} />{previewActionPending ? 'Stopping' : 'Stop'}</button>
+        </>}
+      </div>
+      {activePreview ? <p>Preview server is running. It receives HOST=127.0.0.1 and PORT={activePreview.previewPort}; some frameworks may require those values in the command.</p> : <>
+        <div className="task-preview-start-form"><input aria-label="Preview command" value={previewCommand} onChange={event => setPreviewCommand(event.target.value)} placeholder="npm run dev -- --host 127.0.0.1" disabled={!allowed || previewPending || !!active} /><input aria-label="Preview port" inputMode="numeric" value={previewPort} onChange={event => setPreviewPort(event.target.value.replace(/[^0-9]/g, '').slice(0, 5))} disabled={!allowed || previewPending || !!active} /><button type="button" disabled={!allowed || previewPending || !!active || !previewCommand.trim() || Number(previewPort) < 1024 || Number(previewPort) > 65535} onClick={() => void startPreview()}>{previewPending ? <LoaderCircle size={12} className="spin" /> : <Play size={12} fill="currentColor" />}Start</button></div>
+        <p>The app sets HOST and PORT and opens the preview at 127.0.0.1 in your system browser. Use a command that binds to the selected port.</p>
+      </>}
+    </section>
     <div className="task-terminal-history" aria-live="polite">
       {history.length === 0 && <p className="terminal-preview-message">Run a command to attach its output to this task.</p>}
       {history.map(run => <article className="task-terminal-run" key={run.id}>

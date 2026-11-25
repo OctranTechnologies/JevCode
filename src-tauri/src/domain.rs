@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub const TASK_TERMINAL_RUN_HISTORY_LIMIT: usize = 12;
+
 pub fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -514,6 +516,8 @@ pub struct TaskTerminalRun {
     pub exit_code: Option<i32>,
     pub started_at: String,
     pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_port: Option<u16>,
 }
 
 /// Durable, user-visible task context. It contains summaries of observable

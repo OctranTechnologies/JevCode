@@ -35,6 +35,9 @@ interface Commands {
   reveal_project: { args: { projectId: string }; result: null };
   run_project_terminal: { args: { projectId: string; commandText: string }; result: import('../types/domain').TerminalResult };
   run_task_terminal: { args: { input: { sessionId: string; commandText: string } }; result: AgentSession };
+  start_task_preview: { args: { input: { sessionId: string; commandText: string; port: number } }; result: AgentSession };
+  stop_task_preview: { args: { sessionId: string }; result: AgentSession };
+  open_task_preview: { args: { sessionId: string }; result: null };
   project_branch: { args: { projectId: string }; result: string | null };
   project_task_worktrees: { args: { projectId: string }; result: TaskWorktree[] };
   task_worktree_diff: { args: { sessionId: string }; result: string };
@@ -135,7 +138,7 @@ const responses = {
   list_project_memories: z.array(projectMemorySchema), save_project_memory: projectMemorySchema, refresh_project_memory_source: projectMemorySchema, delete_project_memory: z.null(),
   update_session_model: sessionSchema, set_default_model: modelPreferencesSchema, toggle_model_favorite: modelPreferencesSchema,
   list_project_directory: z.array(projectFileSchema), project_overview: projectOverviewSchema, project_branches: z.array(z.string()), switch_project_branch: projectSchema,
-  reveal_project: z.null(), run_project_terminal: terminalResultSchema, run_task_terminal: sessionSchema, project_branch: z.string().nullable(), project_task_worktrees: z.array(taskWorktreeSchema), task_worktree_diff: z.string(), commit_task_worktree: taskWorktreeActionSchema, create_task_draft_pr: z.string(), task_worktree_pull_request_status: taskPullRequestStatusSchema.nullable(), apply_task_worktree: taskWorktreeActionSchema, remove_task_worktree: sessionSchema, create_session: sessionSchema, send_message: sessionSchema,
+  reveal_project: z.null(), run_project_terminal: terminalResultSchema, run_task_terminal: sessionSchema, start_task_preview: sessionSchema, stop_task_preview: sessionSchema, open_task_preview: z.null(), project_branch: z.string().nullable(), project_task_worktrees: z.array(taskWorktreeSchema), task_worktree_diff: z.string(), commit_task_worktree: taskWorktreeActionSchema, create_task_draft_pr: z.string(), task_worktree_pull_request_status: taskPullRequestStatusSchema.nullable(), apply_task_worktree: taskWorktreeActionSchema, remove_task_worktree: sessionSchema, create_session: sessionSchema, send_message: sessionSchema,
   rename_session: sessionSchema, archive_session: sessionSchema, resume_session: sessionSchema, set_session_pinned: sessionSchema, queue_follow_up: sessionSchema, remove_queued_follow_up: sessionSchema, delete_session: z.null(), duplicate_session: sessionSchema, fork_session: sessionSchema,
   resolve_permission: sessionSchema, set_permission_mode: permissionModeSchema, save_update_preferences: updatePreferencesSchema, list_permission_rules: z.array(permissionRuleSchema), revoke_permission_rule: z.null(), list_mcp_servers: z.array(mcpServerSchema), save_mcp_server: mcpServerConfigSchema, set_mcp_server_enabled: z.array(mcpServerSchema), connect_mcp_server: mcpServerSchema, disconnect_mcp_server: z.array(mcpServerSchema), delete_mcp_server: z.null(), cancel_session: z.null(), session_changes: sessionChangesSchema, session_file_diff: sessionFileDiffSchema, review_file_action: sessionChangesSchema, review_all_action: sessionChangesSchema, connect_provider: providerAccountSchema,
   disconnect_provider: providerAccountSchema, validate_provider_auth: providerAccountSchema,

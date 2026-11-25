@@ -1062,6 +1062,19 @@ impl Database {
 
     fn recover_interrupted(&self) -> AppResult<()> {
         for mut session in self.sessions()? {
+            let mut recovered_terminal_run = false;
+            for run in &mut session.terminal_runs {
+                if run.status == crate::domain::TaskTerminalRunStatus::Running {
+                    run.status = crate::domain::TaskTerminalRunStatus::Cancelled;
+                    run.output
+                        .push_str("\n[Stopped because Octran Code closed]");
+                    run.completed_at = Some(now());
+                    recovered_terminal_run = true;
+                }
+            }
+            if recovered_terminal_run {
+                session.updated_at = now();
+            }
             if matches!(
                 session.status,
                 SessionStatus::Queued | SessionStatus::Planning | SessionStatus::Working
@@ -1073,7 +1086,7 @@ impl Database {
                 session.updated_at = now();
                 self.save_session(&session)?;
             }
-            if session.task_mode == crate::domain::TaskMode::Plan {
+            if session.task_mode == crate::domain::TaskMode::Plan || recovered_terminal_run {
                 self.save_session(&session)?;
             }
         }
@@ -1261,6 +1274,30 @@ impl Database {
             let existing = decode_session(&data)?;
             saved.pinned = existing.pinned;
             saved.queued_follow_ups = existing.queued_follow_ups;
+            let mut terminal_runs = existing.terminal_runs;
+            for incoming in saved.terminal_runs.drain(..) {
+                if let Some(current) = terminal_runs.iter_mut().find(|run| run.id == incoming.id) {
+                    if current.status != crate::domain::TaskTerminalRunStatus::Running
+                        && incoming.status == crate::domain::TaskTerminalRunStatus::Running
+                    {
+                        continue;
+                    }
+                    *current = incoming;
+                } else {
+                    terminal_runs.push(incoming);
+                }
+            }
+            terminal_runs.sort_by(|first, second| first.started_at.cmp(&second.started_at));
+            while terminal_runs.len() > crate::domain::TASK_TERMINAL_RUN_HISTORY_LIMIT {
+                let Some(index) = terminal_runs
+                    .iter()
+                    .position(|run| run.status != crate::domain::TaskTerminalRunStatus::Running)
+                else {
+                    break;
+                };
+                terminal_runs.remove(index);
+            }
+            saved.terminal_runs = terminal_runs;
             if existing.updated_at > saved.updated_at {
                 saved.updated_at = existing.updated_at;
             }
@@ -1976,17 +2013,35 @@ mod tests {
                     .unwrap()
                     .pinned
             );
+            let mut terminal_update = database.session(&session.id).unwrap();
+            terminal_update.terminal_runs.push(TaskTerminalRun {
+                id: "terminal-run-1".into(),
+                command: "npm test".into(),
+                output: "passed".into(),
+                status: TaskTerminalRunStatus::Completed,
+                exit_code: Some(0),
+                started_at: "2026-10-10T01:00:00Z".into(),
+                completed_at: Some("2026-10-10T01:00:10Z".into()),
+                preview_port: None,
+            });
+            database.save_session(&terminal_update).unwrap();
             stale_session.title = "Updated by an in-flight task".into();
             stale_session.updated_at = "2026-10-10T01:00:00Z".into();
             database.save_session(&stale_session).unwrap();
             let saved = database.session(&session.id).unwrap();
             assert!(saved.pinned);
             assert_eq!(saved.title, "Updated by an in-flight task");
+            assert_eq!(saved.terminal_runs.len(), 1);
+            assert_eq!(
+                saved.terminal_runs[0].status,
+                TaskTerminalRunStatus::Completed
+            );
         }
         let reopened = Database::open(&path).unwrap();
         let reopened_session = reopened.session(&session.id).unwrap();
         assert!(reopened_session.pinned);
         assert_eq!(reopened_session.title, "Updated by an in-flight task");
+        assert_eq!(reopened_session.terminal_runs.len(), 1);
     }
 
     #[test]
@@ -1997,6 +2052,16 @@ mod tests {
             serde_json::from_str(include_str!("../../../tests/fixtures/session.json")).unwrap();
         session.parent_session_id = Some("parent-task".into());
         session.status = SessionStatus::Working;
+        session.terminal_runs.push(TaskTerminalRun {
+            id: "preview-run-1".into(),
+            command: "npm run dev".into(),
+            output: String::new(),
+            status: TaskTerminalRunStatus::Running,
+            exit_code: None,
+            started_at: now(),
+            completed_at: None,
+            preview_port: Some(5173),
+        });
         {
             let database = Database::open(&path).unwrap();
             database
@@ -2028,6 +2093,13 @@ mod tests {
             .error
             .as_deref()
             .is_some_and(|error| error.contains("app closed")));
+        assert_eq!(
+            recovered.terminal_runs[0].status,
+            TaskTerminalRunStatus::Cancelled
+        );
+        assert!(recovered.terminal_runs[0]
+            .output
+            .contains("Octran Code closed"));
     }
 
     #[test]

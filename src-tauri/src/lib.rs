@@ -98,6 +98,17 @@ pub fn run() {
             app.manage(state);
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Some(state) = window.app_handle().try_state::<state::SharedState>() {
+                    if let Ok(previews) = state.task_previews.lock() {
+                        for cancel in previews.values() {
+                            let _ = cancel.send(true);
+                        }
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
             commands::containment_status,
@@ -145,6 +156,9 @@ pub fn run() {
             commands::open_latest_release,
             commands::run_project_terminal,
             commands::run_task_terminal,
+            commands::start_task_preview,
+            commands::stop_task_preview,
+            commands::open_task_preview,
             commands::project_branch,
             commands::project_task_worktrees,
             commands::task_worktree_diff,

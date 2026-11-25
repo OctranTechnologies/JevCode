@@ -1705,6 +1705,19 @@ fn redact_task_terminal_output(output: &str) -> String {
         .join("\n")
 }
 
+fn trim_task_terminal_history(session: &mut AgentSession) {
+    while session.terminal_runs.len() > TASK_TERMINAL_RUN_HISTORY_LIMIT {
+        let Some(index) = session
+            .terminal_runs
+            .iter()
+            .position(|run| run.status != TaskTerminalRunStatus::Running)
+        else {
+            break;
+        };
+        session.terminal_runs.remove(index);
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunTaskTerminalInput {
@@ -1748,11 +1761,9 @@ pub async fn run_task_terminal(
             exit_code: None,
             started_at,
             completed_at: None,
+            preview_port: None,
         });
-        if session.terminal_runs.len() > 12 {
-            let excess = session.terminal_runs.len() - 12;
-            session.terminal_runs.drain(0..excess);
-        }
+        trim_task_terminal_history(&mut session);
         session.updated_at = now();
         state.database.save_session(&session)?;
         TauriEvents(app.clone()).session_updated(&session);
@@ -1855,6 +1866,348 @@ pub async fn run_task_terminal(
     .await;
     state.release_run(&input.session_id);
     result
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartTaskPreviewInput {
+    session_id: String,
+    command_text: String,
+    port: u16,
+}
+
+enum TaskPreviewEnd {
+    Exited(std::process::ExitStatus),
+    Cancelled,
+    WaitFailed,
+}
+
+async fn kill_task_process_tree(child: &mut tokio::process::Child, pid: Option<u32>) {
+    if let Some(pid) = pid {
+        #[cfg(windows)]
+        {
+            let mut killer = tokio::process::Command::new("taskkill.exe");
+            killer.args(["/PID", &pid.to_string(), "/T", "/F"]);
+            killer.creation_flags(0x08000000);
+            let _ = tokio::time::timeout(Duration::from_secs(5), killer.status()).await;
+        }
+        #[cfg(unix)]
+        {
+            let group = format!("-{pid}");
+            let _ = tokio::process::Command::new("/bin/kill")
+                .args(["-TERM", "--", group.as_str()])
+                .status()
+                .await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            let _ = tokio::process::Command::new("/bin/kill")
+                .args(["-KILL", "--", group.as_str()])
+                .status()
+                .await;
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+async fn finish_task_preview(
+    state: SharedState,
+    app: AppHandle,
+    session_id: &str,
+    run_id: &str,
+    end: TaskPreviewEnd,
+    mut output: Vec<u8>,
+    truncated: bool,
+) {
+    if truncated {
+        output.extend_from_slice(b"\n[Preview output truncated at 128 KiB per stream]");
+    }
+    let (status, exit_code) = match end {
+        TaskPreviewEnd::Exited(status) if status.success() => {
+            (TaskTerminalRunStatus::Completed, status.code())
+        }
+        TaskPreviewEnd::Exited(status) => (TaskTerminalRunStatus::Failed, status.code()),
+        TaskPreviewEnd::Cancelled => {
+            output.extend_from_slice(b"\n[Preview stopped by you]");
+            (TaskTerminalRunStatus::Cancelled, None)
+        }
+        TaskPreviewEnd::WaitFailed => {
+            output.extend_from_slice(b"\n[Could not read the preview process status]");
+            (TaskTerminalRunStatus::Failed, None)
+        }
+    };
+    if let Ok(mut previews) = state.task_previews.lock() {
+        previews.remove(session_id);
+    }
+    let Ok(mut session) = state.database.session(session_id) else {
+        return;
+    };
+    let Some(run) = session
+        .terminal_runs
+        .iter_mut()
+        .find(|run| run.id == run_id)
+    else {
+        return;
+    };
+    if run.status != TaskTerminalRunStatus::Running {
+        return;
+    }
+    let output = String::from_utf8_lossy(&output).into_owned();
+    run.output = redact_task_terminal_output(&output);
+    run.status = status;
+    run.exit_code = exit_code;
+    run.completed_at = Some(now());
+    session.updated_at = now();
+    if state.database.save_session(&session).is_ok() {
+        TauriEvents(app).session_updated(&session);
+    }
+}
+
+async fn run_task_preview_process(
+    state: SharedState,
+    app: AppHandle,
+    session_id: String,
+    run_id: String,
+    mut child: tokio::process::Child,
+    mut cancel: watch::Receiver<bool>,
+) {
+    let process_id = child.id();
+    let stdout = child.stdout.take().expect("preview stdout is piped");
+    let stderr = child.stderr.take().expect("preview stderr is piped");
+    let stdout_reader = tokio::spawn(read_task_terminal_output(stdout));
+    let stderr_reader = tokio::spawn(read_task_terminal_output(stderr));
+    let end = tokio::select! {
+        result = child.wait() => match result {
+            Ok(status) => TaskPreviewEnd::Exited(status),
+            Err(_) => TaskPreviewEnd::WaitFailed,
+        },
+        _ = cancel.changed() => TaskPreviewEnd::Cancelled,
+    };
+    kill_task_process_tree(&mut child, process_id).await;
+    let (mut stdout, stdout_truncated) = stdout_reader.await.unwrap_or_else(|_| (Vec::new(), true));
+    let (stderr, stderr_truncated) = stderr_reader.await.unwrap_or_else(|_| (Vec::new(), true));
+    if !stderr.is_empty() {
+        if !stdout.is_empty() && !stdout.ends_with(b"\n") {
+            stdout.push(b'\n');
+        }
+        stdout.extend_from_slice(&stderr);
+    }
+    finish_task_preview(
+        state,
+        app,
+        &session_id,
+        &run_id,
+        end,
+        stdout,
+        stdout_truncated || stderr_truncated,
+    )
+    .await;
+}
+
+#[tauri::command]
+pub async fn start_task_preview(
+    input: StartTaskPreviewInput,
+    app: AppHandle,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let command_text = input.command_text.trim();
+    if command_text.is_empty() || command_text.len() > 4096 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Enter a preview command under 4,096 characters.",
+        ));
+    }
+    if !context_migration::secret_line_numbers(command_text).is_empty() {
+        return Err(AppError::new(
+            "terminal_secret_blocked",
+            "This command looks like it contains a credential. Read the value from a local environment variable instead.",
+        ));
+    }
+    if input.port < 1024 {
+        return Err(AppError::new(
+            "invalid_input",
+            "Choose a preview port between 1,024 and 65,535.",
+        ));
+    }
+    let _reservation = state.reserve_run(&input.session_id)?;
+    let result = async {
+        if state
+            .task_previews
+            .lock()
+            .map_err(AppError::internal)?
+            .contains_key(&input.session_id)
+        {
+            return Err(AppError::new(
+                "task_preview_running",
+                "Stop this task's current preview before starting another one.",
+            ));
+        }
+        let mut session = state.database.session(&input.session_id)?;
+        validate_task_terminal_access(&session)?;
+        let project = state.database.project(&session.project_id)?;
+        let inspect = spawn_policy(&state, &project, containment::ProfileKind::Inspect)?;
+        let working_directory = task_project_path(&project, &session, inspect).await?;
+        if TcpListener::bind(("127.0.0.1", input.port)).await.is_err() {
+            return Err(AppError::new(
+                "preview_port_unavailable",
+                "That local preview port is already in use. Choose another port or stop the other server.",
+            ));
+        }
+        let mut process = terminal_process(command_text);
+        process
+            .current_dir(&working_directory)
+            .env("HOST", "127.0.0.1")
+            .env("HOSTNAME", "127.0.0.1")
+            .env("PORT", input.port.to_string())
+            .env("BROWSER", "none")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        process.creation_flags(0x08000000 | 0x00000200);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            process.as_std_mut().process_group(0);
+        }
+        let child = process.spawn().map_err(|_| {
+            AppError::new(
+                "terminal_unavailable",
+                "A local command interpreter is unavailable.",
+            )
+        })?;
+        let run_id = id();
+        let started_at = now();
+        session.terminal_runs.push(TaskTerminalRun {
+            id: run_id.clone(),
+            command: command_text.to_owned(),
+            output: String::new(),
+            status: TaskTerminalRunStatus::Running,
+            exit_code: None,
+            started_at,
+            completed_at: None,
+            preview_port: Some(input.port),
+        });
+        trim_task_terminal_history(&mut session);
+        session.updated_at = now();
+        if let Err(error) = state.database.save_session(&session) {
+            let mut child = child;
+            let process_id = child.id();
+            kill_task_process_tree(&mut child, process_id).await;
+            return Err(error);
+        }
+        let (cancel_sender, cancel_receiver) = watch::channel(false);
+        state
+            .task_previews
+            .lock()
+            .map_err(AppError::internal)?
+            .insert(input.session_id.clone(), cancel_sender);
+        TauriEvents(app.clone()).session_updated(&session);
+        tauri::async_runtime::spawn(run_task_preview_process(
+            Arc::clone(&state),
+            app,
+            input.session_id.clone(),
+            run_id,
+            child,
+            cancel_receiver,
+        ));
+        Ok(session)
+    }
+    .await;
+    state.release_run(&input.session_id);
+    result
+}
+
+#[tauri::command]
+pub async fn stop_task_preview(
+    session_id: String,
+    state: State<'_, SharedState>,
+) -> AppResult<AgentSession> {
+    let sender = state
+        .task_previews
+        .lock()
+        .map_err(AppError::internal)?
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| {
+            AppError::new(
+                "task_preview_not_running",
+                "This task does not have a running preview.",
+            )
+        })?;
+    let _ = sender.send(true);
+    for _ in 0..60 {
+        let session = state.database.session(&session_id)?;
+        let still_running = session
+            .terminal_runs
+            .iter()
+            .any(|run| run.preview_port.is_some() && run.status == TaskTerminalRunStatus::Running);
+        if !still_running {
+            return Ok(session);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    state.database.session(&session_id)
+}
+
+fn open_preview_in_browser(port: u16) -> AppResult<()> {
+    let url = format!("http://127.0.0.1:{port}/");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer.exe");
+        command.arg(&url);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(&url);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(&url);
+        command
+    };
+    #[cfg(windows)]
+    use std::os::windows::process::CommandExt;
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+    command.spawn().map(|_| ()).map_err(|_| {
+        AppError::new(
+            "preview_open_failed",
+            "The system browser could not be opened.",
+        )
+    })
+}
+
+#[tauri::command]
+pub fn open_task_preview(session_id: String, state: State<'_, SharedState>) -> AppResult<()> {
+    let session = state.database.session(&session_id)?;
+    let preview = session
+        .terminal_runs
+        .iter()
+        .rev()
+        .find(|run| run.preview_port.is_some() && run.status == TaskTerminalRunStatus::Running);
+    let Some(port) = preview.and_then(|run| run.preview_port) else {
+        return Err(AppError::new(
+            "task_preview_not_running",
+            "Start this task's preview before opening it.",
+        ));
+    };
+    if !state
+        .task_previews
+        .lock()
+        .map_err(AppError::internal)?
+        .contains_key(&session_id)
+    {
+        return Err(AppError::new(
+            "task_preview_not_running",
+            "This task's preview process is no longer running.",
+        ));
+    }
+    open_preview_in_browser(port)
 }
 
 fn ensure_task_idle(state: &SharedState, session_id: &str) -> AppResult<()> {
